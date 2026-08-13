@@ -290,6 +290,20 @@
     .live-dock { display: flex; align-items: center; justify-content: space-between; gap: var(--space-3); margin-top: var(--space-5); padding: var(--space-3) var(--space-4); }
     .live-dock strong { font-size: .9rem; }
     .live-dock span { color: var(--text-muted); font-size: .82rem; }
+    .schedule-list, .lane-grid { display: grid; gap: var(--space-3); }
+    .schedule-list { grid-template-columns: repeat(auto-fit, minmax(16rem, 1fr)); }
+    .schedule-heat { padding: var(--space-3); border: 1px solid var(--line); border-radius: var(--radius-sm); background: var(--surface-raised); }
+    .schedule-heat strong { display: block; }
+    .quality-label { margin: 0; color: var(--cyan); font-weight: 800; }
+    .lane-grid { grid-template-columns: repeat(3, minmax(0, 1fr)); }
+    .lane-card { display: grid; min-height: 9rem; align-content: center; justify-items: start; gap: var(--space-2); padding: var(--space-4); text-align: left; }
+    .lane-card[aria-pressed="true"] { border-color: var(--lime); background: color-mix(in srgb, var(--lime) 12%, var(--surface-raised)); }
+    .lane-card:disabled { cursor: not-allowed; opacity: .58; }
+    .lane-number { color: var(--cyan); font-size: .75rem; font-weight: 850; letter-spacing: .1em; text-transform: uppercase; }
+    .lane-car { font-size: clamp(1rem, 3vw, 1.35rem); font-weight: 850; }
+    .confirmation-dock { position: sticky; z-index: 10; bottom: 0; padding: var(--space-4); border-color: var(--cyan); box-shadow: 0 -10px 30px rgba(0, 0, 0, .3); }
+    .receipt { border-color: var(--success); }
+    .shortcut-list { color: var(--text-muted); font-size: .82rem; }
 
     .shell-footer { border-top: 1px solid var(--line); background: var(--surface-raised); }
     .footer-inner { display: flex; justify-content: space-between; gap: var(--space-4); padding-block: var(--space-5); color: var(--text-muted); font-size: .8rem; }
@@ -318,6 +332,7 @@
       .empty-grid { grid-template-columns: 1fr; }
       .footer-inner { flex-direction: column; }
       .wizard-steps { grid-template-columns: 1fr; }
+      .lane-grid { grid-template-columns: 1fr; }
     }
 
     @media (max-width: 420px) {
@@ -479,6 +494,14 @@
       let lastPaymentKind = 'payment';
       let dialogReturnFocus = null;
       let pendingCarEdit = null;
+      let scheduleDraft = null;
+      let liveHeatIndex = 0;
+      let selectedWinnerId = null;
+      let pendingResult = null;
+      let pendingHeatAction = null;
+      let undoRecord = null;
+      let lastReceipt = null;
+      let liveMessage = '';
 
       const viewDetails = Object.freeze({
         dashboard: ['Control overview', 'Dashboard'], registration: ['Entrants and accounts', 'Registration & Fees'],
@@ -688,6 +711,70 @@
         return ['Unpaid', money(account.balance), 'warn'];
       }
 
+      function activeCars() { return eventState.entries.filter((entry) => entry.active).slice().sort((left, right) => left.carNumber - right.carNumber || compareCodeUnits(left.id, right.id)); }
+      function schedulePairKey(first, second) { return JSON.stringify(first < second ? [first, second] : [second, first]); }
+      function numberRange(values) { return values.length ? Math.max(...values) - Math.min(...values) : 0; }
+      function analyseSchedule(heats, activeCarIds) {
+        const errors = []; const warnings = []; const appearances = Object.create(null); const laneCounts = Object.create(null); const byeCounts = Object.create(null); const twoCarHeatCounts = Object.create(null); const pairCounts = Object.create(null); const activeIds = new Set(); const entriesByMatch = new Map();
+        activeCarIds.forEach((carId) => { if (activeIds.has(carId)) errors.push(`Active car ID ${carId} appears more than once`); else { activeIds.add(carId); appearances[carId] = 0; laneCounts[carId] = [0, 0, 0]; byeCounts[carId] = 0; twoCarHeatCounts[carId] = 0; } });
+        const seenHeatIds = new Set();
+        heats.forEach((heat) => {
+          if (seenHeatIds.has(heat.id)) errors.push(`Duplicate heat ID: ${heat.id}`); seenHeatIds.add(heat.id);
+          const assigned = heat.lanes.filter((carId) => carId !== null); const distinct = new Set(assigned);
+          if (assigned.length < 2 || assigned.length > 3) errors.push(`Heat ${heat.id} must contain two or three cars`);
+          if (distinct.size !== assigned.length) errors.push(`A car is assigned more than once in heat ${heat.id}`);
+          distinct.forEach((carId) => { if (!activeIds.has(carId)) errors.push(`Heat ${heat.id} references unknown active car ${carId}`); });
+          if (heat.winnerEntryId !== null && !distinct.has(heat.winnerEntryId)) errors.push(`Heat ${heat.id} winner must be assigned to a lane`);
+          const activeAssigned = [...distinct].filter((carId) => activeIds.has(carId)); const matchKey = `${heat.phase}::${heat.matchNumber}`; const entries = entriesByMatch.get(matchKey) || new Set(); entriesByMatch.set(matchKey, entries);
+          activeAssigned.forEach((carId) => { if (entries.has(carId)) errors.push(`Car ${carId} appears more than once in match ${heat.matchNumber}`); entries.add(carId); });
+          if (activeAssigned.length === 2) activeAssigned.forEach((carId) => { twoCarHeatCounts[carId] += 1; });
+          heat.lanes.forEach((carId, lane) => { if (carId !== null && activeIds.has(carId)) { appearances[carId] += 1; laneCounts[carId][lane] += 1; } });
+          for (let first = 0; first < activeAssigned.length; first += 1) for (let second = first + 1; second < activeAssigned.length; second += 1) { const key = schedulePairKey(activeAssigned[first], activeAssigned[second]); pairCounts[key] = (pairCounts[key] || 0) + 1; }
+        });
+        entriesByMatch.forEach((entries) => activeIds.forEach((carId) => { if (!entries.has(carId)) byeCounts[carId] += 1; }));
+        const totalByes = Object.values(byeCounts).reduce((sum, count) => sum + count, 0); if (totalByes) warnings.push(`Schedule contains ${totalByes} bye assignment(s)`);
+        const twoCarParticipations = Object.values(twoCarHeatCounts).reduce((sum, count) => sum + count, 0); if (twoCarParticipations) warnings.push('Schedule contains two-car heat participation');
+        const frequencies = Object.values(pairCounts); const repeatedOpponentCount = frequencies.reduce((total, count) => total + Math.max(0, count - 1), 0); const maximumPairFrequency = frequencies.length ? Math.max(...frequencies) : 0; const burdens = Object.fromEntries(activeCarIds.map((id) => [id, 0]));
+        Object.entries(pairCounts).forEach(([key, count]) => { const [first, second] = JSON.parse(key); const excess = Math.max(0, count - 1); burdens[first] += excess; burdens[second] += excess; });
+        const burdenValues = Object.values(burdens); const pairMeetings = frequencies.reduce((total, count) => total + count, 0); const possiblePairs = activeIds.size * (activeIds.size - 1) / 2; const repeatExcessLowerBound = Math.max(0, pairMeetings - possiblePairs); const maximumPairFrequencyLowerBound = possiblePairs === 0 ? 0 : Math.ceil(pairMeetings / possiblePairs); const repeatExcessGap = Math.max(0, repeatedOpponentCount - repeatExcessLowerBound); const maximumPairFrequencyGap = Math.max(0, maximumPairFrequency - maximumPairFrequencyLowerBound);
+        return { status: errors.length ? 'invalid' : warnings.length ? 'valid-with-warnings' : 'valid', errors, warnings, appearances, laneCounts, pairCounts, repeatedOpponentCount, repeatExcessLowerBound, repeatExcessGap, maximumPairFrequency, maximumPairFrequencyLowerBound, maximumPairFrequencyGap, opponentQualityStatus: errors.length === 0 && repeatExcessGap === 0 ? 'certified-optimal' : 'best-found', worstPerCarRepeatBurden: Math.max(0, ...burdenValues), squaredRepeatBurden: burdenValues.reduce((total, value) => total + value * value, 0), squaredPairFrequency: frequencies.reduce((total, value) => total + value * value, 0), appearanceImbalance: numberRange(Object.values(appearances)), maximumLaneSpread: Math.max(0, ...Object.values(laneCounts).map(numberRange)), byeCounts, twoCarHeatCounts };
+      }
+      function seedToUint32(seed) { let hash = 0x811c9dc5; for (let index = 0; index < seed.length; index += 1) { hash ^= seed.charCodeAt(index); hash = Math.imul(hash, 0x01000193); } return hash >>> 0; }
+      function seededRandom(seed) { let state = seed >>> 0; return () => { state = (state + 0x6d2b79f5) >>> 0; let value = state; value = Math.imul(value ^ (value >>> 15), value | 1); value ^= value + Math.imul(value ^ (value >>> 7), value | 61); return ((value ^ (value >>> 14)) >>> 0) / 0x100000000; }; }
+      function shuffled(values, random) { const result = [...values]; for (let index = result.length - 1; index > 0; index -= 1) { const other = Math.floor(random() * (index + 1)); [result[index], result[other]] = [result[other], result[index]]; } return result; }
+      function clonePlan(plan) { return plan.map((match) => ({ groups: match.groups.map((group) => [...group]), byes: [...match.byes] })); }
+      function sequentialPlan(ids, matches) { return Array.from({ length: matches }, () => { const byeCount = ids.length % 3 === 1 ? 1 : 0; const assigned = ids.slice(0, ids.length - byeCount); const groups = []; for (let offset = 0; offset < assigned.length; offset += 3) groups.push(assigned.slice(offset, offset + 3)); return { groups, byes: ids.slice(ids.length - byeCount) }; }); }
+      function seededPlan(ids, matches, restart, random) { const circle = shuffled(ids, random); return Array.from({ length: matches }, (_, matchIndex) => { const byeId = ids.length % 3 === 1 ? circle[(matchIndex + restart) % circle.length] : null; const available = circle.filter((id) => id !== byeId); const rotated = available.length ? available.map((_, index) => available[(index + matchIndex) % available.length]) : []; const ordered = shuffled(rotated, random); const groups = []; for (let offset = 0; offset < ordered.length; offset += 3) groups.push(ordered.slice(offset, offset + 3)); return { groups, byes: byeId === null ? [] : [byeId] }; }); }
+      function planHeatSlots(plan) { return plan.flatMap((match, matchIndex) => match.groups.map((group, heatIndex) => ({ matchNumber: matchIndex + 1, heatNumber: heatIndex + 1, slots: [group[0] ?? null, group[1] ?? null, group[2] ?? null] }))); }
+      function makeScheduleHeat(matchNumber, heatNumber, lanes, prefix = 'custom') { return { id: `${prefix}-m${matchNumber}-h${heatNumber}`, phase: 'preliminary', matchNumber, heatNumber, lanes, status: 'scheduled', winnerEntryId: null, laneTimesMs: [null, null, null], notes: '' }; }
+      function uncolouredHeats(plan) { return planHeatSlots(plan).map(({ matchNumber, heatNumber, slots }) => makeScheduleHeat(matchNumber, heatNumber, slots)); }
+      function assignScheduleLanes(plan) {
+        const slots = planHeatSlots(plan); const occurrences = new Map();
+        slots.forEach(({ slots: heatSlots }, heatIndex) => heatSlots.forEach((slot) => { const found = occurrences.get(slot) || []; found.push({ heatIndex, slot }); occurrences.set(slot, found); }));
+        const edges = []; let rightCount = 0; const ordered = [...occurrences.keys()].sort((left, right) => left === right ? 0 : left === null ? -1 : right === null ? 1 : compareCodeUnits(left, right));
+        ordered.forEach((slot) => { const found = occurrences.get(slot); for (let offset = 0; offset < found.length; offset += 3) { const right = rightCount; rightCount += 1; found.slice(offset, offset + 3).forEach((occurrence) => edges.push({ left: occurrence.heatIndex, right, slot: occurrence.slot, original: true, active: true })); } });
+        const rightDegrees = Array.from({ length: rightCount }, () => 0); edges.forEach((edge) => { rightDegrees[edge.right] += 1; }); let nextRight = 0;
+        for (let left = slots.length; left < rightCount; left += 1) for (let degree = 0; degree < 3; degree += 1) { while (rightDegrees[nextRight] === 3) nextRight += 1; edges.push({ left, right: nextRight, slot: null, original: false, active: true }); rightDegrees[nextRight] += 1; }
+        const lanes = slots.map(() => [null, null, null]);
+        for (let colour = 0; colour < 3; colour += 1) { const matched = Array.from({ length: rightCount }, () => -1); const augment = (left, seen) => { for (let edgeIndex = 0; edgeIndex < edges.length; edgeIndex += 1) { const edge = edges[edgeIndex]; if (!edge.active || edge.left !== left || seen.has(edge.right)) continue; seen.add(edge.right); const previous = matched[edge.right]; if (previous === -1 || augment(edges[previous].left, seen)) { matched[edge.right] = edgeIndex; return true; } } return false; }; for (let left = 0; left < rightCount; left += 1) if (!augment(left, new Set())) throw new Error('Unable to compute deterministic equitable lane assignment'); matched.forEach((edgeIndex) => { const edge = edges[edgeIndex]; edge.active = false; if (edge.original) lanes[edge.left][colour] = edge.slot; }); }
+        return slots.map(({ matchNumber, heatNumber }, index) => makeScheduleHeat(matchNumber, heatNumber, lanes[index]));
+      }
+      function scoreOpponentPlan(heats, ids) {
+        const appearances = new Map(ids.map((id) => [id, 0])); const pairs = new Map(); const heatIds = new Set(); const byMatch = new Map(); let invalid = 0;
+        heats.forEach((heat) => { if (heatIds.has(heat.id)) invalid += 1; heatIds.add(heat.id); const assigned = heat.lanes.filter(Boolean); if (assigned.length < 2 || assigned.length > 3 || new Set(assigned).size !== assigned.length) invalid += 1; assigned.forEach((id) => { if (!appearances.has(id)) invalid += 1; else appearances.set(id, appearances.get(id) + 1); }); for (let first = 0; first < assigned.length; first += 1) for (let second = first + 1; second < assigned.length; second += 1) { const key = schedulePairKey(assigned[first], assigned[second]); pairs.set(key, (pairs.get(key) || 0) + 1); } const list = byMatch.get(heat.matchNumber) || []; list.push(heat); byMatch.set(heat.matchNumber, list); });
+        let consecutiveByes = 0; let immediateRepeats = 0; let previousByes = new Set(); let previousPairs = new Set(); [...byMatch].sort(([left], [right]) => left - right).forEach(([, matchHeats]) => { const present = new Set(); const currentPairs = new Set(); matchHeats.forEach((heat) => { const assigned = heat.lanes.filter(Boolean); assigned.forEach((id) => { if (present.has(id)) invalid += 1; present.add(id); }); for (let first = 0; first < assigned.length; first += 1) for (let second = first + 1; second < assigned.length; second += 1) currentPairs.add(schedulePairKey(assigned[first], assigned[second])); }); const byes = new Set(ids.filter((id) => !present.has(id))); byes.forEach((id) => { if (previousByes.has(id)) consecutiveByes += 1; }); currentPairs.forEach((pair) => { if (previousPairs.has(pair)) immediateRepeats += 1; }); previousByes = byes; previousPairs = currentPairs; });
+        const frequencies = [...pairs.values()]; const burdens = new Map(ids.map((id) => [id, 0])); pairs.forEach((count, key) => { const [first, second] = JSON.parse(key); const excess = Math.max(0, count - 1); burdens.set(first, burdens.get(first) + excess); burdens.set(second, burdens.get(second) + excess); }); const burdenValues = [...burdens.values()];
+        return [invalid, numberRange([...appearances.values()]), frequencies.reduce((total, count) => total + Math.max(0, count - 1), 0), frequencies.length ? Math.max(...frequencies) : 0, Math.max(0, ...burdenValues), burdenValues.reduce((total, burden) => total + burden * burden, 0), frequencies.reduce((total, count) => total + count * count, 0), consecutiveByes, immediateRepeats, JSON.stringify(heats.map((heat) => heat.lanes.filter(Boolean).sort(compareCodeUnits)))];
+      }
+      function compareScores(left, right) { for (let index = 0; index < left.length; index += 1) { if (left[index] < right[index]) return -1; if (left[index] > right[index]) return 1; } return 0; }
+      function mutatePlan(plan, random, iteration) { const match = plan[Math.floor(random() * plan.length)]; const locations = match.groups.flatMap((group, groupIndex) => group.map((_, carIndex) => [groupIndex, carIndex])); if (match.byes.length === 1 && random() < .2) { const location = locations[Math.floor(random() * locations.length)]; const assigned = match.groups[location[0]][location[1]]; match.groups[location[0]][location[1]] = match.byes[0]; match.byes[0] = assigned; return; } const firstIndex = Math.floor(random() * locations.length); let secondIndex = Math.floor(random() * (locations.length - 1)); if (secondIndex >= firstIndex) secondIndex += 1; const first = locations[firstIndex]; const second = locations[secondIndex]; if (iteration % 5 !== 4 || locations.length < 3) { [match.groups[first[0]][first[1]], match.groups[second[0]][second[1]]] = [match.groups[second[0]][second[1]], match.groups[first[0]][first[1]]]; return; } let thirdIndex = Math.floor(random() * (locations.length - 2)); const occupied = [firstIndex, secondIndex].sort((left, right) => left - right); if (thirdIndex >= occupied[0]) thirdIndex += 1; if (thirdIndex >= occupied[1]) thirdIndex += 1; const third = locations[thirdIndex]; const temporary = match.groups[third[0]][third[1]]; match.groups[third[0]][third[1]] = match.groups[second[0]][second[1]]; match.groups[second[0]][second[1]] = match.groups[first[0]][first[1]]; match.groups[first[0]][first[1]] = temporary; }
+      function generateCustomSchedule(ids, matches, seed) {
+        if (ids.length < 3 || ids.length > 24) throw new RangeError('Custom schedules require between 3 and 24 active cars'); if (!Number.isInteger(matches) || matches < 1 || matches > 10) throw new RangeError('Number of matches must be a whole number from 1 through 10.');
+        const restarts = Math.min(24, Math.max(1, Math.floor(250000 / (ids.length * matches)))); const iterations = Math.min(1500, Math.max(1, Math.floor(250000 / (ids.length * matches * restarts)))); let bestPlan = sequentialPlan(ids, matches); let bestScore = scoreOpponentPlan(uncolouredHeats(bestPlan), ids);
+        for (let restart = 0; restart < restarts; restart += 1) { const random = seededRandom(seedToUint32(`${seed}\u0000${restart}`)); let currentPlan = seededPlan(ids, matches, restart, random); let currentScore = scoreOpponentPlan(uncolouredHeats(currentPlan), ids); if (compareScores(currentScore, bestScore) < 0) { bestPlan = clonePlan(currentPlan); bestScore = currentScore; } for (let iteration = 0; iteration < iterations; iteration += 1) { const candidate = clonePlan(currentPlan); mutatePlan(candidate, random, iteration); const score = scoreOpponentPlan(uncolouredHeats(candidate), ids); if (compareScores(score, currentScore) <= 0) { currentPlan = candidate; currentScore = score; } if (compareScores(score, bestScore) < 0) { bestPlan = clonePlan(candidate); bestScore = score; } } }
+        const heats = assignScheduleLanes(bestPlan); return { heats, score: scoreOpponentPlan(heats, ids), quality: analyseSchedule(heats, ids) };
+      }
+
       function saveNow(rotate = true) {
         if (!eventState) return false;
         const validated = validateEvent(eventState);
@@ -843,6 +930,61 @@
         demoMode = false; wizard = null; meaningfulChange('Registration armed', 'event', eventState.event.id); selectView('dashboard');
       }
 
+      function presetCount(mode) { return mode === 'template9' ? 9 : mode === 'template12' ? 12 : mode === 'template15' ? 15 : null; }
+      function buildPresetCandidate(mode, mapping) {
+        const matches = JSON.parse(document.getElementById('preset-data').textContent)[mode];
+        return matches.flatMap((match, matchIndex) => match.map((slots, heatIndex) => ({ id: `preset-${mode}-match-${matchIndex + 1}-heat-${heatIndex + 1}`, phase: 'preliminary', matchNumber: matchIndex + 1, heatNumber: heatIndex + 1, lanes: slots.map((slot) => mapping[slot - 1]), status: 'scheduled', winnerEntryId: null, laneTimesMs: [null, null, null], notes: '' })));
+      }
+      function mappingIsValid(mapping, ids) { return mapping.length === ids.length && new Set(mapping).size === ids.length && mapping.every((id) => ids.includes(id)); }
+      function refreshScheduleCandidate() {
+        const ids = activeCars().map((entry) => entry.id); scheduleDraft.error = ''; scheduleDraft.candidate = null; scheduleDraft.quality = null;
+        if (!mappingIsValid(scheduleDraft.mapping, ids)) { scheduleDraft.error = 'Each active car must be mapped exactly once.'; return; }
+        const required = presetCount(scheduleDraft.mode);
+        if (required !== null) {
+          if (ids.length !== required) { scheduleDraft.error = `${required}-car preset requires exactly ${required} active cars; ${ids.length} are active.`; return; }
+          scheduleDraft.candidate = buildPresetCandidate(scheduleDraft.mode, scheduleDraft.mapping); scheduleDraft.quality = analyseSchedule(scheduleDraft.candidate, ids); scheduleDraft.message = `${required} active cars match this preset.`;
+        }
+      }
+      function ensureScheduleDraft() {
+        const cars = activeCars(); const rosterKey = JSON.stringify(cars.map((entry) => entry.id));
+        if (scheduleDraft && scheduleDraft.rosterKey === rosterKey) return;
+        const mode = ['template9', 'template12', 'template15', 'custom'].includes(eventState.settings.scheduleMode) ? eventState.settings.scheduleMode : 'custom';
+        scheduleDraft = { rosterKey, mode, mapping: cars.map((entry) => entry.id), seed: eventState.settings.seed || 'race-seed', matches: eventState.matches.length ? Math.max(...eventState.matches.map((heat) => heat.matchNumber)) : 5, candidate: null, quality: null, error: '', message: '' };
+        refreshScheduleCandidate();
+      }
+      function qualityMetric(label, value) { return element('div', { className: 'summary-card' }, [element('strong', { text: value }), element('span', { text: label })]); }
+      function renderQualityReport(quality) {
+        const carsById = new Map(eventState.entries.map((entry) => [entry.id, entry])); const panel = element('section', { className: 'panel panel-section', attributes: { 'data-quality-report': JSON.stringify(quality), 'aria-labelledby': 'quality-title' } });
+        const certificate = quality.opponentQualityStatus === 'certified-optimal' ? 'Certified optimal for the repeat-excess lower bound' : `Best found · repeat-excess gap ${quality.repeatExcessGap}`;
+        panel.append(element('div', { className: 'split-heading' }, [element('h3', { text: 'Schedule quality report', attributes: { id: 'quality-title' } }), element('span', { className: `badge ${quality.status === 'invalid' ? 'warn' : 'good'}`, text: titleCase(quality.status) })]), element('p', { className: 'quality-label', text: certificate }), element('div', { className: 'summary-grid' }, [qualityMetric('Repeat opponents beyond first', quality.repeatedOpponentCount), qualityMetric('Repeat-excess lower bound', quality.repeatExcessLowerBound), qualityMetric('Repeat-excess gap', quality.repeatExcessGap), qualityMetric('Maximum pair frequency', quality.maximumPairFrequency), qualityMetric('Maximum pair-frequency lower bound', quality.maximumPairFrequencyLowerBound), qualityMetric('Maximum pair-frequency gap', quality.maximumPairFrequencyGap), qualityMetric('Worst per-car repeat burden', quality.worstPerCarRepeatBurden), qualityMetric('Squared repeat burden', quality.squaredRepeatBurden), qualityMetric('Squared pair frequency', quality.squaredPairFrequency), qualityMetric('Appearance imbalance', quality.appearanceImbalance), qualityMetric('Maximum lane spread', quality.maximumLaneSpread)]));
+        [...quality.errors, ...quality.warnings].forEach((message) => panel.append(element('p', { className: `notice${quality.errors.includes(message) ? ' error' : ''}`, text: message })));
+        const carTable = element('table', { attributes: { 'aria-label': 'Per-car schedule quality' } }); const carBody = element('tbody'); carTable.append(element('thead', {}, [element('tr', {}, ['Car', 'Appearances', 'Lane 1', 'Lane 2', 'Lane 3', 'Byes', 'Two-car heats'].map((text) => element('th', { text })))]), carBody);
+        Object.keys(quality.appearances).forEach((id) => { const car = carsById.get(id); const lanes = quality.laneCounts[id]; carBody.append(element('tr', {}, [element('td', { text: car ? `#${car.carNumber} ${car.name}` : id }), element('td', { text: quality.appearances[id] }), ...lanes.map((count) => element('td', { text: count })), element('td', { text: quality.byeCounts[id] }), element('td', { text: quality.twoCarHeatCounts[id] })])); });
+        const pairTable = element('table', { attributes: { 'aria-label': 'Opponent pair frequencies' } }); const pairBody = element('tbody'); pairTable.append(element('thead', {}, [element('tr', {}, [element('th', { text: 'Opponent pair' }), element('th', { text: 'Meetings' })])]), pairBody); Object.entries(quality.pairCounts).forEach(([key, count]) => { const ids = JSON.parse(key); pairBody.append(element('tr', {}, [element('td', { text: ids.map((id) => carsById.has(id) ? `#${carsById.get(id).carNumber}` : id).join(' vs ') }), element('td', { text: count })])); });
+        panel.append(element('div', { className: 'data-table-wrap' }, [carTable]), element('div', { className: 'data-table-wrap' }, [pairTable])); return panel;
+      }
+      function renderSchedulePanel() {
+        ensureScheduleDraft(); const cars = activeCars(); const panel = element('section', { className: 'panel panel-section', attributes: { 'aria-labelledby': 'schedule-title' } });
+        panel.append(element('h3', { text: 'Schedule setup', attributes: { id: 'schedule-title' } }), element('p', { text: 'Map stable slots, inspect the complete quality report, then activate only a valid candidate.' }), selectField('Schedule type', 'schedule-type', [['template9', '9-car workbook preset'], ['template12', '12-car workbook preset'], ['template15', '15-car workbook preset'], ['custom', 'Custom balanced schedule']], scheduleDraft.mode));
+        const mapping = element('div', { className: 'form-grid', attributes: { 'aria-label': 'Stable slot mapping' } }); const carOptions = cars.map((entry) => [entry.id, `#${entry.carNumber} ${entry.name}`]);
+        scheduleDraft.mapping.forEach((id, index) => { const control = selectField(`Slot ${index + 1} car`, `schedule-slot-${index + 1}`, carOptions, id); control.querySelector('select').setAttribute('data-slot-index', String(index)); mapping.append(control); }); panel.append(mapping);
+        if (scheduleDraft.mode === 'custom') panel.append(element('div', { className: 'form-grid' }, [field('Schedule seed', 'schedule-seed', scheduleDraft.seed, { maxlength: 256 }), field('Number of matches', 'schedule-matches', String(scheduleDraft.matches), { type: 'number', min: 1, max: 10, step: 1 })]), element('div', { className: 'action-row' }, [button('Generate candidate', 'generate-schedule', 'primary-action')]));
+        if (scheduleDraft.error) panel.append(element('div', { className: 'notice error', text: scheduleDraft.error, attributes: { role: 'alert' } })); else if (scheduleDraft.message) panel.append(element('p', { className: 'notice', text: scheduleDraft.message }));
+        if (scheduleDraft.candidate) { const preview = element('div', { className: 'schedule-list', attributes: { 'aria-label': 'Schedule candidate preview' } }); const entries = new Map(eventState.entries.map((entry) => [entry.id, entry])); scheduleDraft.candidate.forEach((heat) => preview.append(element('div', { className: 'schedule-heat', attributes: { 'data-schedule-heat': heat.id, 'data-match-number': heat.matchNumber, 'data-lanes': JSON.stringify(heat.lanes) } }, [element('strong', { text: `Match ${heat.matchNumber} · Heat ${heat.heatNumber}` }), element('span', { text: heat.lanes.map((id, lane) => id === null ? `Lane ${lane + 1}: Bye` : `Lane ${lane + 1}: #${entries.get(id)?.carNumber} ${entries.get(id)?.name}`).join(' · ') })]))); panel.append(preview); }
+        const activationDisabled = !scheduleDraft.candidate || !scheduleDraft.quality || scheduleDraft.quality.status === 'invalid'; panel.append(element('div', { className: 'action-row' }, [button('Activate schedule', 'activate-schedule', 'primary-action', activationDisabled ? { disabled: '' } : {})]));
+        return [panel, scheduleDraft.quality ? renderQualityReport(scheduleDraft.quality) : null].filter(Boolean);
+      }
+      function generateScheduleCandidate() {
+        const ids = activeCars().map((entry) => entry.id); scheduleDraft.seed = document.getElementById('schedule-seed').value; scheduleDraft.matches = Number(document.getElementById('schedule-matches').value); scheduleDraft.error = ''; scheduleDraft.message = ''; scheduleDraft.candidate = null; scheduleDraft.quality = null;
+        if (!mappingIsValid(scheduleDraft.mapping, ids)) scheduleDraft.error = 'Each active car must be mapped exactly once.';
+        else { try { const generated = generateCustomSchedule(scheduleDraft.mapping, scheduleDraft.matches, scheduleDraft.seed); scheduleDraft.candidate = generated.heats; scheduleDraft.quality = generated.quality; scheduleDraft.message = `Deterministic candidate generated from seed “${scheduleDraft.seed}”.`; } catch (caught) { scheduleDraft.error = sanitizeError(caught); } }
+        renderView('setup');
+      }
+      function activateSchedule() {
+        const ids = activeCars().map((entry) => entry.id); if (!scheduleDraft?.candidate || !mappingIsValid(scheduleDraft.mapping, ids)) { announce('Schedule activation blocked: stable slot mapping is invalid.'); return; } const quality = analyseSchedule(scheduleDraft.candidate, ids); if (quality.status === 'invalid') { announce('Schedule activation blocked: candidate is invalid.'); return; }
+        eventState.matches = cloneValue(scheduleDraft.candidate); eventState.settings.scheduleMode = scheduleDraft.mode; eventState.settings.seed = scheduleDraft.seed; eventState.event.status = 'running'; liveHeatIndex = 0; selectedWinnerId = null; pendingResult = null; undoRecord = null; lastReceipt = null; meaningfulChange('Schedule activated', 'event', eventState.event.id, { mode: scheduleDraft.mode, seed: scheduleDraft.seed, quality: cloneValue(quality) }); renderView('setup');
+      }
+
       function renderSetup(container) {
         if (wizard) { renderWizard(container); return; }
         if (!eventState) { renderDashboard(container); return; }
@@ -852,7 +994,7 @@
         const grid = element('div', { className: 'form-grid', attributes: { id: 'price-editor' } });
         Object.entries(eventState.settings.prices).forEach(([id, cents]) => grid.append(field(`Price for ${categoryLabel(id)} in cents`, `price-${id}`, String(cents), { type: 'number', min: 0, step: 1, 'data-category-price': id })));
         pricePanel.append(grid, element('p', { className: 'field-error', attributes: { id: 'prices-error' } }), element('div', { className: 'action-row' }, [button('Save prices', 'save-prices', 'primary-action')]));
-        container.append(details, pricePanel);
+        container.append(details, pricePanel, ...renderSchedulePanel());
       }
 
       function renderRegistration(container) {
@@ -977,8 +1119,8 @@
         const row = element('div', { className: 'action-row' }); actions.forEach((item) => row.append(button(item.text, item.action, item.primary ? 'primary-action' : 'secondary-action', item.attributes || {}))); row.append(button('Cancel', 'close-dialog')); inner.append(row); dialog.replaceChildren(inner); dialog.showModal();
       }
       function restoreDialogFocus() { if (dialogReturnFocus && dialogReturnFocus.isConnected) dialogReturnFocus.focus(); dialogReturnFocus = null; }
-      function closeDialog() { pendingCarEdit = null; const dialog = document.getElementById('app-dialog'); if (dialog.open) dialog.close(); restoreDialogFocus(); }
-      function handleDialogClose() { pendingCarEdit = null; restoreDialogFocus(); }
+      function closeDialog() { pendingCarEdit = null; pendingHeatAction = null; const dialog = document.getElementById('app-dialog'); if (dialog.open) dialog.close(); restoreDialogFocus(); }
+      function handleDialogClose() { pendingCarEdit = null; pendingHeatAction = null; restoreDialogFocus(); }
       function editParticipant(id) {
         const participant = eventState.participants.find((item) => item.id === id); if (!participant) return;
         const dialog = document.getElementById('app-dialog'); dialogReturnFocus = document.activeElement;
@@ -1098,13 +1240,59 @@
       function returnToOfficial() { clearTimeout(saveTimer); if (demoMode && eventState) saveNow(false); storageSet(WORKSPACE_KEY, 'official'); demoMode = false; eventState = null; lastSavedAt = null; loadStored(); meaningfulFileChange = false; updateChrome(); selectView('dashboard'); announce(eventState ? 'Official event restored.' : 'No official event is saved.'); }
       function resetEvent() { clearTimeout(saveTimer); if (demoMode) { storageRemove(DEMO_KEY); storageSet(WORKSPACE_KEY, 'official'); demoMode = false; eventState = null; loadStored(); } else { eventState = null; storageRemove(CURRENT_KEY); storageRemove(PREVIOUS_KEY); storageRemove(WORKSPACE_KEY); } meaningfulFileChange = false; importError = ''; categoryNames = eventState ? Object.fromEntries(Object.keys(eventState.settings.prices).map((id) => [id, titleCase(id)])) : {}; closeDialog(); updateChrome(); selectView('dashboard'); announce('Event reset.'); }
 
+      function orderedLiveHeats() { return eventState ? eventState.matches.slice().sort((left, right) => left.matchNumber - right.matchNumber || left.heatNumber - right.heatNumber || compareCodeUnits(left.id, right.id)) : []; }
+      function heatStatusLabel(status) { return status === 'rerun' ? 'Rerun pending' : titleCase(status); }
+      function carLabel(id) { const entry = eventState.entries.find((item) => item.id === id); return entry ? `#${entry.carNumber} ${entry.name}` : 'Unassigned'; }
+      function appendHeatAudit(action, summary, heat, details) { const timestamp = nowIso(); eventState.event.updatedAt = timestamp; eventState.auditLog.push({ id: createStableId('audit'), timestamp, action, summary, entityType: 'heat', entityId: heat.id, details: cloneValue(details) }); if (location.protocol === 'file:') meaningfulFileChange = true; scheduleSave(); }
+      function currentLiveHeat() { const heats = orderedLiveHeats(); if (!heats.length) return null; liveHeatIndex = Math.max(0, Math.min(liveHeatIndex, heats.length - 1)); return heats[liveHeatIndex]; }
+      function standingsTable() {
+        const table = element('table', { attributes: { 'aria-label': 'Compact standings' } }); const body = element('tbody'); table.append(element('thead', {}, [element('tr', {}, ['Rank', 'Car', 'Wins', 'Completed'].map((text) => element('th', { text })))]), body);
+        let standings; try { standings = calculateRankings(calculateStandings('preliminary')); } catch (_) { standings = calculateStandings('preliminary'); }
+        standings.slice(0, 10).forEach((standing) => body.append(element('tr', {}, [element('td', { text: standing.rank ?? '—' }), element('td', { text: `#${standing.carNumber} ${standing.carName}` }), element('td', { text: standing.totalWins }), element('td', { text: standing.completedHeats })]))); return table;
+      }
+      function renderResultConfirmation(heat) {
+        if (!pendingResult || pendingResult.heatId !== heat.id) return null; const entry = eventState.entries.find((item) => item.id === pendingResult.winnerId); const panel = element('section', { className: 'panel confirmation-dock', attributes: { role: 'region', 'aria-label': 'Pending result confirmation' } }, [element('h3', { text: pendingResult.isChange ? 'Confirm winner change' : 'Confirm winner' }), element('p', { text: `${carLabel(entry.id)} is selected. Review before this result becomes official event data.` })]);
+        if (eventState.settings.enableTiming) panel.append(element('div', { className: 'form-grid' }, heat.lanes.map((_, lane) => field(`Lane ${lane + 1} time in milliseconds`, `live-time-${lane + 1}`, heat.laneTimesMs[lane] === null ? '' : String(heat.laneTimesMs[lane]), { type: 'number', min: 0, step: 1 }))));
+        if (pendingResult.isChange) panel.append(field('Change reason', 'live-change-reason', '', { maxlength: 500 }));
+        panel.append(element('div', { className: 'action-row' }, [button(pendingResult.isChange ? 'Confirm winner change' : 'Confirm winner', 'confirm-live-result', 'primary-action'), button('Back', 'dismiss-result')])); return panel;
+      }
+      function renderLive(container) {
+        appendWorkspaceHeader(container, 'Event-day cockpit', 'Live Racing', 'Select an assigned lane, review the pending result, and keep every correction auditable.');
+        if (!eventState || !eventState.matches.length) { container.append(element('div', { className: 'notice', text: 'Race controls stay inactive until a valid schedule is armed.' }), element('aside', { className: 'panel live-dock', attributes: { 'data-live-dock': '', 'aria-label': 'Live control dock' } }, [element('strong', { text: 'Live control dock' }), element('span', { text: 'Waiting for an armed event' })])); return; }
+        appendStatus(container); const heats = orderedLiveHeats(); const heat = currentLiveHeat(); const completed = heats.filter((item) => item.status === 'completed').length; const entries = new Map(eventState.entries.map((entry) => [entry.id, entry]));
+        container.append(element('section', { className: 'panel panel-section' }, [element('div', { className: 'split-heading' }, [element('div', {}, [element('p', { className: 'view-kicker', text: eventState.event.name }), element('h3', { text: `Match ${heat.matchNumber} · Heat ${heat.heatNumber}` })]), element('span', { className: `badge ${heat.status === 'completed' ? 'good' : 'warn'}`, text: heatStatusLabel(heat.status) })]), element('p', { text: `${completed} of ${heats.length} heats complete · Heat ${liveHeatIndex + 1} of ${heats.length}` })]));
+        if (liveMessage) container.append(element('div', { className: 'notice error', text: liveMessage, attributes: { role: 'alert' } }));
+        const laneGrid = element('div', { className: 'lane-grid', attributes: { 'aria-label': 'Current heat lanes' } }); heat.lanes.forEach((id, lane) => { const entry = id === null ? null : entries.get(id); laneGrid.append(element('button', { className: 'lane-card', attributes: { type: 'button', 'data-action': 'select-winner', 'data-entry-id': id ?? '', 'data-lane-card': '', 'aria-label': `Lane ${lane + 1}: ${entry ? entry.name : 'Empty'}`, 'aria-pressed': id !== null && selectedWinnerId === id ? 'true' : 'false', ...(id === null ? { disabled: '' } : {}) } }, [element('span', { className: 'lane-number', text: `Lane ${lane + 1}` }), element('span', { className: 'lane-car', text: entry ? `#${entry.carNumber} ${entry.name}` : 'Empty lane' })])); }); container.append(laneGrid);
+        const resultChange = heat.status === 'completed' && selectedWinnerId !== null && selectedWinnerId !== heat.winnerEntryId; const actions = element('div', { className: 'action-row' }, [button('Previous heat', 'previous-heat', '', liveHeatIndex === 0 ? { disabled: '' } : {}), button('Next heat', 'next-heat', '', liveHeatIndex === heats.length - 1 ? { disabled: '' } : {}), button(resultChange ? 'Review winner change' : 'Review winner', 'review-winner', 'primary-action', selectedWinnerId === null ? { disabled: '' } : {}), button('Cancel heat', 'cancel-heat'), ...(heat.status === 'cancelled' || heat.status === 'completed' ? [button('Mark for rerun', 'rerun-heat')] : [])]); container.append(actions);
+        container.append(element('section', { className: 'panel panel-section' }, [element('h3', { text: 'Issue state' }), field('Race issue or note', 'live-issue-note', heat.notes, { tag: 'textarea', maxlength: 2000 }), element('div', { className: 'action-row' }, [button('Save issue note', 'save-issue')])]));
+        const confirmation = renderResultConfirmation(heat); if (confirmation) container.append(confirmation);
+        if (lastReceipt) container.append(element('section', { className: 'panel panel-section receipt', attributes: { role: 'status', 'aria-label': 'Result receipt' } }, [element('h3', { text: 'Result receipt' }), element('p', { text: lastReceipt.text }), element('p', { text: lastReceipt.timestamp })]));
+        container.append(element('section', { className: 'panel panel-section' }, [element('h3', { text: 'Compact standings' }), element('div', { className: 'data-table-wrap' }, [standingsTable()])]), element('aside', { className: 'panel live-dock', attributes: { 'data-live-dock': '', 'aria-label': 'Live control dock' } }, [element('strong', { text: 'Keyboard' }), element('span', { className: 'shortcut-list', text: '1 / 2 / 3 select · Enter reviews · ← / → navigate · U or Ctrl+Z undo' })]));
+      }
+      function navigateLive(offset) { const heats = orderedLiveHeats(); if (!heats.length) return; liveHeatIndex = Math.max(0, Math.min(liveHeatIndex + offset, heats.length - 1)); selectedWinnerId = null; pendingResult = null; liveMessage = ''; renderView('live'); }
+      function selectLiveWinner(id) { const heat = currentLiveHeat(); if (!heat || !id || !heat.lanes.includes(id)) { liveMessage = 'Winner must be assigned to this heat.'; announce(liveMessage); renderView('live'); return; } selectedWinnerId = id; pendingResult = null; liveMessage = ''; renderView('live'); }
+      function reviewWinner() { const heat = currentLiveHeat(); if (!heat || !selectedWinnerId || !heat.lanes.includes(selectedWinnerId)) { liveMessage = 'Winner must be assigned to this heat.'; renderView('live'); return; } pendingResult = { heatId: heat.id, winnerId: selectedWinnerId, isChange: heat.status === 'completed' && heat.winnerEntryId !== selectedWinnerId }; liveMessage = ''; renderView('live'); }
+      function confirmLiveResult() {
+        const heat = currentLiveHeat(); if (!heat || !pendingResult || pendingResult.heatId !== heat.id || !heat.lanes.includes(pendingResult.winnerId)) { liveMessage = 'Winner must be assigned to this heat.'; renderView('live'); return; }
+        const laneTimes = [null, null, null]; let invalid = false;
+        if (eventState.settings.enableTiming) for (let lane = 0; lane < 3; lane += 1) { const input = document.getElementById(`live-time-${lane + 1}`); const raw = input.value.trim(); if (!raw) laneTimes[lane] = null; else { const value = Number(raw); if (!isSafeWhole(value)) { setFieldError(input.id, 'Time must be a non-negative whole number of milliseconds.'); invalid = true; } else laneTimes[lane] = value; } }
+        let reason = ''; if (pendingResult.isChange) { const input = document.getElementById('live-change-reason'); reason = input.value.trim(); if (!reason || reason.length > 500) { setFieldError(input.id, 'Change reason is required and must be 500 characters or fewer.'); invalid = true; } } if (invalid) return;
+        const before = cloneValue(heat); const beforeWinner = heat.winnerEntryId; heat.status = 'completed'; heat.winnerEntryId = pendingResult.winnerId; heat.laneTimesMs = laneTimes; const after = cloneValue(heat); const action = pendingResult.isChange ? 'result.corrected' : 'result.recorded'; const text = pendingResult.isChange ? `Match ${heat.matchNumber} heat ${heat.heatNumber} winner changed from ${carLabel(beforeWinner)} to ${carLabel(heat.winnerEntryId)}. Reason: ${reason}.` : `Match ${heat.matchNumber} heat ${heat.heatNumber} winner recorded as ${carLabel(heat.winnerEntryId)}.`;
+        undoRecord = Object.freeze({ heatId: heat.id, before, after, sourceAction: action }); appendHeatAudit(action, text, heat, { beforeWinnerEntryId: beforeWinner, afterWinnerEntryId: heat.winnerEntryId, beforeLaneTimesMs: before.laneTimesMs, afterLaneTimesMs: after.laneTimesMs, reason }); lastReceipt = Object.freeze({ text, timestamp: eventState.event.updatedAt }); pendingResult = null; selectedWinnerId = null; liveMessage = ''; if (liveHeatIndex < orderedLiveHeats().length - 1) liveHeatIndex += 1; renderView('live');
+      }
+      function undoLastHeatMutation() { if (!undoRecord) { announce('Nothing to undo.'); liveMessage = 'Nothing to undo.'; renderView('live'); return; } const heat = eventState.matches.find((item) => item.id === undoRecord.heatId); if (!heat) { undoRecord = null; announce('Nothing to undo.'); return; } const current = cloneValue(heat); Object.assign(heat, cloneValue(undoRecord.before)); liveHeatIndex = orderedLiveHeats().findIndex((item) => item.id === heat.id); const summary = `Last change to match ${heat.matchNumber} heat ${heat.heatNumber} was undone.`; appendHeatAudit('result.undone', summary, heat, { before: current, restored: cloneValue(heat), sourceAction: undoRecord.sourceAction }); lastReceipt = Object.freeze({ text: summary, timestamp: eventState.event.updatedAt }); undoRecord = null; selectedWinnerId = null; pendingResult = null; liveMessage = ''; renderView('live'); }
+      function openCancelHeat() { const heat = currentLiveHeat(); if (!heat) return; pendingHeatAction = { type: 'cancel', heatId: heat.id }; const dialog = document.getElementById('app-dialog'); dialogReturnFocus = document.activeElement; dialog.replaceChildren(element('div', { className: 'dialog-inner' }, [element('h2', { text: `Cancel match ${heat.matchNumber} heat ${heat.heatNumber}?`, attributes: { id: 'dialog-title' } }), field('Cancellation reason', 'cancel-heat-reason', '', { maxlength: 500 }), element('div', { className: 'action-row' }, [button('Confirm cancellation', 'confirm-cancel-heat', 'primary-action'), button('Cancel', 'close-dialog')])])); dialog.showModal(); }
+      function confirmCancelHeat() { const action = pendingHeatAction; const heat = action ? eventState.matches.find((item) => item.id === action.heatId) : null; if (!heat) return; const input = document.getElementById('cancel-heat-reason'); const reason = input.value.trim(); if (!reason || reason.length > 500) { setFieldError(input.id, 'Cancellation reason is required.'); return; } const before = cloneValue(heat); heat.status = 'cancelled'; heat.winnerEntryId = null; heat.laneTimesMs = [null, null, null]; const after = cloneValue(heat); undoRecord = Object.freeze({ heatId: heat.id, before, after, sourceAction: 'heat.cancelled' }); const text = `Match ${heat.matchNumber} heat ${heat.heatNumber} cancelled. Reason: ${reason}.`; closeDialog(); appendHeatAudit('heat.cancelled', text, heat, { reason, before, after }); lastReceipt = Object.freeze({ text, timestamp: eventState.event.updatedAt }); selectedWinnerId = null; pendingResult = null; renderView('live'); }
+      function markHeatRerun() { const heat = currentLiveHeat(); if (!heat) return; const before = cloneValue(heat); heat.status = 'rerun'; heat.winnerEntryId = null; heat.laneTimesMs = [null, null, null]; const after = cloneValue(heat); undoRecord = Object.freeze({ heatId: heat.id, before, after, sourceAction: 'heat.rerun' }); const text = `Match ${heat.matchNumber} heat ${heat.heatNumber} marked for rerun.`; appendHeatAudit('heat.rerun', text, heat, { before, after }); lastReceipt = Object.freeze({ text, timestamp: eventState.event.updatedAt }); selectedWinnerId = null; pendingResult = null; renderView('live'); }
+      function saveIssueNote() { const heat = currentLiveHeat(); if (!heat) return; const note = document.getElementById('live-issue-note').value.trim(); if (note.length > 2000) { setFieldError('live-issue-note', 'Issue note must be 2000 characters or fewer.'); return; } const before = heat.notes; heat.notes = note; appendHeatAudit('heat.issue-noted', `Issue note updated for match ${heat.matchNumber} heat ${heat.heatNumber}.`, heat, { before, after: note }); liveMessage = ''; renderView('live'); }
+
       function renderPlaceholder(container, view) {
         const detail = viewDetails[view]; appendWorkspaceHeader(container, detail[0], detail[1], view === 'live' ? 'Race controls stay inactive until a valid schedule is armed.' : 'This view will project official event data without duplicating canonical state.');
         if (view === 'live') container.append(element('aside', { className: 'panel live-dock', attributes: { 'data-live-dock': '', 'aria-label': 'Live control dock' } }, [element('strong', { text: 'Live control dock' }), element('span', { text: 'Waiting for an armed event' })]));
       }
       function renderView(view) {
         const container = document.getElementById('view-content'); if (!container) return; container.replaceChildren();
-        if (view === 'dashboard') renderDashboard(container); else if (view === 'registration') renderRegistration(container); else if (view === 'setup') renderSetup(container); else if (view === 'reports') renderReports(container); else if (view === 'settings') renderSettings(container); else renderPlaceholder(container, view);
+        if (view === 'dashboard') renderDashboard(container); else if (view === 'registration') renderRegistration(container); else if (view === 'setup') renderSetup(container); else if (view === 'live') renderLive(container); else if (view === 'reports') renderReports(container); else if (view === 'settings') renderSettings(container); else renderPlaceholder(container, view);
       }
       function selectView(view) {
         if (!Object.hasOwn(viewDetails, view)) return; activeView = view; const main = document.getElementById('main-content'); main.dataset.activeView = view;
@@ -1137,6 +1325,18 @@
         else if (action === 'withdraw-car') withdrawCar(id);
         else if (action === 'confirm-withdraw') confirmWithdraw(id);
         else if (action === 'restore-car') restoreCar(id);
+        else if (action === 'generate-schedule') generateScheduleCandidate();
+        else if (action === 'activate-schedule') activateSchedule();
+        else if (action === 'select-winner') selectLiveWinner(id);
+        else if (action === 'review-winner') reviewWinner();
+        else if (action === 'confirm-live-result') confirmLiveResult();
+        else if (action === 'dismiss-result') { pendingResult = null; renderView('live'); }
+        else if (action === 'previous-heat') navigateLive(-1);
+        else if (action === 'next-heat') navigateLive(1);
+        else if (action === 'cancel-heat') openCancelHeat();
+        else if (action === 'confirm-cancel-heat') confirmCancelHeat();
+        else if (action === 'rerun-heat') markHeatRerun();
+        else if (action === 'save-issue') saveIssueNote();
         else if (action === 'save-event-details') { const name = document.getElementById('setup-event-name').value.trim(); const date = document.getElementById('setup-event-date').value; const venue = document.getElementById('setup-venue').value.trim(); const organizer = document.getElementById('setup-organizer').value.trim(); let invalid = false; clearValidation(['setup-event-name', 'setup-event-date', 'setup-venue', 'setup-organizer']); if (!name || name.length > 200) { setFieldError('setup-event-name', !name ? 'Event name is required.' : 'Event name must be 200 characters or fewer.'); invalid = true; } if (!date || date.length > 32) { setFieldError('setup-event-date', 'Event date is required and must be 32 characters or fewer.'); invalid = true; } if (venue.length > 200) { setFieldError('setup-venue', 'Venue must be 200 characters or fewer.'); invalid = true; } if (organizer.length > 200) { setFieldError('setup-organizer', 'Organizer must be 200 characters or fewer.'); invalid = true; } if (invalid) return; Object.assign(eventState.event, { name, date, venue, organizer }); meaningfulChange('Event details updated', 'event', eventState.event.id); updateChrome(); renderView('setup'); }
         else if (action === 'focus-prices') document.getElementById('price-editor').scrollIntoView({ block: 'center' });
         else if (action === 'save-prices') { let valid = true; let validationMessage = ''; const prices = {}; document.querySelectorAll('[data-category-price]').forEach((input) => { const cents = Number(input.value); if (!isSafeWhole(cents)) valid = false; prices[input.dataset.categoryPrice] = cents; }); if (valid) { const candidate = cloneValue(eventState); candidate.settings.prices = prices; const result = validateEvent(candidate); if (!result.ok) { valid = false; validationMessage = result.issues[0]; } } if (!valid) { const error = document.getElementById('prices-error'); error.textContent = validationMessage || 'Every price must be a non-negative whole number of cents.'; error.setAttribute('role', 'alert'); error.setAttribute('aria-live', 'assertive'); return; } eventState.settings.prices = prices; meaningfulChange('Category prices updated', 'event', eventState.event.id); renderView('setup'); }
@@ -1153,7 +1353,18 @@
         if (target.matches('[data-action="set-theme"]')) { applyTheme(target.value, true); announce(`Theme set to ${target.value}.`); }
         else if (target.id === 'car-sort') { carSort = target.value; renderView('registration'); }
         else if (target.id === 'account-filter') { accountFilter = target.value; renderView('registration'); }
+        else if (target.id === 'schedule-type') { scheduleDraft.mode = target.value; scheduleDraft.mapping = activeCars().map((entry) => entry.id); scheduleDraft.message = ''; refreshScheduleCandidate(); renderView('setup'); }
+        else if (target.matches('[data-slot-index]')) { scheduleDraft.mapping[Number(target.dataset.slotIndex)] = target.value; scheduleDraft.message = ''; refreshScheduleCandidate(); renderView('setup'); }
         else if (target.id === 'import-input') importFile(target.files?.[0]);
+      }
+      function handleKeydown(event) {
+        if (activeView !== 'live' || !eventState || !eventState.matches.length || document.getElementById('app-dialog').open) return;
+        const tag = event.target?.tagName?.toLowerCase(); if (['input', 'textarea', 'select'].includes(tag)) return;
+        if ((event.ctrlKey && event.key.toLowerCase() === 'z') || (!event.ctrlKey && event.key.toLowerCase() === 'u')) { event.preventDefault(); undoLastHeatMutation(); return; }
+        if (event.key === 'ArrowLeft') { event.preventDefault(); navigateLive(-1); return; }
+        if (event.key === 'ArrowRight') { event.preventDefault(); navigateLive(1); return; }
+        if (['1', '2', '3'].includes(event.key)) { event.preventDefault(); const heat = currentLiveHeat(); const id = heat?.lanes[Number(event.key) - 1]; if (id === null || id === undefined) { liveMessage = 'Winner must be assigned to this heat.'; renderView('live'); } else selectLiveWinner(id); return; }
+        if (event.key === 'Enter' && selectedWinnerId) { event.preventDefault(); reviewWinner(); }
       }
       function publicState() {
         if (eventState) return { ...cloneValue(eventState), activeView, theme };
@@ -1165,6 +1376,7 @@
       window.addEventListener('beforeunload', () => { clearTimeout(saveTimer); if (eventState) saveNow(true); });
       document.addEventListener('click', handleClick);
       document.addEventListener('change', handleChange);
+      document.addEventListener('keydown', handleKeydown);
       document.getElementById('app-dialog').addEventListener('close', handleDialogClose);
       matchMedia('(prefers-color-scheme: dark)').addEventListener('change', () => { if (theme === 'system') applyTheme('system'); });
 
