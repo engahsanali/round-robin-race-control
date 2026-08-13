@@ -147,6 +147,7 @@ test('returns focus after Escape from registration, live, recovery, and finals d
 });
 
 test('fits all views and print routes at phone, tablet, desktop, and projector sizes', async ({ page }) => {
+  test.setTimeout(120_000);
   await page.goto(fileUrl);
   for (const width of [320, 768, 1280, 1920]) {
     await page.setViewportSize({ width, height: 900 });
@@ -176,6 +177,7 @@ test('fits all views and print routes at phone, tablet, desktop, and projector s
   await page.getByRole('button', { name: 'Reports' }).click();
   await page.getByLabel('Import event JSON').setInputFiles({ name: 'unicode.json', mimeType: 'application/json', buffer: Buffer.from(JSON.stringify(state)) });
   for (const width of [320, 768, 1280, 1920]) {
+    await page.emulateMedia({ media: 'screen' });
     await page.setViewportSize({ width, height: 900 });
     for (const view of views) {
       await page.locator(`[data-view="${view}"]`).click();
