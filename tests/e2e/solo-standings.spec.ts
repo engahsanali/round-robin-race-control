@@ -107,6 +107,39 @@ test('renders the complete analytical story with inline graphics, takeaways, tab
   expect(await page.evaluate(() => document.documentElement.scrollWidth)).toBeLessThanOrEqual(320);
 });
 
+test('uses value-correct chart geometry, match-by-match cumulative series, scheduled lane stacks, and a full opponent matrix', async ({ page }) => {
+  const event = standingsEvent() as any;
+  event.matches[1].status = 'scheduled'; event.matches[1].winnerEntryId = null; event.matches[1].laneTimesMs = [null, null, null];
+  event.matches[2].status = 'scheduled'; event.matches[2].winnerEntryId = null; event.matches[2].laneTimesMs = [null, null, null];
+  event.matches[3].status = 'scheduled'; event.matches[3].winnerEntryId = null; event.matches[3].laneTimesMs = [null, null, null];
+  await importEvent(page, event);
+  await page.getByRole('button', { name: 'Dashboard' }).click();
+  const completion = await page.locator('[data-chart="Event completion"] svg').evaluate((svg) => ({ completed: svg.getAttribute('data-completed'), total: svg.getAttribute('data-total'), share: svg.querySelector('[data-series-label="Completed"]')?.getAttribute('data-share') }));
+  expect(completion).toEqual({ completed: '1', total: '4', share: '0.25' });
+
+  const categoryShares = await page.locator('[data-chart="Category mix"] [data-series-label]').evaluateAll((nodes) => nodes.map((node) => Number(node.getAttribute('data-share'))));
+  expect(categoryShares.reduce((total, share) => total + share, 0)).toBeCloseTo(1, 8);
+  await page.getByRole('button', { name: 'Standings', exact: true }).click();
+  expect(await page.locator('[data-chart="Cumulative wins by match"] [data-series="Ada Arrow"]').getAttribute('data-values')).toBe('[1,1]');
+  expect(await page.locator('[data-chart="Cumulative wins by match"] [data-series="Cleo Arrow"]').getAttribute('data-values')).toBe('[0,0]');
+
+  const adaLaneValues = await page.locator('[data-chart="Lane balance"] [data-series="Ada Arrow"] [data-lane]').evaluateAll((nodes) => nodes.map((node) => Number(node.getAttribute('data-value'))));
+  expect(adaLaneValues).toEqual([2, 0, 0]);
+  await expect(page.locator('[data-chart="Opponent repeat matrix"] [data-matrix-cell]')).toHaveCount(16);
+  await expect(page.locator('[data-chart="Opponent repeat matrix"] table[aria-label="Opponent repeat matrix data"] thead th')).toHaveCount(5);
+});
+
+test('podium retains every entrant sharing a top-three competitive rank', async ({ page }) => {
+  const event = standingsEvent() as any;
+  event.participants.push({ id: 'person-6', name: 'Eli', email: '', phone: '', notes: '' });
+  event.entries.push({ id: 'car-6', participantId: 'person-6', carNumber: 6, name: 'Eli Arrow', categoryId: 'open', quantity: 1, active: true });
+  event.matches.push({ id: 'm3-h1', phase: 'preliminary', matchNumber: 3, heatNumber: 1, lanes: ['car-6', 'car-2', 'car-4'], status: 'completed', winnerEntryId: 'car-6', laneTimesMs: [960, 1180, 1090], notes: '' });
+  await openStandings(page, event);
+  const podiumNames = await page.locator('[data-chart="Podium"] [data-podium-place]').allTextContents();
+  expect(podiumNames).toEqual(expect.arrayContaining(['#1Ada ArrowPlaced', '#2Cleo ArrowTied place', '#2Dara ArrowTied place', '#2Eli ArrowTied place']));
+  expect(podiumNames).toHaveLength(4);
+});
+
 test('makes analytical movement instant when reduced motion is requested', async ({ page }) => {
   await page.emulateMedia({ reducedMotion: 'reduce' });
   await openStandings(page, standingsEvent());

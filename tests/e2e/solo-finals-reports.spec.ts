@@ -26,6 +26,22 @@ function finalsEvent(count = 4, finalistCount = 2) {
   };
 }
 
+function cutoffTieEvent(tiedCount = 4, finalistCount = 3) {
+  const count = tiedCount + 1;
+  const event = finalsEvent(count, finalistCount) as any;
+  event.event.name = `${tiedCount}-way Cutoff Cup`;
+  event.matches = [
+    { id: 'leader-1', phase: 'preliminary', matchNumber: 1, heatNumber: 1, lanes: ['car-1', 'car-2', 'car-3'], status: 'completed', winnerEntryId: 'car-1', laneTimesMs: [900, 1000, 1010], notes: '' },
+    { id: 'leader-2', phase: 'preliminary', matchNumber: 2, heatNumber: 1, lanes: ['car-1', 'car-4', 'car-5'], status: 'completed', winnerEntryId: 'car-1', laneTimesMs: [890, 1020, 1030], notes: '' },
+    ...Array.from({ length: tiedCount }, (_, index) => {
+      const car = `car-${index + 2}`;
+      const others = Array.from({ length: count }, (__, entryIndex) => `car-${entryIndex + 1}`).filter((id) => id !== car).slice(0, 2);
+      return { id: `tie-${index + 1}`, phase: 'preliminary', matchNumber: index + 3, heatNumber: 1, lanes: [car, others[0], others[1]], status: 'completed', winnerEntryId: car, laneTimesMs: [950 + index, 1100 + index, 1150 + index], notes: '' };
+    }),
+  ];
+  return event;
+}
+
 async function importEvent(page: Page, value: unknown) {
   await page.goto(fileUrl);
   await page.getByRole('button', { name: 'Reports' }).click();
@@ -47,7 +63,7 @@ test('surfaces a tied qualification cutoff and supports include-all, playoff, an
   await page.getByRole('button', { name: 'Manual selection with reason' }).click();
   await page.getByRole('button', { name: 'Confirm manual finalists' }).click();
   await expect(page.getByLabel('Manual qualification reason')).toHaveAttribute('aria-invalid', 'true');
-  await page.getByLabel('Manual cutoff qualifier').selectOption('car-3');
+  await page.getByRole('group', { name: 'Manual cutoff qualifiers' }).getByRole('checkbox', { name: /Finalist 3/ }).check();
   await page.getByLabel('Manual qualification reason').fill('Race director reviewed the finish evidence');
   await page.getByRole('button', { name: 'Confirm manual finalists' }).click();
   await expect(page.getByRole('list', { name: 'Selected finalists' })).toContainText('Finalist 1');
@@ -62,6 +78,43 @@ test('surfaces a tied qualification cutoff and supports include-all, playoff, an
 
   await openFinals(page, finalsEvent());
   await page.getByRole('button', { name: 'Include all tied cars' }).click();
+  await expect(page.getByRole('list', { name: 'Selected finalists' }).getByRole('listitem')).toHaveCount(3);
+});
+
+test('qualification playoff schedules every entrant in a four-way cutoff tie without creating championship standings', async ({ page }) => {
+  await openFinals(page, cutoffTieEvent(4, 2));
+  await expect(page.getByText('2 places requested · 4 cars tied across the cutoff', { exact: true })).toBeVisible();
+  await page.getByRole('button', { name: 'Generate qualification playoff' }).click();
+  const state = await page.evaluate(() => (window as any).RR3.getState());
+  expect(state.finals).toHaveLength(2);
+  expect(state.finals.map((heat: any) => heat.lanes.filter(Boolean).length)).toEqual([2, 2]);
+  expect(state.finals.flatMap((heat: any) => heat.lanes.filter(Boolean)).sort()).toEqual(['car-2', 'car-3', 'car-4', 'car-5']);
+  expect(state.finals.every((heat: any) => heat.notes === 'Qualification playoff')).toBe(true);
+  expect(state.auditLog.at(-1)).toMatchObject({ action: 'finals.playoff-generated', details: { purpose: 'qualification-playoff', tiedCarIds: ['car-2', 'car-3', 'car-4', 'car-5'] } });
+
+  await expect(page.getByRole('table', { name: 'Finals standings' }).locator('tbody tr')).toHaveCount(5);
+  await expect(page.getByRole('table', { name: 'Finals standings' })).not.toContainText(/1 win/i);
+  await expect(page.getByText('Championship finals have not been generated.', { exact: true })).toBeVisible();
+  await expect(page.getByRole('button', { name: 'Manual champion decision' })).toBeDisabled();
+  await expect(page.getByRole('button', { name: 'Seal official results' })).toBeDisabled();
+});
+
+test('manual cutoff resolution requires the exact number of distinct eligible tied entrants plus a reason', async ({ page }) => {
+  await openFinals(page, cutoffTieEvent(4, 3));
+  await page.getByRole('button', { name: 'Manual selection with reason' }).click();
+  const qualifiers = page.getByRole('group', { name: 'Manual cutoff qualifiers' }).getByRole('checkbox');
+  await expect(qualifiers).toHaveCount(4);
+  await qualifiers.nth(0).check();
+  await page.getByLabel('Manual qualification reason').fill('Officials reviewed the tied cutoff evidence');
+  await page.getByRole('button', { name: 'Confirm manual finalists' }).click();
+  await expect(page.getByRole('alert').filter({ hasText: 'Select exactly 2 eligible tied entrants.' })).toBeVisible();
+  await qualifiers.nth(1).check();
+  await page.getByRole('button', { name: 'Confirm manual finalists' }).click();
+  const state = await page.evaluate(() => (window as any).RR3.getState());
+  expect(state.auditLog.at(-1)).toMatchObject({
+    action: 'finals.manual-qualified',
+    details: { selectedCarIds: ['car-1', 'car-2', 'car-3'], reason: 'Officials reviewed the tied cutoff evidence' },
+  });
   await expect(page.getByRole('list', { name: 'Selected finalists' }).getByRole('listitem')).toHaveCount(3);
 });
 
@@ -90,6 +143,66 @@ test('maps all fifteen finalists through the fixed workbook preset and uses bala
   expect(state.matches).toEqual(preliminary);
 });
 
+test('guards finals replacement with a reason and recoverable snapshot while cancel and storage failure preserve results', async ({ page }) => {
+  const event = finalsEvent(4, 3) as any;
+  event.finals = [{ id: 'existing-final', phase: 'final', matchNumber: 1, heatNumber: 1, lanes: ['car-1', 'car-2', 'car-3'], status: 'completed', winnerEntryId: 'car-2', laneTimesMs: [1000, 900, 1100], notes: 'Championship finals' }];
+  await openFinals(page, event);
+  const before = await page.evaluate(() => (window as any).RR3.getState());
+
+  await page.getByRole('button', { name: 'Generate finals schedule' }).click();
+  await expect(page.getByRole('dialog')).toContainText('1 existing finals heat');
+  await page.getByRole('button', { name: 'Cancel', exact: true }).click();
+  expect((await page.evaluate(() => (window as any).RR3.getState())).finals).toEqual(before.finals);
+
+  await page.getByRole('button', { name: 'Generate finals schedule' }).click();
+  await page.getByLabel('Finals replacement reason').fill('Re-seed after verified lane repair');
+  await page.evaluate(() => {
+    const runtime = window as any;
+    runtime.originalStorageSetItemForFinals = Storage.prototype.setItem;
+    Storage.prototype.setItem = function (key, value) {
+      if (key === 'rr3:solo:event:previous') throw new Error('simulated finals snapshot failure');
+      return runtime.originalStorageSetItemForFinals.call(this, key, value);
+    };
+  });
+  await page.getByRole('button', { name: 'Confirm finals replacement' }).click();
+  await expect(page.getByRole('dialog')).toContainText('previous valid snapshot could not be saved');
+  expect((await page.evaluate(() => (window as any).RR3.getState())).finals).toEqual(before.finals);
+  await page.evaluate(() => {
+    const runtime = window as any;
+    Storage.prototype.setItem = runtime.originalStorageSetItemForFinals;
+    delete runtime.originalStorageSetItemForFinals;
+  });
+  await page.getByRole('button', { name: 'Confirm finals replacement' }).click();
+  const after = await page.evaluate(() => ({ state: (window as any).RR3.getState(), previous: JSON.parse(localStorage.getItem('rr3:solo:event:previous') ?? 'null') }));
+  expect(after.previous.finals).toEqual(before.finals);
+  expect(after.state.finals).not.toEqual(before.finals);
+  expect(after.state.auditLog.at(-1)).toMatchObject({ action: 'finals.schedule-replaced', details: { reason: 'Re-seed after verified lane repair', beforeHeatCount: 1 } });
+});
+
+test('guards qualification playoff replacement and invalidates stale championship publication', async ({ page }) => {
+  const event = cutoffTieEvent(4, 2) as any;
+  event.event.resultSeal = 'official';
+  event.finals = [{ id: 'cancelled-final', phase: 'final', matchNumber: 1, heatNumber: 1, lanes: ['car-1', 'car-2', 'car-3'], status: 'cancelled', winnerEntryId: null, laneTimesMs: [null, null, null], notes: 'Championship finals' }];
+  event.auditLog = [{ id: 'manual-champion', timestamp: event.event.updatedAt, action: 'champion.manual-decided', summary: 'Manual champion', entityType: 'event', entityId: event.event.id, details: { championCarId: 'car-1', reason: 'Prior championship decision' } }];
+  await openFinals(page, event);
+  const before = await page.evaluate(() => (window as any).RR3.getState());
+  await page.getByRole('button', { name: 'Generate qualification playoff' }).click();
+  await expect(page.getByRole('dialog')).toContainText('1 existing finals heat');
+  await page.getByRole('button', { name: 'Cancel', exact: true }).click();
+  expect((await page.evaluate(() => (window as any).RR3.getState())).finals).toEqual(before.finals);
+
+  await page.getByRole('button', { name: 'Generate qualification playoff' }).click();
+  await page.getByLabel('Finals replacement reason').fill('Replace cancelled championship with cutoff resolution');
+  await page.getByRole('button', { name: 'Confirm finals replacement' }).click();
+  const after = await page.evaluate(() => ({ state: (window as any).RR3.getState(), previous: JSON.parse(localStorage.getItem('rr3:solo:event:previous') ?? 'null') }));
+  expect(after.previous.finals).toEqual(before.finals);
+  expect(after.state.finals.every((heat: any) => heat.notes === 'Qualification playoff')).toBe(true);
+  expect(after.state.event.resultSeal).toBe('provisional');
+  expect(after.state.auditLog.at(-1)).toMatchObject({ action: 'finals.playoff-replaced', details: { purpose: 'qualification-playoff', reason: 'Replace cancelled championship with cutoff resolution', invalidatedChampionCarId: 'car-1', invalidatedSeal: 'official' } });
+  await expect(page.getByRole('button', { name: 'Manual champion decision' })).toBeDisabled();
+  await expect(page.getByRole('button', { name: 'Seal official results' })).toBeDisabled();
+});
+
 test('guards the champion and official seal until finals complete or a reasoned manual decision is audited', async ({ page }) => {
   const event = finalsEvent(4, 3) as any;
   event.finals = [{ id: 'final-1', phase: 'final', matchNumber: 1, heatNumber: 1, lanes: ['car-1', 'car-2', 'car-3'], status: 'scheduled', winnerEntryId: null, laneTimesMs: [null, null, null], notes: '' }];
@@ -113,6 +226,40 @@ test('guards the champion and official seal until finals complete or a reasoned 
   expect(sealed.auditLog.map((entry: any) => entry.action)).toEqual(expect.arrayContaining(['champion.manual-decided', 'results.sealed']));
 });
 
+test('resetting finals invalidates a stale manual champion and official seal while retaining an audit trail', async ({ page }) => {
+  const event = finalsEvent(4, 3) as any;
+  event.event.resultSeal = 'official';
+  event.finals = [{ id: 'championship-final', phase: 'final', matchNumber: 1, heatNumber: 1, lanes: ['car-1', 'car-2', 'car-3'], status: 'completed', winnerEntryId: 'car-2', laneTimesMs: [1000, 900, 1100], notes: 'Championship finals' }];
+  event.auditLog = [
+    { id: 'manual-champion', timestamp: event.event.updatedAt, action: 'champion.manual-decided', summary: 'Manual champion', entityType: 'event', entityId: event.event.id, details: { championCarId: 'car-2', reason: 'Prior decision' } },
+    { id: 'official-seal', timestamp: event.event.updatedAt, action: 'results.sealed', summary: 'Official', entityType: 'event', entityId: event.event.id, details: { championCarId: 'car-2' } },
+  ];
+  await openFinals(page, event);
+  await expect(page.locator('[data-official-champion]')).toContainText('Finalist 2');
+  await page.getByRole('button', { name: 'Reset finals only' }).click();
+  await page.getByLabel('Finals reset reason').fill('Championship must be rerun');
+  await page.getByRole('button', { name: 'Confirm finals reset' }).click();
+  const state = await page.evaluate(() => (window as any).RR3.getState());
+  expect(state.event.resultSeal).toBe('provisional');
+  expect(state.finals).toEqual([]);
+  expect(state.auditLog.at(-1)).toMatchObject({ action: 'finals.reset', details: { invalidatedChampionCarId: 'car-2', invalidatedSeal: 'official' } });
+  await expect(page.locator('[data-official-champion]')).toHaveCount(0);
+  await expect(page.getByText('Champion pending valid finals completion.', { exact: true })).toBeVisible();
+});
+
+test('manual champion rejects active cars that are not eligible finalists', async ({ page }) => {
+  const event = finalsEvent(4, 3) as any;
+  event.finals = [{ id: 'championship-final', phase: 'final', matchNumber: 1, heatNumber: 1, lanes: ['car-1', 'car-2', 'car-3'], status: 'scheduled', winnerEntryId: null, laneTimesMs: [null, null, null], notes: 'Championship finals' }];
+  await openFinals(page, event);
+  await page.getByRole('button', { name: 'Manual champion decision' }).click();
+  await page.getByLabel('Manual champion', { exact: true }).evaluate((select) => select.append(new Option('Ineligible active car', 'car-4')));
+  await page.getByLabel('Manual champion', { exact: true }).selectOption('car-4');
+  await page.getByLabel('Manual champion reason').fill('Attempted invalid choice');
+  await page.getByRole('button', { name: 'Confirm manual champion' }).click();
+  await expect(page.getByLabel('Manual champion', { exact: true })).toHaveAttribute('aria-invalid', 'true');
+  expect((await page.evaluate(() => (window as any).RR3.getState())).auditLog.some((entry: any) => entry.action === 'champion.manual-decided')).toBe(false);
+});
+
 test('offers print routes whose controls disappear in print and creates a credited Canvas share card', async ({ page }) => {
   await importEvent(page, finalsEvent());
   await page.getByRole('button', { name: 'Reports' }).click();
@@ -132,6 +279,18 @@ test('offers print routes whose controls disappear in print and creates a credit
   await page.emulateMedia({ media: 'print' });
   expect(await page.locator('[data-print-controls]').evaluateAll((nodes) => nodes.every((node) => getComputedStyle(node).display === 'none'))).toBe(true);
   await expect(page.locator('[data-share-controls]')).toHaveCSS('display', 'none');
+});
+
+test('share card measures and truncates long event and car names within the canvas bounds', async ({ page }) => {
+  const event = finalsEvent() as any;
+  event.event.name = `Championship ${'Extraordinarily Long Event Name '.repeat(7)}`.slice(0, 200);
+  event.entries[0].name = `Lightning ${'Extremely Long Car Identity '.repeat(7)}`.slice(0, 200);
+  await importEvent(page, event);
+  await page.getByRole('button', { name: 'Reports' }).click();
+  const metrics = await page.locator('.share-canvas').evaluate((canvas: HTMLCanvasElement) => JSON.parse(canvas.dataset.shareLines ?? '[]'));
+  expect(metrics.length).toBeGreaterThan(3);
+  expect(metrics.some((item: any) => item.text.endsWith('…'))).toBe(true);
+  expect(metrics.every((item: any) => item.measuredWidth <= item.maxWidth + 0.5)).toBe(true);
 });
 
 test('ships as one dependency-free runtime HTML document', async () => {
