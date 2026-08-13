@@ -136,6 +136,7 @@ export function App({ updateSafety = idleUpdateSafety }: AppProps) {
   const isReducedMotion = useReducedMotionPreference();
   const commandDialog = useRef<HTMLDialogElement>(null);
   const aboutDialog = useRef<HTMLDialogElement>(null);
+  const mainContent = useRef<HTMLElement>(null);
   const commandTrigger = useRef<HTMLButtonElement>(null);
   const aboutTrigger = useRef<HTMLButtonElement>(null);
 
@@ -156,6 +157,11 @@ export function App({ updateSafety = idleUpdateSafety }: AppProps) {
   const closeAbout = () => {
     closeAndRestoreFocus(aboutDialog, aboutTrigger);
     setAboutOpen(false);
+  };
+
+  const navigateFromCommandPalette = () => {
+    safelyCloseDialog(commandDialog.current);
+    window.setTimeout(() => mainContent.current?.focus(), 0);
   };
 
   return (
@@ -229,7 +235,7 @@ export function App({ updateSafety = idleUpdateSafety }: AppProps) {
           </ul>
         </nav>
 
-        <main id="main-content" tabIndex={-1}>
+        <main ref={mainContent} id="main-content" tabIndex={-1} aria-labelledby="page-title">
           <AppRoutes />
         </main>
 
@@ -270,9 +276,9 @@ export function App({ updateSafety = idleUpdateSafety }: AppProps) {
         </div>
         <p>Commands will become available as an event moves from setup to live racing.</p>
         <ul className="command-list">
-          <li><NavLink to="/registration">Open registration</NavLink></li>
-          <li><NavLink to="/schedule">Open Schedule Lab</NavLink></li>
-          <li><NavLink to="/race">Open Race Command Center</NavLink></li>
+          <li><NavLink to="/registration" onClick={navigateFromCommandPalette}>Open registration</NavLink></li>
+          <li><NavLink to="/schedule" onClick={navigateFromCommandPalette}>Open Schedule Lab</NavLink></li>
+          <li><NavLink to="/race" onClick={navigateFromCommandPalette}>Open Race Command Center</NavLink></li>
         </ul>
       </dialog>
 

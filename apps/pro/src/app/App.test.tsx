@@ -1,5 +1,5 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import { cleanup, render, screen, within } from "@testing-library/react";
+import { cleanup, render, screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { MemoryRouter } from "react-router-dom";
 import { App, type UpdateSafety } from "./App";
@@ -178,5 +178,18 @@ describe("Pro application shell", () => {
     await user.click(aboutTrigger);
     const aboutDialog = screen.getByRole("dialog", { name: "About Round Robin Race Control Pro" });
     expect(within(aboutDialog).getByText("Made by Cesar Lacsamana and Ahsan Ali")).toBeTruthy();
+  });
+
+  it("closes the command palette and focuses the selected destination", async () => {
+    const user = userEvent.setup();
+    renderApp();
+
+    await user.click(screen.getByRole("button", { name: "Open command palette" }));
+    const commandDialog = screen.getByRole("dialog", { name: "Command palette" });
+    await user.click(within(commandDialog).getByRole("link", { name: "Open registration" }));
+
+    expect(commandDialog.hasAttribute("open")).toBe(false);
+    expect(screen.getByRole("heading", { name: "Registration & fees", level: 2 })).toBeTruthy();
+    await waitFor(() => expect(document.activeElement).toBe(screen.getByRole("main")));
   });
 });
