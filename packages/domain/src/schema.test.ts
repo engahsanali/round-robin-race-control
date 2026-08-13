@@ -279,6 +279,22 @@ describe("validateEventState", () => {
     expect(validateEventState(input).success).toBe(false);
   });
 
+  it.each([
+    ["category price", (input: ReturnType<typeof validEvent>) => { input.settings.prices.standard = Number.MAX_SAFE_INTEGER + 1; }],
+    ["payment amount", (input: ReturnType<typeof validEvent>) => { input.payments[0]!.amountCents = Number.MAX_SAFE_INTEGER + 1; }],
+    ["lane time", (input: ReturnType<typeof validEvent>) => { input.matches[0]!.laneTimesMs[0] = Number.MAX_SAFE_INTEGER + 1; }],
+    ["car number", (input: ReturnType<typeof validEvent>) => { input.entries[0]!.carNumber = Number.MAX_SAFE_INTEGER + 1; }],
+    ["entry quantity", (input: ReturnType<typeof validEvent>) => { input.entries[0]!.quantity = Number.MAX_SAFE_INTEGER + 1; }],
+    ["match number", (input: ReturnType<typeof validEvent>) => { input.matches[0]!.matchNumber = Number.MAX_SAFE_INTEGER + 1; }],
+    ["heat number", (input: ReturnType<typeof validEvent>) => { input.matches[0]!.heatNumber = Number.MAX_SAFE_INTEGER + 1; }],
+    ["finalist count", (input: ReturnType<typeof validEvent>) => { input.settings.finalistCount = Number.MAX_SAFE_INTEGER + 1; }]
+  ] as const)("rejects unsafe integer %s", (_label, mutate) => {
+    const input = validEvent();
+    mutate(input);
+
+    expect(validateEventState(input).success).toBe(false);
+  });
+
   it.each(["__proto__", "constructor", "prototype"])("recursively rejects the dangerous key %s", (dangerousKey) => {
     const input = validEvent();
     const dangerousContainer = JSON.parse(`{"${dangerousKey}":{"polluted":true}}`);

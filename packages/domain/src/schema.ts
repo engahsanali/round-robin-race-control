@@ -4,13 +4,18 @@ import type { EventStateV1, JsonValue, ValidationIssue, ValidationResult } from 
 
 const DANGEROUS_KEYS = new Set(["__proto__", "constructor", "prototype"]);
 const MAX_COLLECTION_SIZE = 10_000;
+const MAX_JSON_DEPTH = 128;
+const MAX_JSON_OBJECT_NODES = 100_000;
 
 const userString = (maximum: number) => z.string().trim().max(maximum);
 const requiredString = (maximum: number) => userString(maximum).min(1);
 const stableId = requiredString(128);
 const timestamp = requiredString(64);
-const moneyCents = z.number().finite().int().nonnegative();
-const positiveInteger = z.number().finite().int().positive();
+const safeNonnegativeInteger = z.number().finite().int().nonnegative()
+  .max(Number.MAX_SAFE_INTEGER, "Value must be a safe integer");
+const moneyCents = safeNonnegativeInteger;
+const positiveInteger = z.number().finite().int().positive()
+  .max(Number.MAX_SAFE_INTEGER, "Value must be a safe integer");
 const jsonValueSchema: z.ZodType<JsonValue> = z.lazy(() =>
   z.union([
     z.string(),
@@ -40,7 +45,7 @@ const carEntrySchema = z.object({
   active: z.boolean()
 }).strict();
 
-const nullableDuration = z.number().finite().int().nonnegative().nullable();
+const nullableDuration = safeNonnegativeInteger.nullable();
 
 const heatSchema = z.object({
   id: stableId,
@@ -229,31 +234,68 @@ function addReferenceIssue(context: z.RefinementCtx, path: Array<string | number
   context.addIssue({ code: z.ZodIssueCode.custom, path, message, params: { code } });
 }
 
-function findDangerousKeys(value: unknown, path: Array<string | number> = [], seen = new WeakSet<object>()): ValidationIssue[] {
-  if (value === null || typeof value !== "object") return [];
-  if (seen.has(value)) return [];
-  seen.add(value);
-
+export function inspectJsonSafety(value: unknown): ValidationIssue[] {
+  const pending: Array<{ value: unknown; path: Array<string | number>; depth: number }> = [
+    { value, path: [], depth: 0 }
+  ];
+  const discovered = new WeakSet<object>();
   const issues: ValidationIssue[] = [];
-  for (const key of Object.keys(value)) {
-    const pathSegment = Array.isArray(value) && /^\d+$/.test(key) ? Number(key) : key;
-    const nextPath = [...path, pathSegment];
-    if (DANGEROUS_KEYS.has(key)) {
-      issues.push({ code: "dangerous_key", path: nextPath, message: `Unsafe object key is not allowed: ${key}` });
+  let objectNodes = 0;
+  if (value !== null && typeof value === "object") {
+    discovered.add(value);
+    objectNodes = 1;
+  }
+
+  while (pending.length > 0) {
+    const current = pending.pop()!;
+    if (current.value === null || typeof current.value !== "object") continue;
+
+    for (const key of Object.keys(current.value)) {
+      const pathSegment = Array.isArray(current.value) && /^\d+$/.test(key) ? Number(key) : key;
+      const nextPath = [...current.path, pathSegment];
+      if (DANGEROUS_KEYS.has(key)) {
+        issues.push({ code: "dangerous_key", path: nextPath, message: `Unsafe object key is not allowed: ${key}` });
+      }
+      const child = (current.value as Record<string, unknown>)[key];
+      if (child !== null && typeof child === "object" && !discovered.has(child)) {
+        const childDepth = current.depth + 1;
+        if (childDepth > MAX_JSON_DEPTH) {
+          issues.push({
+            code: "import_depth_limit",
+            path: nextPath,
+            message: `JSON structure exceeds the maximum depth of ${MAX_JSON_DEPTH}`
+          });
+          return issues;
+        }
+        objectNodes += 1;
+        if (objectNodes > MAX_JSON_OBJECT_NODES) {
+          issues.push({
+            code: "import_node_limit",
+            path: nextPath,
+            message: `JSON structure exceeds the ${MAX_JSON_OBJECT_NODES}-object safety limit`
+          });
+          return issues;
+        }
+        discovered.add(child);
+        pending.push({ value: child, path: nextPath, depth: childDepth });
+      }
     }
-    issues.push(...findDangerousKeys((value as Record<string, unknown>)[key], nextPath, seen));
   }
   return issues;
 }
 
 export const eventStateV1Schema = z.unknown().transform((input, context): EventStateV1 => {
-  for (const issue of findDangerousKeys(input)) {
+  const safetyIssues = inspectJsonSafety(input);
+  for (const issue of safetyIssues) {
     context.addIssue({
       code: z.ZodIssueCode.custom,
       path: issue.path,
       message: issue.message,
       params: { code: issue.code }
     });
+  }
+  if (safetyIssues.some(({ code }) => code === "import_depth_limit" || code === "import_node_limit")) {
+    return z.NEVER;
   }
 
   const coreResult = eventStateV1CoreSchema.safeParse(input);

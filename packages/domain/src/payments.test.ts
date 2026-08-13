@@ -98,4 +98,53 @@ describe("participant accounts", () => {
 
     expect(() => calculateParticipantAccount(state, "participant-a")).toThrow();
   });
+
+  it("rejects unsafe integer cents at the accounting boundary", () => {
+    const priceState = eventState();
+    priceState.settings.prices.standard = Number.MAX_SAFE_INTEGER + 1;
+    const paymentState = eventState();
+    paymentState.payments.push({
+      id: "unsafe", participantId: "participant-a", amountCents: Number.MAX_SAFE_INTEGER + 1,
+      kind: "payment", paidAt: "2026-08-13T01:00:00.000Z", note: ""
+    });
+
+    expect(() => calculateParticipantAccount(priceState, "participant-a")).toThrow(/safe|integer/i);
+    expect(() => calculateParticipantAccount(paymentState, "participant-a")).toThrow(/safe|integer/i);
+  });
+
+  it("aggregates an event without rescanning entry and payment collections per participant", () => {
+    const state = eventState();
+    state.participants = Array.from({ length: 25 }, (_, index) => ({
+      id: `participant-${index}`, name: `Participant ${index}`, email: "", phone: "", notes: ""
+    }));
+    const entries = Array.from({ length: 25 }, (_, index) => ({
+      id: `car-${index}`, participantId: `participant-${index}`, carNumber: index + 1,
+      name: `Car ${index}`, categoryId: "standard", quantity: 1, active: true
+    }));
+    const payments = Array.from({ length: 25 }, (_, index) => ({
+      id: `payment-${index}`, participantId: `participant-${index}`, amountCents: 250,
+      kind: "payment" as const, paidAt: "2026-08-13T01:00:00.000Z", note: ""
+    }));
+    let entryFilterReads = 0;
+    let paymentFilterReads = 0;
+    state.entries = new Proxy(entries, {
+      get(target, property, receiver) {
+        if (property === "filter") entryFilterReads += 1;
+        return Reflect.get(target, property, receiver) as unknown;
+      }
+    });
+    state.payments = new Proxy(payments, {
+      get(target, property, receiver) {
+        if (property === "filter") paymentFilterReads += 1;
+        return Reflect.get(target, property, receiver) as unknown;
+      }
+    });
+
+    const accounts = calculateEventAccounts(state);
+
+    expect(accounts.participants).toHaveLength(25);
+    expect(accounts).toMatchObject({ chargeCents: 31_250, collectedCents: 6_250, balanceCents: 25_000 });
+    expect(entryFilterReads).toBeLessThanOrEqual(1);
+    expect(paymentFilterReads).toBeLessThanOrEqual(1);
+  });
 });

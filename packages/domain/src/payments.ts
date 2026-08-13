@@ -16,51 +16,72 @@ export type EventAccounts = {
 };
 
 export function calculateParticipantAccount(state: EventStateV1, participantId: string): ParticipantAccount {
-  assertValidEvent(state);
-  if (!state.participants.some(({ id }) => id === participantId)) {
+  const validatedState = assertValidEvent(state);
+  if (!validatedState.participants.some(({ id }) => id === participantId)) {
     throw new Error(`Unknown participant ID: ${participantId}`);
   }
+  return aggregateAccounts(validatedState, new Set([participantId])).get(participantId)!;
+}
 
-  let chargeCents = 0;
-  for (const entry of state.entries.filter((candidate) => candidate.participantId === participantId)) {
+export function calculateEventAccounts(state: EventStateV1): EventAccounts {
+  const validatedState = assertValidEvent(state);
+  const participantIds = new Set(validatedState.participants.map(({ id }) => id));
+  const accounts = aggregateAccounts(validatedState, participantIds);
+  const result: EventAccounts = { participants: [], chargeCents: 0, collectedCents: 0, balanceCents: 0 };
+  for (const participant of validatedState.participants) {
+    const account = accounts.get(participant.id)!;
+    result.participants.push(account);
+    result.chargeCents = safeAdd(result.chargeCents, account.chargeCents, "Event charge");
+    result.collectedCents = safeAdd(result.collectedCents, account.collectedCents, "Event collected amount");
+    result.balanceCents = safeAdd(result.balanceCents, account.balanceCents, "Event balance");
+  }
+  return result;
+}
+
+function aggregateAccounts(state: EventStateV1, participantIds: ReadonlySet<string>): Map<string, ParticipantAccount> {
+  const charges = new Map<string, number>();
+  const collected = new Map<string, number>();
+  for (const participantId of participantIds) {
+    charges.set(participantId, 0);
+    collected.set(participantId, 0);
+  }
+
+  for (const entry of state.entries) {
+    if (!participantIds.has(entry.participantId)) continue;
     assertSafePositiveInteger(entry.quantity, `Entry ${entry.id} quantity`);
     const priceCents = state.settings.prices[entry.categoryId];
     if (priceCents === undefined) {
       throw new Error(`Missing category price for ${entry.categoryId} on entry ${entry.id}`);
     }
     assertSafeNonnegativeInteger(priceCents, `Category ${entry.categoryId} price`);
-    chargeCents = safeAdd(chargeCents, safeMultiply(entry.quantity, priceCents, `Charge for entry ${entry.id}`), "Participant charge");
+    const entryCharge = safeMultiply(entry.quantity, priceCents, `Charge for entry ${entry.id}`);
+    charges.set(entry.participantId, safeAdd(charges.get(entry.participantId)!, entryCharge, "Participant charge"));
   }
 
-  let collectedCents = 0;
-  for (const payment of state.payments.filter((candidate) => candidate.participantId === participantId)) {
+  for (const payment of state.payments) {
+    if (!participantIds.has(payment.participantId)) continue;
     assertSafeNonnegativeInteger(payment.amountCents, `Payment ${payment.id} amount`);
     const signedAmount = payment.kind === "refund" ? -payment.amountCents : payment.amountCents;
-    collectedCents = safeAdd(collectedCents, signedAmount, "Participant collected amount");
+    collected.set(payment.participantId, safeAdd(collected.get(payment.participantId)!, signedAmount, "Participant collected amount"));
   }
 
-  return {
-    participantId,
-    chargeCents,
-    collectedCents,
-    balanceCents: safeAdd(chargeCents, -collectedCents, "Participant balance")
-  };
+  const accounts = new Map<string, ParticipantAccount>();
+  for (const participantId of participantIds) {
+    const chargeCents = charges.get(participantId)!;
+    const collectedCents = collected.get(participantId)!;
+    accounts.set(participantId, {
+      participantId,
+      chargeCents,
+      collectedCents,
+      balanceCents: safeAdd(chargeCents, -collectedCents, "Participant balance")
+    });
+  }
+  return accounts;
 }
 
-export function calculateEventAccounts(state: EventStateV1): EventAccounts {
-  assertValidEvent(state);
-  const participants = state.participants.map(({ id }) => calculateParticipantAccount(state, id));
-  return participants.reduce<EventAccounts>((totals, account) => ({
-    participants: [...totals.participants, account],
-    chargeCents: safeAdd(totals.chargeCents, account.chargeCents, "Event charge"),
-    collectedCents: safeAdd(totals.collectedCents, account.collectedCents, "Event collected amount"),
-    balanceCents: safeAdd(totals.balanceCents, account.balanceCents, "Event balance")
-  }), { participants: [], chargeCents: 0, collectedCents: 0, balanceCents: 0 });
-}
-
-function assertValidEvent(state: EventStateV1): void {
+function assertValidEvent(state: EventStateV1): EventStateV1 {
   const result = validateEventState(state);
-  if (result.success) return;
+  if (result.success) return result.data;
   const summary = result.issues.map((issue) => `${issue.path.join(".")}: ${issue.message}`).join("; ");
   throw new Error(`Invalid event state: ${summary}`);
 }

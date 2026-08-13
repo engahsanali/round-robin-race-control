@@ -15,7 +15,7 @@ export function buildRegistrationRows(state: EventStateV1): CsvRow[] {
   const rows: CsvRow[] = [[
     "Participant ID", "Participant", "Email", "Phone", "Car entry ID", "Car number", "Car", "Category", "Quantity", "Active"
   ]];
-  const entries = state.entries.slice().sort((left, right) => left.carNumber - right.carNumber || left.id.localeCompare(right.id));
+  const entries = state.entries.slice().sort((left, right) => left.carNumber - right.carNumber || compareCodeUnits(left.id, right.id));
   for (const entry of entries) {
     const participant = participants.get(entry.participantId);
     rows.push([
@@ -50,7 +50,7 @@ export function buildResultsRows(state: EventStateV1): CsvRow[] {
     phaseOrder(left.phase) - phaseOrder(right.phase)
     || left.matchNumber - right.matchNumber
     || left.heatNumber - right.heatNumber
-    || left.id.localeCompare(right.id)
+    || compareCodeUnits(left.id, right.id)
   );
   for (const heat of heats) {
     rows.push([
@@ -78,7 +78,7 @@ export function buildStandingsRows(state: EventStateV1, phase: "preliminary" | "
 
 export function buildAuditRows(state: EventStateV1): CsvRow[] {
   const entries = state.auditLog.slice().sort((left, right) =>
-    left.timestamp.localeCompare(right.timestamp) || left.id.localeCompare(right.id)
+    compareCodeUnits(left.timestamp, right.timestamp) || compareCodeUnits(left.id, right.id)
   );
   return [
     ["Audit ID", "Timestamp", "Action", "Summary", "Entity type", "Entity ID", "Details JSON"],
@@ -97,6 +97,10 @@ function encodeCell(value: CsvCell): string {
 
 function phaseOrder(phase: "preliminary" | "final"): number {
   return phase === "preliminary" ? 0 : 1;
+}
+
+function compareCodeUnits(left: string, right: string): number {
+  return left < right ? -1 : left > right ? 1 : 0;
 }
 
 function stableJson(value: unknown): string {

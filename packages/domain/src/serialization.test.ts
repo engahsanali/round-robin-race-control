@@ -83,4 +83,47 @@ describe("event interchange", () => {
 
     expect(parseEventJson(JSON.stringify(input)).ok).toBe(false);
   });
+
+  it.each([
+    ["unsafe payment cents", (state: EventStateV1) => { state.payments[0]!.amountCents = Number.MAX_SAFE_INTEGER + 1; }],
+    ["unsafe category price cents", (state: EventStateV1) => { state.settings.prices.standard = Number.MAX_SAFE_INTEGER + 1; }],
+    ["unsafe lane time", (state: EventStateV1) => { state.matches[0]!.laneTimesMs[0] = Number.MAX_SAFE_INTEGER + 1; }]
+  ])("rejects imported %s", (_label, mutate) => {
+    const input = validEvent();
+    mutate(input);
+
+    expect(parseEventJson(JSON.stringify(input)).ok).toBe(false);
+  });
+
+  it("rejects deeply nested JSON with a bounded issue instead of throwing or changing current state", () => {
+    const current = validEvent();
+    const before = serializeEvent(current);
+    const nestedDetails = `${'{"nested":'.repeat(5_000)}null${"}".repeat(5_000)}`;
+    const text = JSON.stringify(validEvent()).replace('"details":{"fixture":true}', `"details":${nestedDetails}`);
+    let result: ReturnType<typeof parseEventJson> | undefined;
+
+    expect(() => { result = parseEventJson(text); }).not.toThrow();
+    expect(result).toMatchObject({ ok: false, issues: [{ code: "import_depth_limit" }] });
+    expect(serializeEvent(current)).toBe(before);
+  });
+
+  it("rejects excessive object-node counts with a bounded issue", () => {
+    const input = { version: 1, nodes: Array.from({ length: 100_001 }, () => ({})) };
+
+    const result = migrateEvent(input);
+
+    expect(result).toMatchObject({ ok: false, issues: [{ code: "import_node_limit" }] });
+  });
+
+  it("converts unexpected validation exceptions into a discriminated issue", () => {
+    const input = new Proxy(validEvent() as unknown as Record<string, unknown>, {
+      ownKeys() {
+        throw new Error("Synthetic traversal failure");
+      }
+    });
+    let result: ReturnType<typeof migrateEvent> | undefined;
+
+    expect(() => { result = migrateEvent(input); }).not.toThrow();
+    expect(result).toMatchObject({ ok: false, issues: [{ code: "import_validation_error" }] });
+  });
 });

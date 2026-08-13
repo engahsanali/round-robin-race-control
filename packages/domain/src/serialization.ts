@@ -1,11 +1,9 @@
-import { validateEventState } from "./schema";
+import { inspectJsonSafety, validateEventState } from "./schema";
 import type { EventStateV1, ValidationIssue } from "./types";
 
 export type EventInterchangeResult =
   | { ok: true; data: EventStateV1 }
   | { ok: false; issues: ValidationIssue[] };
-
-const DANGEROUS_KEYS = new Set(["__proto__", "constructor", "prototype"]);
 
 export function serializeEvent(state: EventStateV1): string {
   const validated = validateEventState(state);
@@ -30,8 +28,19 @@ export function parseEventJson(text: string): EventInterchangeResult {
 }
 
 export function migrateEvent(input: unknown): EventInterchangeResult {
-  const dangerousIssues = findDangerousKeys(input);
-  if (dangerousIssues.length > 0) return { ok: false, issues: dangerousIssues };
+  try {
+    return migrateEventUnchecked(input);
+  } catch {
+    return {
+      ok: false,
+      issues: [{ code: "import_validation_error", path: [], message: "The event could not be safely validated" }]
+    };
+  }
+}
+
+function migrateEventUnchecked(input: unknown): EventInterchangeResult {
+  const safetyIssues = inspectJsonSafety(input);
+  if (safetyIssues.length > 0) return { ok: false, issues: safetyIssues };
 
   if (!isRecord(input) || input.version !== 1) {
     return {
@@ -47,22 +56,6 @@ export function migrateEvent(input: unknown): EventInterchangeResult {
   const validated = validateEventState(input);
   if (!validated.success) return { ok: false, issues: validated.issues };
   return { ok: true, data: structuredClone(validated.data) };
-}
-
-function findDangerousKeys(value: unknown, path: Array<string | number> = [], seen = new WeakSet<object>()): ValidationIssue[] {
-  if (value === null || typeof value !== "object" || seen.has(value)) return [];
-  seen.add(value);
-
-  const issues: ValidationIssue[] = [];
-  for (const key of Object.keys(value)) {
-    const segment = Array.isArray(value) && /^\d+$/.test(key) ? Number(key) : key;
-    const nextPath = [...path, segment];
-    if (DANGEROUS_KEYS.has(key)) {
-      issues.push({ code: "dangerous_key", path: nextPath, message: `Unsafe object key is not allowed: ${key}` });
-    }
-    issues.push(...findDangerousKeys((value as Record<string, unknown>)[key], nextPath, seen));
-  }
-  return issues;
 }
 
 function sortObjectKeys(value: unknown): unknown {
