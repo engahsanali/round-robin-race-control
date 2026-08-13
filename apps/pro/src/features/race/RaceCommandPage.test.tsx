@@ -99,6 +99,7 @@ describe("RaceCommandPage", () => {
     const receipt = await screen.findByRole("region", { name: "Result receipt" });
     expect(within(receipt).getByText(/Recorded Car 6.*Match 2.*Heat 3/i)).toBeTruthy();
     expect(within(receipt).getByText(/06:01:02/)).toBeTruthy();
+    expect(within(receipt).getByText(/car-02: 5 → 6/i)).toBeTruthy();
     await waitFor(async () => {
       expect((await repository.load())?.matches.find(({ id }) => id === "pre-m02-h03")).toMatchObject({
         status: "completed",
@@ -154,7 +155,7 @@ describe("RaceCommandPage", () => {
     vi.stubGlobal("SpeechSynthesisUtterance", class { text: string; constructor(text: string) { this.text = text; } });
     Object.defineProperty(window, "speechSynthesis", { configurable: true, value: { speak, cancel } });
     renderRace();
-    await screen.findByRole("heading", { name: "Race Command Center" });
+    const heading = await screen.findByRole("heading", { name: "Race Command Center" });
     await screen.findByRole("region", { name: "Current heat" });
 
     await user.click(screen.getByRole("button", { name: "Call current heat" }));
@@ -162,6 +163,11 @@ describe("RaceCommandPage", () => {
     await user.click(screen.getByRole("button", { name: "Enable announcer" }));
     await user.click(screen.getByRole("button", { name: "Call current heat" }));
     expect((speak.mock.calls[0]?.[0] as { text: string }).text).toMatch(/Match 2, Heat 3.*Lane 1, Car 3.*Lane 2, Car 6.*Lane 3, Car 9/);
+    heading.focus();
+    fireEvent.keyDown(window, { key: "2" });
+    fireEvent.keyDown(window, { key: "Enter" });
+    await screen.findByRole("region", { name: "Result receipt" });
+    expect((speak.mock.calls.at(-1)?.[0] as { text: string }).text).toMatch(/Recorded Car 6.*Match 2 Heat 3/i);
     await user.click(screen.getByRole("button", { name: "Disable announcer" }));
     expect(cancel).toHaveBeenCalled();
 

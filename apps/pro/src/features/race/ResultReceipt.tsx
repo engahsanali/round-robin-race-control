@@ -3,7 +3,8 @@ import type { CommandReceipt } from "../../state/commands";
 type ResultReceiptProps = { receipt: CommandReceipt; description: string; undoable: boolean; onUndo(): void; pending: boolean };
 
 export function ResultReceipt({ receipt, description, undoable, onUndo, pending }: ResultReceiptProps) {
-  const changes = receipt.affectedCarIds.flatMap((carId) => {
+  const rankIds = [...new Set([...Object.keys(receipt.previousRanks), ...Object.keys(receipt.nextRanks)])];
+  const changes = rankIds.flatMap((carId) => {
     const before = receipt.previousRanks[carId] ?? null;
     const after = receipt.nextRanks[carId] ?? null;
     return before === after ? [] : [`${carId}: ${before ?? "unranked"} → ${after ?? "unranked"}`];

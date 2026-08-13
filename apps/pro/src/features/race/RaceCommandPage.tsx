@@ -115,6 +115,7 @@ export function RaceCommandPage() {
       setReceiptDescription(description);
       setUndo({ before, receipt: nextReceipt, committedUpdatedAt: nextReceipt.timestamp, expiresAt: Date.now() + 30_000 });
       setMessage("Official result committed.");
+      announcer.announce(`${description}.`);
       setPendingLane(null);
       if (!isCorrection) {
         const nextIndex = heats.findIndex(({ id }) => id === current.id) + 1;
@@ -208,6 +209,8 @@ export function RaceCommandPage() {
   if (!event || !current) return <RaceUnavailable message="Create or load an event with an active schedule before opening live race control." />;
 
   const issueItems = heats.filter((heat) => issues[heat.id] === "delayed" || issues[heat.id] === "held");
+  const previousHeat = heats[currentIndex - 1] ?? null;
+  const nextHeat = heats[currentIndex + 1] ?? null;
   const undoable = Boolean(undo?.receipt.undoUntil && Date.now() <= undo.expiresAt);
   return (
     <section className="page-frame race-command-page" aria-labelledby="page-title">
@@ -226,6 +229,11 @@ export function RaceCommandPage() {
         <button type="button" onClick={() => selectHeat(currentIndex + 1)} disabled={currentIndex >= heats.length - 1}>Next heat</button>
       </nav>
       <p className="heat-phase" aria-label="Current heat call status">Heat call status: {issues[current.id] ?? "ready"}</p>
+      <dl className="race-context-facts" aria-label="Live heat context">
+        <div><dt>Previous</dt><dd>{previousHeat ? `${heatLabel(previousHeat)} · ${previousHeat.status}` : "None"}</dd></div>
+        <div><dt>Next</dt><dd>{nextHeat ? `${heatLabel(nextHeat)} · ${nextHeat.status}` : "None"}</dd></div>
+        <div><dt>Result seal</dt><dd>{event.event.resultSeal}</dd></div>
+      </dl>
       <div className="race-command-grid">
         <div>
           <HeatStage heat={current} event={event} pendingLane={pendingLane} times={times} onChooseLane={chooseLane} onTime={(lane, value) => setTimes((old) => old.map((item, index) => index === lane - 1 ? value : item) as [string, string, string])} />
@@ -245,6 +253,7 @@ export function RaceCommandPage() {
       </div>
       {receipt ? <ResultReceipt receipt={receipt} description={receiptDescription} undoable={undoable} onUndo={() => void undoLast()} pending={pending} /> : null}
       <p role="status" aria-label="Command status" aria-live="polite">{message}</p>
+      <section className="feature-panel" aria-label="Validation drawer"><h3>Validation &amp; recovery</h3><p>{error || eventState.postCommitIssue?.message || "No blocking validation issues."}</p></section>
       {error ? <p role="alert">{error}</p> : null}
     </section>
   );

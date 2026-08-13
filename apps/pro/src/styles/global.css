@@ -638,6 +638,24 @@ main {
   gap: var(--space-4);
 }
 
+.race-context-facts {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: var(--space-3);
+}
+
+.race-context-facts div {
+  padding: var(--space-3);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-md);
+  background: var(--surface-soft);
+}
+
+.race-context-facts dd {
+  margin: var(--space-1) 0 0;
+  font-weight: 850;
+}
+
 .race-side-panel ul {
   display: grid;
   gap: var(--space-2);
@@ -667,7 +685,8 @@ main {
 
   .race-command-grid,
   .lane-grid,
-  .spectator-race {
+  .spectator-race,
+  .race-context-facts {
     grid-template-columns: 1fr;
   }
 

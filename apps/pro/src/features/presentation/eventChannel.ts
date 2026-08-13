@@ -26,7 +26,7 @@ export function createSpectatorSnapshot(event: EventStateV1): SpectatorSnapshot 
   const validated = validateEventState(event);
   if (!validated.success) throw new Error("Only a validated event may be presented");
   const safe = validated.data;
-  const ordered = safe.matches.slice().sort((a, b) => a.matchNumber - b.matchNumber || a.heatNumber - b.heatNumber || a.id.localeCompare(b.id));
+  const ordered = [...safe.matches, ...safe.finals].sort((a, b) => phaseOrder(a.phase) - phaseOrder(b.phase) || a.matchNumber - b.matchNumber || a.heatNumber - b.heatNumber || compareStableIds(a.id, b.id));
   const currentIndex = ordered.findIndex(({ status }) => status === "scheduled" || status === "rerun");
   const current = currentIndex >= 0 ? ordered[currentIndex] ?? null : null;
   const next = currentIndex >= 0
@@ -36,7 +36,11 @@ export function createSpectatorSnapshot(event: EventStateV1): SpectatorSnapshot 
   const latest = (latestResultHeatId ? ordered.find(({ id }) => id === latestResultHeatId) : null)
     ?? ordered.filter(({ status }) => status === "completed").at(-1)
     ?? null;
-  const standings = calculateRankings(calculateStandings(safe, "preliminary"), safe.settings).map((row) => ({
+  const standingsPhase = safe.finals.some(({ status }) => status === "completed") ? "final" : "preliminary";
+  const finalCarIds = new Set(safe.finals.flatMap(({ lanes }) => lanes.filter((carId): carId is string => carId !== null)));
+  const standings = calculateRankings(calculateStandings(safe, standingsPhase), safe.settings)
+    .filter((row) => standingsPhase === "preliminary" || finalCarIds.has(row.carId))
+    .map((row) => ({
     carId: row.carId,
     carNumber: row.carNumber,
     carName: row.carName,
@@ -111,5 +115,7 @@ function carLabel(carId: string, event: EventStateV1): string {
   return entry ? `Car ${entry.carNumber}` : "Unknown car";
 }
 
-function heatLabel(heat: Heat): string { return `Match ${heat.matchNumber} Heat ${heat.heatNumber}`; }
+function heatLabel(heat: Heat): string { return `${heat.phase === "final" ? "Final · " : ""}Match ${heat.matchNumber} Heat ${heat.heatNumber}`; }
+function phaseOrder(phase: Heat["phase"]): number { return phase === "preliminary" ? 0 : 1; }
+function compareStableIds(left: string, right: string): number { return left < right ? -1 : left > right ? 1 : 0; }
 function isRecord(value: unknown): value is Record<string, unknown> { return typeof value === "object" && value !== null && !Array.isArray(value); }
