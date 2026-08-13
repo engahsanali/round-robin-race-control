@@ -108,3 +108,37 @@ Addressed all four reviewer findings in `packages/domain/src/schema.ts` and `pac
 ### Concerns
 
 None.
+
+## Review fix round 2 of 5
+
+### Status
+
+DONE
+
+Fixed the dangerous-key/core-schema short-circuit regression without weakening any round 1 behavior.
+
+### Changes
+
+- Replaced the short-circuiting `dangerousKeyGuard.pipe(eventStateV1CoreSchema)` composition with one exported Zod transform schema.
+- The transform scans the raw input for all dangerous keys and independently calls `eventStateV1CoreSchema.safeParse(input)`, adding both issue sets to the same Zod context.
+- Valid inputs still return only the core schema's normalized, inferred `EventStateV1` output; invalid core results return `z.NEVER` after all core issues have been added.
+- Added focused combined-input tests through `eventStateV1Schema.safeParse` and `validateEventState`. Each requires the nested `__proto__` issue, an empty event ID issue, and a preliminary-collection phase mismatch in the same result.
+
+### TDD and verification evidence
+
+1. RED: `pnpm vitest run packages/domain/src/schema.test.ts`
+   - Exit 1: 29 tests collected; 2 failed and 27 passed.
+   - Both failures showed only the dangerous-key issue, proving the ordinary ID and phase issues were short-circuited.
+2. GREEN: `pnpm vitest run packages/domain/src/schema.test.ts && pnpm typecheck`
+   - Exit 0: 1 test file passed; 29 tests passed; `tsc -b --pretty false` completed with zero errors.
+
+### Self-review
+
+- Confirmed both public entry points aggregate dangerous and ordinary issues from the same input.
+- Confirmed valid input still passes through the core schema and retains trimming/typed output behavior.
+- Confirmed one core parse occurs per public schema parse, avoiding the duplicate ordinary errors an intersection composition would create.
+- Confirmed the existing direct `parse`/`safeParse` dangerous-key tests, wrong-collection phase tests, and complete four-array fixture test remain in the passing 29-test suite.
+
+### Concerns
+
+None.

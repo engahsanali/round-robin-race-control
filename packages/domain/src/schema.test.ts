@@ -107,6 +107,16 @@ function validEvent() {
   };
 }
 
+function eventWithDangerousAndOrdinaryIssues() {
+  const input = validEvent();
+  input.event.id = "";
+  input.matches[0]!.phase = "final";
+  input.auditLog[0]!.details = {
+    nested: JSON.parse('{"__proto__":{"polluted":true}}')
+  };
+  return input;
+}
+
 describe("validateEventState", () => {
   it("accepts the mixed canonical demo event", () => {
     expect(validateEventState(demoEvent)).toMatchObject({ success: true });
@@ -299,6 +309,50 @@ describe("validateEventState", () => {
     }
     expect(() => eventStateV1Schema.parse(input)).toThrow();
     expect(({} as { polluted?: boolean }).polluted).toBeUndefined();
+  });
+
+  it("the exported Zod schema aggregates dangerous-key and ordinary validation issues", () => {
+    const result = eventStateV1Schema.safeParse(eventWithDangerousAndOrdinaryIssues());
+
+    expect(result.success).toBe(false);
+    if (!result.success) {
+      expect(result.error.issues).toEqual(expect.arrayContaining([
+        expect.objectContaining({
+          code: "custom",
+          path: ["auditLog", 0, "details", "nested", "__proto__"]
+        }),
+        expect.objectContaining({
+          code: "too_small",
+          path: ["event", "id"]
+        }),
+        expect.objectContaining({
+          code: "custom",
+          path: ["matches", 0, "phase"]
+        })
+      ]));
+    }
+  });
+
+  it("validateEventState aggregates dangerous-key and ordinary validation issues", () => {
+    const result = validateEventState(eventWithDangerousAndOrdinaryIssues());
+
+    expect(result.success).toBe(false);
+    if (!result.success) {
+      expect(result.issues).toEqual(expect.arrayContaining([
+        expect.objectContaining({
+          code: "dangerous_key",
+          path: ["auditLog", 0, "details", "nested", "__proto__"]
+        }),
+        expect.objectContaining({
+          code: "too_small",
+          path: ["event", "id"]
+        }),
+        expect.objectContaining({
+          code: "phase_mismatch",
+          path: ["matches", 0, "phase"]
+        })
+      ]));
+    }
   });
 
   it("returns all actionable validation issues in one result", () => {

@@ -246,7 +246,7 @@ function findDangerousKeys(value: unknown, path: Array<string | number> = [], se
   return issues;
 }
 
-const dangerousKeyGuard = z.unknown().superRefine((input, context) => {
+export const eventStateV1Schema = z.unknown().transform((input, context): EventStateV1 => {
   for (const issue of findDangerousKeys(input)) {
     context.addIssue({
       code: z.ZodIssueCode.custom,
@@ -255,9 +255,15 @@ const dangerousKeyGuard = z.unknown().superRefine((input, context) => {
       params: { code: issue.code }
     });
   }
-});
 
-export const eventStateV1Schema = dangerousKeyGuard.pipe(eventStateV1CoreSchema);
+  const coreResult = eventStateV1CoreSchema.safeParse(input);
+  if (!coreResult.success) {
+    for (const issue of coreResult.error.issues) context.addIssue(issue);
+    return z.NEVER;
+  }
+
+  return coreResult.data;
+});
 
 function toValidationIssue(issue: z.ZodIssue): ValidationIssue {
   const customCode = issue.code === z.ZodIssueCode.custom && "params" in issue
