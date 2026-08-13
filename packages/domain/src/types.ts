@@ -70,6 +70,21 @@ export type SchedulePreset = {
   matches: NumericPresetMatch[];
 };
 
+export type ScheduleQualityReport = {
+  status: "valid" | "valid-with-warnings" | "invalid";
+  errors: string[];
+  warnings: string[];
+  appearances: Record<string, number>;
+  laneCounts: Record<string, [number, number, number]>;
+  pairCounts: Record<string, number>;
+  repeatedOpponentCount: number;
+  maximumPairFrequency: number;
+  appearanceImbalance: number;
+  maximumLaneSpread: number;
+  byeCounts: Record<string, number>;
+  twoCarHeatCounts: Record<string, number>;
+};
+
 export type EventStateV1 = {
   version: 1;
   event: {
