@@ -5,7 +5,7 @@ function emptyRecord<T>(): Record<string, T> {
 }
 
 function pairKey(first: string, second: string): string {
-  return [first, second].sort().join("::");
+  return JSON.stringify(first < second ? [first, second] : [second, first]);
 }
 
 function range(values: readonly number[]): number {
@@ -97,6 +97,29 @@ export function analyseSchedule(heats: readonly Heat[], activeCarIds: readonly s
   const pairFrequencies = Object.values(pairCounts);
   const repeatedOpponentCount = pairFrequencies.reduce((total, count) => total + Math.max(0, count - 1), 0);
   const maximumPairFrequency = pairFrequencies.length === 0 ? 0 : Math.max(...pairFrequencies);
+  const repeatBurden = emptyRecord<number>();
+  for (const carId of activeIds) repeatBurden[carId] = 0;
+  for (const [key, count] of Object.entries(pairCounts)) {
+    const [first, second] = JSON.parse(key) as [string, string];
+    const excess = Math.max(0, count - 1);
+    repeatBurden[first]! += excess;
+    repeatBurden[second]! += excess;
+  }
+  const burdens = Object.values(repeatBurden);
+  const worstPerCarRepeatBurden = Math.max(0, ...burdens);
+  const squaredRepeatBurden = burdens.reduce((total, burden) => total + burden * burden, 0);
+  const squaredPairFrequency = pairFrequencies.reduce((total, count) => total + count * count, 0);
+  const entrantCount = activeIds.size;
+  const possiblePairCount = entrantCount * (entrantCount - 1) / 2;
+  const totalPairMeetings = pairFrequencies.reduce((total, count) => total + count, 0);
+  // Pigeonhole bounds over the pair slots actually present: three-car heats
+  // contribute three meetings and two-car heats contribute one.
+  const repeatExcessLowerBound = Math.max(0, totalPairMeetings - possiblePairCount);
+  const maximumPairFrequencyLowerBound = possiblePairCount === 0
+    ? 0
+    : Math.ceil(totalPairMeetings / possiblePairCount);
+  const repeatExcessGap = Math.max(0, repeatedOpponentCount - repeatExcessLowerBound);
+  const maximumPairFrequencyGap = Math.max(0, maximumPairFrequency - maximumPairFrequencyLowerBound);
   const appearanceImbalance = range(Object.values(appearances));
   const maximumLaneSpread = Math.max(0, ...Object.values(laneCounts).map((counts) => range(counts)));
 
@@ -108,7 +131,15 @@ export function analyseSchedule(heats: readonly Heat[], activeCarIds: readonly s
     laneCounts,
     pairCounts,
     repeatedOpponentCount,
+    repeatExcessLowerBound,
+    repeatExcessGap,
     maximumPairFrequency,
+    maximumPairFrequencyLowerBound,
+    maximumPairFrequencyGap,
+    opponentQualityStatus: errors.length === 0 && repeatExcessGap === 0 ? "certified-optimal" : "best-found",
+    worstPerCarRepeatBurden,
+    squaredRepeatBurden,
+    squaredPairFrequency,
     appearanceImbalance,
     maximumLaneSpread,
     byeCounts,

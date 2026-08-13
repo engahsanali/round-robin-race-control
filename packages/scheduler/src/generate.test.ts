@@ -2,10 +2,10 @@ import { describe, expect, it } from "vitest";
 
 import { analyseSchedule, type Heat } from "@rr3/domain";
 
-import { generateCustomSchedule } from "./generate";
+import { compareScheduleScores, generateCustomSchedule, scoreSchedule } from "./generate";
 import { mulberry32, seedToUint32 } from "./prng";
 
-type Score = readonly [number, number, number, number, number, number, number, string];
+type Score = readonly [number, number, number, number, number, number, number, number, number, string];
 
 function carIds(count: number): string[] {
   return Array.from({ length: count }, (_, index) => `stable-car-${index + 1}`);
@@ -28,10 +28,13 @@ function independentlyScore(heats: readonly Heat[], ids: readonly string[]): Sco
     }
   }
   const pairFrequencies = [...pairCounts.values()];
-  const weightedPairRepeatPenalty = pairFrequencies.reduce(
-    (total, count) => total + Math.max(0, count - 1) + 4 * Math.max(0, count - 2),
-    0
-  );
+  const repeatBurden = new Map(ids.map((id) => [id, 0]));
+  for (const [key, count] of pairCounts) {
+    const [first, second] = JSON.parse(key) as [string, string];
+    const excess = Math.max(0, count - 1);
+    repeatBurden.set(first, repeatBurden.get(first)! + excess);
+    repeatBurden.set(second, repeatBurden.get(second)! + excess);
+  }
   const heatsByMatch = new Map<number, Heat[]>();
   for (const heat of heats) {
     const match = heatsByMatch.get(heat.matchNumber) ?? [];
@@ -63,12 +66,14 @@ function independentlyScore(heats: readonly Heat[], ids: readonly string[]): Sco
   return [
     report.errors.length,
     report.appearanceImbalance,
-    weightedPairRepeatPenalty,
+    pairFrequencies.reduce((total, count) => total + Math.max(0, count - 1), 0),
     pairFrequencies.length === 0 ? 0 : Math.max(...pairFrequencies),
-    report.maximumLaneSpread,
+    Math.max(0, ...repeatBurden.values()),
+    [...repeatBurden.values()].reduce((total, burden) => total + burden * burden, 0),
+    pairFrequencies.reduce((total, count) => total + count * count, 0),
     consecutiveByePenalty,
     immediateRepeatPenalty,
-    JSON.stringify(heats.map((heat) => heat.lanes))
+    JSON.stringify(heats.map((heat) => [...heat.lanes].filter((id): id is string => id !== null).sort()))
   ];
 }
 
@@ -91,6 +96,32 @@ function naiveSequentialSchedule(ids: readonly string[], matches: number): Heat[
         laneTimesMs: [null, null, null],
         notes: ""
       });
+    }
+  }
+  return heats;
+}
+
+function twoCarFrequencySchedule(ids: readonly string[], frequencies: readonly number[]): Heat[] {
+  const heats: Heat[] = [];
+  let pairIndex = 0;
+  let matchNumber = 1;
+  for (let first = 0; first < ids.length; first += 1) {
+    for (let second = first + 1; second < ids.length; second += 1) {
+      for (let occurrence = 0; occurrence < (frequencies[pairIndex] ?? 0); occurrence += 1) {
+        heats.push({
+          id: `pair-${first}-${second}-${occurrence}`,
+          phase: "preliminary",
+          matchNumber,
+          heatNumber: 1,
+          lanes: [ids[first]!, ids[second]!, null],
+          status: "scheduled",
+          winnerEntryId: null,
+          laneTimesMs: [null, null, null],
+          notes: ""
+        });
+        matchNumber += 1;
+      }
+      pairIndex += 1;
     }
   }
   return heats;
@@ -124,12 +155,53 @@ describe("seeded random primitives", () => {
   });
 });
 
+describe("schedule opponent objective", () => {
+  const ids = ["a", "b", "c", "d", "e"];
+
+  it("scores the full approved objective tuple independently of lanes", () => {
+    const first = twoCarFrequencySchedule(ids, [3, 2, 2]);
+    const laneVariant = first.map((heat) => ({ ...heat, lanes: [null, heat.lanes[1], heat.lanes[0]] as Heat["lanes"] }));
+
+    expect(scoreSchedule(first, ids).slice(0, 7)).toEqual([0, 7, 4, 3, 4, 22, 17]);
+    expect(scoreSchedule(laneVariant, ids)).toEqual(scoreSchedule(first, ids));
+  });
+
+  it("prefers a lower worst per-car burden after repeat excess and maximum frequency tie", () => {
+    const concentrated = scoreSchedule(twoCarFrequencySchedule(ids, [0, 0, 3, 3, 1]), ids);
+    const distributed = scoreSchedule(twoCarFrequencySchedule(ids, [3, 2, 0, 0, 2]), ids);
+
+    expect(concentrated.slice(0, 7)).toEqual([0, 5, 4, 3, 4, 24, 19]);
+    expect(distributed.slice(0, 7)).toEqual([0, 5, 4, 3, 3, 22, 17]);
+    expect(compareScheduleScores(distributed, concentrated)).toBeLessThan(0);
+  });
+
+  it("uses squared repeat burden before squared pair frequency", () => {
+    const concentratedBurden = scoreSchedule(twoCarFrequencySchedule(ids, [3, 3, 1]), ids);
+    const distributedBurden = scoreSchedule(twoCarFrequencySchedule(ids, [3, 2, 2]), ids);
+
+    expect(concentratedBurden.slice(0, 7)).toEqual([0, 7, 4, 3, 4, 24, 19]);
+    expect(distributedBurden.slice(0, 7)).toEqual([0, 7, 4, 3, 4, 22, 17]);
+    expect(compareScheduleScores(distributedBurden, concentratedBurden)).toBeLessThan(0);
+  });
+
+  it("uses squared pair frequency when all earlier objective terms tie", () => {
+    const lowerSquaredFrequency = scoreSchedule(twoCarFrequencySchedule(ids, [3, 1, 1]), ids);
+    const higherSquaredFrequency = scoreSchedule(twoCarFrequencySchedule(ids, [3, 1, 1, 1]), ids);
+
+    expect(lowerSquaredFrequency.slice(0, 7)).toEqual([0, 5, 2, 3, 2, 8, 11]);
+    expect(higherSquaredFrequency.slice(0, 7)).toEqual([0, 5, 2, 3, 2, 8, 12]);
+    expect(compareScheduleScores(lowerSquaredFrequency, higherSquaredFrequency)).toBeLessThan(0);
+  });
+});
+
 describe("generateCustomSchedule", () => {
   it("returns byte-for-byte equal output for identical ordered IDs, options, and seed", () => {
     const ids = carIds(11);
     const options = { matches: 5, seed: "deterministic-example", restarts: 4, iterationsPerRestart: 80 };
 
-    expect(generateCustomSchedule(ids, options)).toEqual(generateCustomSchedule(ids, options));
+    expect(JSON.stringify(generateCustomSchedule(ids, options))).toBe(
+      JSON.stringify(generateCustomSchedule(ids, options))
+    );
   });
 
   it("uses the seed to choose a different valid candidate", () => {
@@ -152,7 +224,9 @@ describe("generateCustomSchedule", () => {
 
     expect(report.status).not.toBe("invalid");
     expect(report.appearanceImbalance).toBeLessThanOrEqual(1);
+    expect(report.maximumLaneSpread).toBeLessThanOrEqual(1);
     expect(generated.score).toEqual(independentlyScore(generated.heats, ids));
+    expect(generated.quality).toEqual(report);
     expect(new Set(generated.heats.flatMap((heat) => heat.lanes).filter(Boolean))).toEqual(new Set(ids));
     for (const heat of generated.heats) {
       const assigned = heat.lanes.filter((id): id is string => id !== null);

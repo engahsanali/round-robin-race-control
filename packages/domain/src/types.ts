@@ -78,7 +78,15 @@ export type ScheduleQualityReport = {
   laneCounts: Record<string, [number, number, number]>;
   pairCounts: Record<string, number>;
   repeatedOpponentCount: number;
+  repeatExcessLowerBound: number;
+  repeatExcessGap: number;
   maximumPairFrequency: number;
+  maximumPairFrequencyLowerBound: number;
+  maximumPairFrequencyGap: number;
+  opponentQualityStatus: "certified-optimal" | "best-found";
+  worstPerCarRepeatBurden: number;
+  squaredRepeatBurden: number;
+  squaredPairFrequency: number;
   appearanceImbalance: number;
   maximumLaneSpread: number;
   byeCounts: Record<string, number>;

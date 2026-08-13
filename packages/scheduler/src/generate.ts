@@ -1,4 +1,4 @@
-import type { Heat } from "@rr3/domain";
+import { analyseSchedule, type Heat, type ScheduleQualityReport } from "@rr3/domain";
 
 import { mulberry32, seedToUint32 } from "./prng";
 
@@ -12,16 +12,24 @@ export type CustomScheduleOptions = {
 export type ScheduleScore = readonly [
   invalidHeatCount: number,
   appearanceImbalance: number,
-  weightedPairRepeatPenalty: number,
+  repeatExcess: number,
   maximumPairFrequency: number,
-  maximumLaneSpread: number,
+  worstPerCarRepeatBurden: number,
+  squaredRepeatBurden: number,
+  squaredPairFrequency: number,
   consecutiveByePenalty: number,
   immediateRepeatPenalty: number,
-  stableScheduleKey: string
+  stableOpponentKey: string
 ];
 
 export type GeneratedSchedule = {
   heats: Heat[];
+  score: ScheduleScore;
+  quality: ScheduleQualityReport;
+};
+
+type EvaluatedPlan = {
+  plan: MatchPlan[];
   score: ScheduleScore;
 };
 
@@ -50,7 +58,7 @@ function comparePrimitive(left: number | string, right: number | string): number
   return left < right ? -1 : left > right ? 1 : 0;
 }
 
-function compareScores(left: ScheduleScore, right: ScheduleScore): number {
+export function compareScheduleScores(left: ScheduleScore, right: ScheduleScore): number {
   for (let index = 0; index < left.length; index += 1) {
     const comparison = comparePrimitive(left[index]!, right[index]!);
     if (comparison !== 0) return comparison;
@@ -108,72 +116,138 @@ function seededPlan(
   });
 }
 
-function permutations<T>(values: readonly T[]): T[][] {
-  if (values.length <= 1) return [[...values]];
-  const result: T[][] = [];
-  for (let index = 0; index < values.length; index += 1) {
-    const first = values[index]!;
-    for (const tail of permutations([...values.slice(0, index), ...values.slice(index + 1)])) {
-      result.push([first, ...tail]);
+type LaneEdge = {
+  left: number;
+  right: number;
+  slot: LaneSlot;
+  original: boolean;
+  active: boolean;
+};
+
+function planHeatSlots(plan: readonly MatchPlan[]): Array<{
+  matchNumber: number;
+  heatNumber: number;
+  slots: [LaneSlot, LaneSlot, LaneSlot];
+}> {
+  return plan.flatMap((match, matchIndex) => match.groups.map((group, heatIndex) => ({
+    matchNumber: matchIndex + 1,
+    heatNumber: heatIndex + 1,
+    slots: [group[0] ?? null, group[1] ?? null, group[2] ?? null]
+  })));
+}
+
+function makeHeat(
+  matchNumber: number,
+  heatNumber: number,
+  lanes: [LaneSlot, LaneSlot, LaneSlot]
+): Heat {
+  return {
+    id: `custom-m${matchNumber}-h${heatNumber}`,
+    phase: "preliminary",
+    matchNumber,
+    heatNumber,
+    lanes,
+    status: "scheduled",
+    winnerEntryId: null,
+    laneTimesMs: [null, null, null],
+    notes: ""
+  };
+}
+
+function planToUncolouredHeats(plan: readonly MatchPlan[]): Heat[] {
+  return planHeatSlots(plan).map(({ matchNumber, heatNumber, slots }) => makeHeat(matchNumber, heatNumber, slots));
+}
+
+function compareLaneSlots(left: LaneSlot, right: LaneSlot): number {
+  if (left === right) return 0;
+  if (left === null) return -1;
+  if (right === null) return 1;
+  return comparePrimitive(left, right);
+}
+
+function assignLanes(plan: readonly MatchPlan[]): Heat[] {
+  const heatSlots = planHeatSlots(plan);
+  const occurrences = new Map<LaneSlot, Array<{ heatIndex: number; slot: LaneSlot }>>();
+  heatSlots.forEach(({ slots }, heatIndex) => {
+    for (const slot of slots) {
+      const slotOccurrences = occurrences.get(slot) ?? [];
+      slotOccurrences.push({ heatIndex, slot });
+      occurrences.set(slot, slotOccurrences);
+    }
+  });
+
+  const edges: LaneEdge[] = [];
+  let rightCount = 0;
+  const orderedSlots = [...occurrences.keys()].sort(compareLaneSlots);
+  // Each entrant's appearances are split into buckets of at most three. A
+  // bucket receives each lane at most once, which is exactly the <= 1 spread
+  // target across all of that entrant's complete and remainder buckets.
+  for (const slot of orderedSlots) {
+    const slotOccurrences = occurrences.get(slot)!;
+    for (let offset = 0; offset < slotOccurrences.length; offset += 3) {
+      const right = rightCount;
+      rightCount += 1;
+      for (const occurrence of slotOccurrences.slice(offset, offset + 3)) {
+        edges.push({
+          left: occurrence.heatIndex,
+          right,
+          slot: occurrence.slot,
+          original: true,
+          active: true
+        });
+      }
     }
   }
-  return result;
-}
 
-function laneCost(
-  orderedGroup: readonly LaneSlot[],
-  laneCounts: ReadonlyMap<LaneSlot, readonly [number, number, number]>
-): readonly [number, number, string] {
-  let maximumSpread = 0;
-  let squaredCounts = 0;
-  for (let carIndex = 0; carIndex < orderedGroup.length; carIndex += 1) {
-    const counts = [...laneCounts.get(orderedGroup[carIndex]!)!] as [number, number, number];
-    counts[carIndex as 0 | 1 | 2] += 1;
-    maximumSpread = Math.max(maximumSpread, range(counts));
-    squaredCounts += counts.reduce((total, count) => total + count * count, 0);
+  const rightDegrees = Array.from({ length: rightCount }, () => 0);
+  for (const edge of edges) rightDegrees[edge.right]! += 1;
+  // Pad both sides to a 3-regular bipartite multigraph. Decomposing it into
+  // three perfect matchings gives a deterministic equitable edge-colouring.
+  let nextRight = 0;
+  for (let left = heatSlots.length; left < rightCount; left += 1) {
+    for (let degree = 0; degree < 3; degree += 1) {
+      while (rightDegrees[nextRight] === 3) nextRight += 1;
+      edges.push({ left, right: nextRight, slot: null, original: false, active: true });
+      rightDegrees[nextRight]! += 1;
+    }
   }
-  return [maximumSpread, squaredCounts, JSON.stringify(orderedGroup)];
-}
 
-function assignLanes(plan: readonly MatchPlan[], carIds: readonly string[]): Heat[] {
-  const laneCounts = new Map<LaneSlot, [number, number, number]>();
-  for (const id of carIds) laneCounts.set(id, [0, 0, 0]);
-  laneCounts.set(null, [0, 0, 0]);
-  const heats: Heat[] = [];
-  plan.forEach((match, matchIndex) => {
-    match.groups.forEach((group, heatIndex) => {
-      const laneSlots: [LaneSlot, LaneSlot, LaneSlot] = [group[0] ?? null, group[1] ?? null, group[2] ?? null];
-      const ordered = permutations(laneSlots).sort((left, right) => {
-        const leftCost = laneCost(left, laneCounts);
-        const rightCost = laneCost(right, laneCounts);
-        for (let index = 0; index < leftCost.length; index += 1) {
-          const comparison = comparePrimitive(leftCost[index]!, rightCost[index]!);
-          if (comparison !== 0) return comparison;
+  const lanes = heatSlots.map(() => [null, null, null] as [LaneSlot, LaneSlot, LaneSlot]);
+  for (let colour = 0; colour < 3; colour += 1) {
+    const matchedEdgeByRight = Array.from({ length: rightCount }, () => -1);
+    const augment = (left: number, seenRights: Set<number>): boolean => {
+      for (let edgeIndex = 0; edgeIndex < edges.length; edgeIndex += 1) {
+        const edge = edges[edgeIndex]!;
+        if (!edge.active || edge.left !== left || seenRights.has(edge.right)) continue;
+        seenRights.add(edge.right);
+        const previousEdgeIndex = matchedEdgeByRight[edge.right]!;
+        if (previousEdgeIndex === -1 || augment(edges[previousEdgeIndex]!.left, seenRights)) {
+          matchedEdgeByRight[edge.right] = edgeIndex;
+          return true;
         }
-        return 0;
-      })[0]!;
-      ordered.forEach((id, lane) => {
-        laneCounts.get(id)![lane as 0 | 1 | 2] += 1;
-      });
-      heats.push({
-        id: `custom-m${matchIndex + 1}-h${heatIndex + 1}`,
-        phase: "preliminary",
-        matchNumber: matchIndex + 1,
-        heatNumber: heatIndex + 1,
-        lanes: [ordered[0] ?? null, ordered[1] ?? null, ordered[2] ?? null],
-        status: "scheduled",
-        winnerEntryId: null,
-        laneTimesMs: [null, null, null],
-        notes: ""
-      });
-    });
-  });
-  return heats;
+      }
+      return false;
+    };
+
+    for (let left = 0; left < rightCount; left += 1) {
+      if (!augment(left, new Set<number>())) {
+        throw new Error("Unable to compute deterministic equitable lane assignment");
+      }
+    }
+    for (const edgeIndex of matchedEdgeByRight) {
+      const edge = edges[edgeIndex]!;
+      edge.active = false;
+      if (edge.original) lanes[edge.left]![colour as 0 | 1 | 2] = edge.slot;
+    }
+  }
+
+  return heatSlots.map(({ matchNumber, heatNumber }, heatIndex) =>
+    makeHeat(matchNumber, heatNumber, lanes[heatIndex]!)
+  );
 }
 
-function scoreHeats(heats: readonly Heat[], carIds: readonly string[]): ScheduleScore {
+export function scoreSchedule(heats: readonly Heat[], carIds: readonly string[]): ScheduleScore {
   const appearances = new Map(carIds.map((id) => [id, 0]));
-  const laneCounts = new Map<string, [number, number, number]>(carIds.map((id) => [id, [0, 0, 0]]));
   const pairCounts = new Map<string, number>();
   const seenHeatIds = new Set<string>();
   const heatsByMatch = new Map<number, Heat[]>();
@@ -193,9 +267,6 @@ function scoreHeats(heats: readonly Heat[], carIds: readonly string[]): Schedule
       }
       appearances.set(id, appearances.get(id)! + 1);
     }
-    heat.lanes.forEach((id, lane) => {
-      if (id !== null && laneCounts.has(id)) laneCounts.get(id)![lane as 0 | 1 | 2] += 1;
-    });
     for (let first = 0; first < assigned.length; first += 1) {
       for (let second = first + 1; second < assigned.length; second += 1) {
         const key = pairKey(assigned[first]!, assigned[second]!);
@@ -234,25 +305,32 @@ function scoreHeats(heats: readonly Heat[], carIds: readonly string[]): Schedule
   }
 
   const pairFrequencies = [...pairCounts.values()];
-  const weightedPairRepeatPenalty = pairFrequencies.reduce(
-    (total, count) => total + Math.max(0, count - 1) + 4 * Math.max(0, count - 2),
-    0
-  );
+  const repeatBurden = new Map(carIds.map((id) => [id, 0]));
+  for (const [key, count] of pairCounts) {
+    const [first, second] = JSON.parse(key) as [string, string];
+    const excess = Math.max(0, count - 1);
+    if (repeatBurden.has(first)) repeatBurden.set(first, repeatBurden.get(first)! + excess);
+    if (repeatBurden.has(second)) repeatBurden.set(second, repeatBurden.get(second)! + excess);
+  }
+  const burdens = [...repeatBurden.values()];
   return [
     invalidHeatCount,
     range([...appearances.values()]),
-    weightedPairRepeatPenalty,
+    pairFrequencies.reduce((total, count) => total + Math.max(0, count - 1), 0),
     pairFrequencies.length === 0 ? 0 : Math.max(...pairFrequencies),
-    Math.max(0, ...[...laneCounts.values()].map((counts) => range(counts))),
+    Math.max(0, ...burdens),
+    burdens.reduce((total, burden) => total + burden * burden, 0),
+    pairFrequencies.reduce((total, count) => total + count * count, 0),
     consecutiveByePenalty,
     immediateRepeatPenalty,
-    JSON.stringify(heats.map((heat) => heat.lanes))
+    JSON.stringify(heats.map((heat) =>
+      heat.lanes.filter((id): id is string => id !== null).sort((left, right) => comparePrimitive(left, right))
+    ))
   ];
 }
 
-function evaluate(plan: readonly MatchPlan[], carIds: readonly string[]): GeneratedSchedule {
-  const heats = assignLanes(plan, carIds);
-  return { heats, score: scoreHeats(heats, carIds) };
+function evaluate(plan: MatchPlan[], carIds: readonly string[]): EvaluatedPlan {
+  return { plan, score: scoreSchedule(planToUncolouredHeats(plan), carIds) };
 }
 
 function assignedLocations(match: MatchPlan): Array<readonly [number, number]> {
@@ -341,18 +419,23 @@ export function generateCustomSchedule(
     const random = mulberry32(seedToUint32(`${options.seed}\u0000${restart}`));
     let currentPlan = seededPlan(carIds, options.matches, restart, random);
     let current = evaluate(currentPlan, carIds);
-    if (compareScores(current.score, best.score) < 0) best = current;
+    if (compareScheduleScores(current.score, best.score) < 0) best = current;
 
     for (let iteration = 0; iteration < iterationsPerRestart; iteration += 1) {
       const candidatePlan = clonePlan(currentPlan);
       mutatePlan(candidatePlan, random, iteration);
       const candidate = evaluate(candidatePlan, carIds);
-      if (compareScores(candidate.score, current.score) <= 0) {
+      if (compareScheduleScores(candidate.score, current.score) <= 0) {
         currentPlan = candidatePlan;
         current = candidate;
       }
-      if (compareScores(candidate.score, best.score) < 0) best = candidate;
+      if (compareScheduleScores(candidate.score, best.score) < 0) best = candidate;
     }
   }
-  return best;
+  const heats = assignLanes(best.plan);
+  return {
+    heats,
+    score: scoreSchedule(heats, carIds),
+    quality: analyseSchedule(heats, carIds)
+  };
 }
