@@ -139,14 +139,15 @@ describe("event commands", () => {
     }]);
   });
 
-  it("uses finals standings for the before and after ranks of a finals result", async () => {
+  it("ranks only actual finalists in a finals result receipt", async () => {
     const event = eventFixture();
+    event.settings.tieBreakOrder = ["totalWins", "carNumber"];
     event.finals = [{
       id: "final-m01-h01",
       phase: "final",
       matchNumber: 1,
       heatNumber: 1,
-      lanes: ["car-01", "car-02", "car-03"],
+      lanes: ["car-07", "car-08", "car-09"],
       status: "scheduled",
       winnerEntryId: null,
       laneTimesMs: [null, null, null],
@@ -162,30 +163,53 @@ describe("event commands", () => {
     const receipt = await dispatcher.dispatch({
       type: "result.record-winner",
       heatId: "final-m01-h01",
-      carId: "car-02",
+      carId: "car-07",
     });
 
     expect(receipt.previousRanks).toEqual({
-      "car-01": null,
-      "car-02": null,
-      "car-03": null,
-      "car-04": null,
-      "car-05": null,
-      "car-06": null,
       "car-07": null,
       "car-08": null,
       "car-09": null,
     });
     expect(receipt.nextRanks).toEqual({
-      "car-01": 2,
-      "car-02": 1,
-      "car-03": 2,
-      "car-04": 2,
-      "car-05": 2,
-      "car-06": 2,
-      "car-07": 2,
+      "car-07": 1,
       "car-08": 2,
-      "car-09": 2,
+      "car-09": 3,
+    });
+  });
+
+  it("keeps unresolved finals rank fallback scoped to actual finalists", async () => {
+    const event = eventFixture();
+    event.settings.rankingMode = "ordinal";
+    event.settings.tieBreakOrder = ["totalWins", "playoff"];
+    event.finals = [{
+      id: "final-m01-h01",
+      phase: "final",
+      matchNumber: 1,
+      heatNumber: 1,
+      lanes: ["car-07", "car-08", "car-09"],
+      status: "scheduled",
+      winnerEntryId: null,
+      laneTimesMs: [null, null, null],
+      notes: "Final round",
+    }];
+    await repository.save(event, bootstrapRevision());
+    const dispatcher = createCommandDispatcher({
+      repository,
+      now: () => "2026-08-14T01:02:03.000Z",
+      createId: () => "command-final-tie",
+    });
+
+    const receipt = await dispatcher.dispatch({
+      type: "result.record-winner",
+      heatId: "final-m01-h01",
+      carId: "car-07",
+    });
+
+    expect(receipt.nextRanks).toEqual({
+      "car-07": null,
+      "car-08": null,
+      "car-09": null,
     });
   });
 

@@ -38,8 +38,9 @@ export function createSpectatorSnapshot(event: EventStateV1): SpectatorSnapshot 
     ?? null;
   const standingsPhase = safe.finals.some(({ status }) => status === "completed") ? "final" : "preliminary";
   const finalCarIds = new Set(safe.finals.flatMap(({ lanes }) => lanes.filter((carId): carId is string => carId !== null)));
-  const standings = calculateRankings(calculateStandings(safe, standingsPhase), safe.settings)
-    .filter((row) => standingsPhase === "preliminary" || finalCarIds.has(row.carId))
+  const eligibleStandings = calculateStandings(safe, standingsPhase)
+    .filter((row) => standingsPhase === "preliminary" || finalCarIds.has(row.carId));
+  const standings = calculateRankings(eligibleStandings, safe.settings)
     .map((row) => ({
     carId: row.carId,
     carNumber: row.carNumber,

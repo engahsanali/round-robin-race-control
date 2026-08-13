@@ -251,13 +251,18 @@ function rankMap(
   event: EventStateV1,
   phase: "preliminary" | "final",
 ): Record<string, number | null> {
+  const finalCarIds = phase === "final"
+    ? new Set(event.finals.flatMap(({ lanes }) => lanes.filter((carId): carId is string => carId !== null)))
+    : null;
+  const isEligible = (carId: string) => finalCarIds === null || finalCarIds.has(carId);
   try {
-    const standings = calculateStandings(event, phase);
+    const standings = calculateStandings(event, phase)
+      .filter(({ carId }) => isEligible(carId));
     return Object.fromEntries(
       calculateRankings(standings, event.settings).map(({ carId, rank }) => [carId, rank]),
     );
   } catch {
-    return Object.fromEntries(event.entries.filter(({ active }) => active).map(({ id }) => [id, null]));
+    return Object.fromEntries(event.entries.filter(({ active, id }) => active && isEligible(id)).map(({ id }) => [id, null]));
   }
 }
 

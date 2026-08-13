@@ -6,6 +6,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { validateEventState, type EventStateV1 } from "@rr3/domain";
 import demoEventJson from "../../../../../fixtures/demo-event.json";
 import { PresentationPage } from "../presentation/PresentationPage";
+import { createSpectatorSnapshot } from "../presentation/eventChannel";
 import { createProDatabase, type ProDatabase } from "../../persistence/db";
 import { EventRepository } from "../../persistence/repository";
 import { EventProvider } from "../../state/EventProvider";
@@ -79,6 +80,28 @@ function renderRace(extra?: React.ReactNode) {
 }
 
 describe("RaceCommandPage", () => {
+  it("ranks only actual finalists on the spectator board", () => {
+    const event = demoEvent();
+    event.settings.tieBreakOrder = ["totalWins", "carNumber"];
+    event.finals = [{
+      id: "final-m01-h01",
+      phase: "final",
+      matchNumber: 1,
+      heatNumber: 1,
+      lanes: ["car-07", "car-08", "car-09"],
+      status: "completed",
+      winnerEntryId: "car-07",
+      laneTimesMs: [null, null, null],
+      notes: "Final round",
+    }];
+
+    expect(createSpectatorSnapshot(event).standings.map(({ carId, rank }) => ({ carId, rank }))).toEqual([
+      { carId: "car-07", rank: 1 },
+      { carId: "car-08", rank: 2 },
+      { carId: "car-09", rank: 3 },
+    ]);
+  });
+
   it("records lane-only keyboard results and times atomically, auto-advances, and undoes from its receipt", async () => {
     const user = userEvent.setup();
     renderRace();
