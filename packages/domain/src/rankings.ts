@@ -44,7 +44,7 @@ export function calculateRankings(
     .filter(({ active }) => active)
     .map((standing): RankedWork => ({ standing, values: new Map(), resolvedKeys: new Set() }))
     .sort((left, right) => left.standing.carId.localeCompare(right.standing.carId));
-  const hasOfficialResult = active.some(({ standing }) => standing.totalWins > 0);
+  const hasOfficialResult = active.some(({ standing }) => standing.completedHeats > 0);
 
   if (!hasOfficialResult) {
     return active.map(({ standing }, index) => ({
@@ -74,7 +74,9 @@ export function calculateRankings(
       const sorted = group.slice().sort((left, right) => compareMetric(key, left.values.get(key) ?? null, right.values.get(key) ?? null));
       const partitions = partitionByMetric(sorted, key);
       if (partitions.length > 1) {
-        for (const work of group) work.resolvedKeys.add(key);
+        for (const partition of partitions) {
+          if (partition.length === 1) partition[0]?.resolvedKeys.add(key);
+        }
       }
       nextGroups.push(...partitions);
     }

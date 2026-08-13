@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
 
 import { calculateStandings, cancelHeat, markRerun, recordWinner } from "./results";
+import { validateEventState } from "./schema";
 import type { EventStateV1, Heat } from "./types";
 
 function heat(overrides: Partial<Heat> = {}): Heat {
@@ -175,5 +176,36 @@ describe("result commands", () => {
 
     expect(standings).toHaveLength(3);
     expect(standings.every((standing) => standing.totalWins === 0 && standing.completedHeats === 0)).toBe(true);
+  });
+
+  it("keeps generated audit IDs schema-valid for maximum-length heat IDs", () => {
+    const maximumHeatId = "h".repeat(128);
+    const next = recordWinner(eventState({ matches: [heat({ id: maximumHeatId })] }), maximumHeatId, "car-a");
+
+    expect(next.auditLog.at(-1)?.id.length).toBeLessThanOrEqual(128);
+    expect(validateEventState(next).success).toBe(true);
+  });
+
+  it("rejects a result command when the audit log has reached schema capacity", () => {
+    const auditLog = Array.from({ length: 10_000 }, (_, index) => ({
+      id: `audit-${index}`,
+      timestamp: "2026-08-13T01:00:00.000Z",
+      action: "test.history",
+      summary: "Existing audit entry",
+      entityType: "heat",
+      entityId: "heat-1",
+      details: {}
+    }));
+
+    expect(() => recordWinner(eventState({ auditLog }), "heat-1", "car-a")).toThrow(/audit log.*capacity/i);
+  });
+
+  it("rejects reasons that could overflow the schema-bounded audit summary", () => {
+    const completed = recordWinner(eventState(), "heat-1", "car-a");
+    const oversizedReason = "r".repeat(501);
+
+    expect(() => recordWinner(completed, "heat-1", "car-b", oversizedReason)).toThrow(/reason.*500/i);
+    expect(() => cancelHeat(completed, "heat-1", oversizedReason)).toThrow(/reason.*500/i);
+    expect(() => markRerun(completed, "heat-1", oversizedReason)).toThrow(/reason.*500/i);
   });
 });

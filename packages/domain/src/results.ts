@@ -22,6 +22,8 @@ export type Standing = {
 };
 
 type HeatCollection = "matches" | "finals";
+const MAX_AUDIT_ENTRIES = 10_000;
+const MAX_AUDIT_REASON_LENGTH = 500;
 
 type LocatedHeat = {
   collection: HeatCollection;
@@ -36,6 +38,7 @@ export function recordWinner(
   correctionReason?: string
 ): EventStateV1 {
   assertValidState(state);
+  if (correctionReason !== undefined) assertReasonWithinLimit(correctionReason, "Correction");
   const located = locateHeat(state, heatId);
   const car = state.entries.find(({ id }) => id === carId);
   if (!car) throw new Error(`Unknown car ID: ${carId}`);
@@ -69,6 +72,7 @@ export function recordWinner(
 export function cancelHeat(state: EventStateV1, heatId: string, reason: string): EventStateV1 {
   assertValidState(state);
   requireReason(reason, "Cancellation");
+  assertReasonWithinLimit(reason, "Cancellation");
   const located = locateHeat(state, heatId);
   const previousWinner = located.heat.winnerEntryId;
   const nextHeat: Heat = { ...located.heat, status: "cancelled", winnerEntryId: null };
@@ -83,6 +87,7 @@ export function cancelHeat(state: EventStateV1, heatId: string, reason: string):
 export function markRerun(state: EventStateV1, heatId: string, reason: string): EventStateV1 {
   assertValidState(state);
   requireReason(reason, "Rerun");
+  assertReasonWithinLimit(reason, "Rerun");
   const located = locateHeat(state, heatId);
   const previousWinner = located.heat.winnerEntryId;
   const nextHeat: Heat = { ...located.heat, status: "rerun", winnerEntryId: null };
@@ -189,13 +194,18 @@ function updateHeatAndAudit(
   heat: Heat,
   audit: { action: string; summary: string; details: Record<string, JsonValue> }
 ): EventStateV1 {
+  if (state.auditLog.length >= MAX_AUDIT_ENTRIES) {
+    throw new Error(`Audit log has reached its ${MAX_AUDIT_ENTRIES}-entry capacity`);
+  }
   const collection = state[located.collection].map((existing, index) => index === located.index ? heat : existing);
   const auditEntry = createAuditEntry(state, heat.id, audit);
-  return {
+  const nextState: EventStateV1 = {
     ...state,
     [located.collection]: collection,
     auditLog: [...state.auditLog, auditEntry]
   };
+  assertValidState(nextState);
+  return nextState;
 }
 
 function createAuditEntry(
@@ -203,7 +213,7 @@ function createAuditEntry(
   heatId: string,
   audit: { action: string; summary: string; details: Record<string, JsonValue> }
 ): AuditEntry {
-  const prefix = `audit-${audit.action.replaceAll(".", "-")}-${heatId}`;
+  const prefix = `audit-${audit.action.replaceAll(".", "-")}-${stableHash(heatId)}`;
   let sequence = state.auditLog.length + 1;
   let id = `${prefix}-${sequence}`;
   const existingIds = new Set(state.auditLog.map((entry) => entry.id));
@@ -225,4 +235,18 @@ function hasReason(reason: string | undefined): reason is string {
 
 function requireReason(reason: string, label: string): void {
   if (!hasReason(reason)) throw new Error(`${label} reason is required`);
+}
+
+function assertReasonWithinLimit(reason: string, label: string): void {
+  if (reason.trim().length > MAX_AUDIT_REASON_LENGTH) {
+    throw new Error(`${label} reason must be at most ${MAX_AUDIT_REASON_LENGTH} characters`);
+  }
+}
+
+function stableHash(value: string): string {
+  let hash = 2_166_136_261;
+  for (let index = 0; index < value.length; index += 1) {
+    hash = Math.imul(hash ^ value.charCodeAt(index), 16_777_619);
+  }
+  return (hash >>> 0).toString(36);
 }

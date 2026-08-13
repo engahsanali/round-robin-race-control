@@ -127,6 +127,16 @@ describe("calculateRankings", () => {
     expect(rankings.map(({ rank }) => rank)).toEqual([null, null]);
   });
 
+  it("detects official results from completed participation when the winner is inactive", () => {
+    const rankings = calculateRankings([
+      standing("car-inactive-winner", 1, { active: false, completedHeats: 1 }),
+      standing("car-1", 0, { completedHeats: 1 }),
+      standing("car-2", 0, { completedHeats: 1 })
+    ], settings());
+
+    expect(rankings.map(({ carId, rank }) => [carId, rank])).toEqual([["car-1", 1], ["car-2", 1]]);
+  });
+
   it("rejects ordinal ranking while configured tie breaks remain unresolved", () => {
     expect(() => calculateRankings(
       [standing("car-1", 2), standing("car-2", 2)],
@@ -150,5 +160,15 @@ describe("calculateRankings", () => {
       ]
     });
     expect(() => explainRank("missing-car", rankings)).toThrow(/unknown ranked car/i);
+  });
+
+  it("marks a tie-break resolved only for entrants whose resulting partition is unique", () => {
+    const rankings = calculateRankings([
+      standing("car-1", 3), standing("car-2", 2), standing("car-3", 2)
+    ], settings());
+
+    expect(explainRank("car-1", rankings).comparisons[0]).toMatchObject({ key: "totalWins", resolved: true });
+    expect(explainRank("car-2", rankings).comparisons[0]).toMatchObject({ key: "totalWins", resolved: false });
+    expect(explainRank("car-3", rankings).comparisons[0]).toMatchObject({ key: "totalWins", resolved: false });
   });
 });
