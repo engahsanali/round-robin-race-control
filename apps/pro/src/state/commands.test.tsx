@@ -12,6 +12,7 @@ import {
   CommandAlreadyPendingError,
   createCommandDispatcher,
   type CommandReceipt,
+  type PostCommitIssue,
 } from "./commands";
 import { EventProvider, useEventState } from "./EventProvider";
 
@@ -110,11 +111,7 @@ describe("event commands", () => {
       .mockImplementationOnce(originalLoad)
       .mockRejectedValueOnce(new Error("Committed state read-back failed"));
     const published: Array<{ event: EventStateV1; receipt: CommandReceipt }> = [];
-    const postCommitIssues: Array<{
-      commandId: string;
-      area: "state-readback" | "snapshot-history";
-      message: string;
-    }> = [];
+    const postCommitIssues: PostCommitIssue[] = [];
     const dispatcher = createCommandDispatcher({
       repository,
       now: () => "2026-08-14T01:02:03.000Z",
@@ -320,6 +317,7 @@ function ProviderProbe() {
       <p>Winner: {state?.matches.find(({ id }) => id === "pre-m02-h03")?.winnerEntryId ?? "none"}</p>
       <p>Storage: {persistenceStatus}</p>
       <p>Error: {error ?? "none"}</p>
+      <p>Post-commit area: {postCommitIssue?.area ?? "none"}</p>
       <p>Post-commit issue: {postCommitIssue?.message ?? "none"}</p>
       <p>Receipt: {receipt}</p>
       <button
@@ -407,6 +405,35 @@ describe("EventProvider", () => {
     expect(screen.getByText("Error: none")).toBeTruthy();
     expect(screen.getByText("Post-commit issue: Snapshot history refresh failed")).toBeTruthy();
     expect(published).toHaveBeenCalledTimes(1);
+    expect((await database.liveEvents.get("current"))?.event.matches
+      .find(({ id }) => id === "pre-m02-h03")?.winnerEntryId).toBe("car-03");
+  });
+
+  it("keeps a committed command successful when the external publish callback throws", async () => {
+    await repository.save(eventFixture(), bootstrapRevision());
+    const user = userEvent.setup();
+
+    render(
+      <EventProvider
+        repository={repository}
+        now={() => "2026-08-14T01:00:00.000Z"}
+        createId={() => "provider-publish-failure"}
+        publishCommittedEvent={() => {
+          throw new Error("Spectator publish failed");
+        }}
+      >
+        <ProviderProbe />
+      </EventProvider>,
+    );
+    await screen.findByText("Event: Nine-Car Community Demo");
+
+    await user.click(screen.getByRole("button", { name: "Record winner" }));
+
+    await screen.findByText("Winner: car-03");
+    expect(screen.getByText(/Receipt: Committed: Recorded winner car-03/)).toBeTruthy();
+    expect(screen.getByText("Error: none")).toBeTruthy();
+    expect(screen.getByText("Post-commit area: state-publish")).toBeTruthy();
+    expect(screen.getByText("Post-commit issue: Spectator publish failed")).toBeTruthy();
     expect((await database.liveEvents.get("current"))?.event.matches
       .find(({ id }) => id === "pre-m02-h03")?.winnerEntryId).toBe("car-03");
   });

@@ -30,7 +30,7 @@ export type PublishCommittedEvent = (event: EventStateV1, receipt: CommandReceip
 
 export type PostCommitIssue = {
   commandId: string;
-  area: "state-readback" | "snapshot-history";
+  area: "state-readback" | "state-publish" | "snapshot-history";
   message: string;
 };
 
@@ -127,7 +127,15 @@ class TransactionalCommandDispatcher implements CommandDispatcher {
         message: toSafeErrorMessage(cause, "Committed event read-back failed"),
       });
     }
-    this.publish?.(committed, receipt);
+    try {
+      this.publish?.(committed, receipt);
+    } catch (cause) {
+      this.reportPostCommitIssue({
+        commandId,
+        area: "state-publish",
+        message: toSafeErrorMessage(cause, "Committed state publication failed"),
+      });
+    }
     return receipt;
   }
 
