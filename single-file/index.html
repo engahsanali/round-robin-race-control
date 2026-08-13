@@ -1859,7 +1859,7 @@
       matchMedia('(prefers-color-scheme: dark)').addEventListener('change', () => { if (theme === 'system') applyTheme('system'); });
 
       applyTheme(storageRead(THEME_KEY) || 'system'); loadStored(); updateChrome(); renderView('dashboard');
-      const api = Object.freeze({ version: VERSION, getState: () => publicState(), runAllTests, applyImportedEventText });
+      const api = Object.freeze({ version: VERSION, getState: () => publicState(), runAllTests });
       Object.defineProperty(window, 'RR3', { value: api, writable: false, configurable: false, enumerable: true });
     })();
   </script>

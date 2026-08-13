@@ -65,24 +65,24 @@ test('runs every embedded group in isolation and preserves the live workspace', 
   expect(pageErrors).toEqual([]);
 });
 
-test('exposes the real synchronous import transaction and leaves invalid input byte-exact', async ({ page }) => {
+test('uses the real file-input import transaction and leaves invalid input byte-exact', async ({ page }) => {
   await loadDemo(page);
-  const result = await page.evaluate(() => {
-    const api = (window as any).RR3;
-    const beforeEvent = JSON.stringify(api.getState());
-    const beforeStorage = JSON.stringify(Object.fromEntries(Object.keys(localStorage).sort().map((key) => [key, localStorage.getItem(key)])));
-    const applied = api.applyImportedEventText('{"version":1,"event":');
-    return {
-      applied,
-      beforeEvent,
-      afterEvent: JSON.stringify(api.getState()),
-      beforeStorage,
-      afterStorage: JSON.stringify(Object.fromEntries(Object.keys(localStorage).sort().map((key) => [key, localStorage.getItem(key)]))),
-    };
+  await page.getByRole('button', { name: 'Reports' }).click();
+  const before = await page.evaluate(() => ({
+    event: JSON.stringify((window as any).RR3.getState()),
+    storage: JSON.stringify(Object.fromEntries(Object.keys(localStorage).sort().map((key) => [key, localStorage.getItem(key)]))),
+  }));
+  await page.getByLabel('Import event JSON').setInputFiles({
+    name: 'invalid.json',
+    mimeType: 'application/json',
+    buffer: Buffer.from('{"version":1,"event":'),
   });
-  expect(result.applied).toMatchObject({ ok: false });
-  expect(result.afterEvent).toBe(result.beforeEvent);
-  expect(result.afterStorage).toBe(result.beforeStorage);
+  const result = await page.evaluate(() => ({
+    afterEvent: JSON.stringify((window as any).RR3.getState()),
+    afterStorage: JSON.stringify(Object.fromEntries(Object.keys(localStorage).sort().map((key) => [key, localStorage.getItem(key)]))),
+  }));
+  expect(result.afterEvent).toBe(before.event);
+  expect(result.afterStorage).toBe(before.storage);
 });
 
 test('renders grouped results, local facts, sanitized errors, integrity, and a copyable report', async ({ page }) => {
