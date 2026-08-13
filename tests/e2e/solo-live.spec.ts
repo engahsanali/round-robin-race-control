@@ -52,6 +52,56 @@ async function uploadEvent(page: Page, value: unknown, name = 'context.json') {
   await page.getByLabel('Import event JSON').setInputFiles({ name, mimeType: 'application/json', buffer: Buffer.from(JSON.stringify(value)) });
 }
 
+async function recordVisibleWinner(page: Page, entryId: string) {
+  await page.locator(`[data-lane-card][data-entry-id="${entryId}"]`).click();
+  await page.getByRole('button', { name: 'Review winner' }).click();
+  await page.getByRole('button', { name: 'Confirm winner' }).click();
+}
+
+test('runs qualification playoff and championship finals through phase-aware live controls before sealing', async ({ page }) => {
+  const timestamp = '2026-08-13T00:00:00.000Z';
+  const event = {
+    version: 1,
+    event: { id: 'phase-lifecycle', name: 'Phase Lifecycle', date: '2026-08-14', venue: '', organizer: '', laneCount: 3, status: 'running', createdAt: timestamp, updatedAt: timestamp, resultSeal: 'provisional' },
+    settings: { scheduleMode: 'custom', seed: 'phase-life', rankingMode: 'competition', allowSharedRanks: true, tieBreakOrder: ['totalWins'], finalistCount: 2, autoSave: true, confirmWinnerChanges: true, enableTiming: false, prices: { standard: 100 } },
+    participants: Array.from({ length: 5 }, (_, index) => ({ id: `person-${index + 1}`, name: `Driver ${index + 1}`, email: '', phone: '', notes: '' })),
+    entries: Array.from({ length: 5 }, (_, index) => ({ id: `car-${index + 1}`, participantId: `person-${index + 1}`, carNumber: index + 1, name: `Car ${index + 1}`, categoryId: 'standard', quantity: 1, active: true })),
+    matches: [
+      { id: 'leader-1', phase: 'preliminary', matchNumber: 1, heatNumber: 1, lanes: ['car-1', 'car-2', 'car-3'], status: 'completed', winnerEntryId: 'car-1', laneTimesMs: [900, 1000, 1010], notes: '' },
+      { id: 'leader-2', phase: 'preliminary', matchNumber: 2, heatNumber: 1, lanes: ['car-1', 'car-4', 'car-5'], status: 'completed', winnerEntryId: 'car-1', laneTimesMs: [890, 1020, 1030], notes: '' },
+      ...Array.from({ length: 4 }, (_, index) => ({ id: `tie-${index + 1}`, phase: 'preliminary', matchNumber: index + 3, heatNumber: 1, lanes: [`car-${index + 2}`, 'car-1', `car-${((index + 1) % 4) + 2}`], status: 'completed', winnerEntryId: `car-${index + 2}`, laneTimesMs: [950, 1100, 1150], notes: '' })),
+    ], finals: [], payments: [], auditLog: [],
+  };
+  await page.goto(fileUrl);
+  await page.getByRole('button', { name: 'Reports' }).click();
+  await uploadEvent(page, event);
+  await page.getByRole('button', { name: 'Finals' }).click();
+  await page.getByRole('button', { name: 'Generate qualification playoff' }).click();
+  await page.getByRole('button', { name: 'Live Racing' }).click();
+  await page.getByLabel('Race phase').selectOption('qualification');
+  await expect(page.getByRole('paragraph').filter({ hasText: 'Qualification Playoff' })).toBeVisible();
+  for (let index = 0; index < 6; index += 1) {
+    const lanes = await page.locator('[data-lane-card]').evaluateAll((nodes) => nodes.map((node) => node.getAttribute('data-entry-id')));
+    await recordVisibleWinner(page, lanes.includes('car-2') ? 'car-2' : lanes[0]!);
+  }
+  const playoffState = await page.evaluate(() => (window as any).RR3.getState());
+  expect(playoffState.finals.filter((heat: any) => heat.status === 'completed')).toHaveLength(6);
+
+  await page.getByRole('button', { name: 'Finals' }).click();
+  await expect(page.getByRole('list', { name: 'Selected finalists' })).toContainText('Car 2');
+  await page.getByRole('button', { name: 'Generate finals schedule' }).click();
+  await page.getByLabel('Finals replacement reason').fill('Qualification completed; create championship finals');
+  await page.getByRole('button', { name: 'Confirm finals replacement' }).click();
+  await page.getByRole('button', { name: 'Live Racing' }).click();
+  await page.getByLabel('Race phase').selectOption('championship');
+  const championshipCount = await page.locator('[data-live-phase-count]').getAttribute('data-live-phase-count');
+  for (let index = 0; index < Number(championshipCount); index += 1) await recordVisibleWinner(page, 'car-2');
+  await page.getByRole('button', { name: 'Finals' }).click();
+  await expect(page.getByRole('button', { name: 'Seal official results' })).toBeEnabled();
+  await page.getByRole('button', { name: 'Seal official results' }).click();
+  await expect(page.locator('[data-official-champion]')).toContainText('Car 2');
+});
+
 test('records a keyboard-selected winner with optional times, receipt, auto-advance, and undo', async ({ page }) => {
   await openLiveDemo(page);
 

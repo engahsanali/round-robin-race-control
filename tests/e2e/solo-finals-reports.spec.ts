@@ -86,17 +86,73 @@ test('qualification playoff schedules every entrant in a four-way cutoff tie wit
   await expect(page.getByText('2 places requested · 4 cars tied across the cutoff', { exact: true })).toBeVisible();
   await page.getByRole('button', { name: 'Generate qualification playoff' }).click();
   const state = await page.evaluate(() => (window as any).RR3.getState());
-  expect(state.finals).toHaveLength(2);
-  expect(state.finals.map((heat: any) => heat.lanes.filter(Boolean).length)).toEqual([2, 2]);
-  expect(state.finals.flatMap((heat: any) => heat.lanes.filter(Boolean)).sort()).toEqual(['car-2', 'car-3', 'car-4', 'car-5']);
-  expect(state.finals.every((heat: any) => heat.notes === 'Qualification playoff')).toBe(true);
-  expect(state.auditLog.at(-1)).toMatchObject({ action: 'finals.playoff-generated', details: { purpose: 'qualification-playoff', tiedCarIds: ['car-2', 'car-3', 'car-4', 'car-5'] } });
+  expect(state.finals).toHaveLength(6);
+  expect(state.finals.map((heat: any) => heat.lanes.filter(Boolean).length)).toEqual([2, 2, 2, 2, 2, 2]);
+  expect(state.finals.flatMap((heat: any) => heat.lanes.filter(Boolean)).sort()).toEqual(['car-2', 'car-2', 'car-2', 'car-3', 'car-3', 'car-3', 'car-4', 'car-4', 'car-4', 'car-5', 'car-5', 'car-5']);
+  expect(state.finals.map((heat: any) => heat.lanes.filter(Boolean))).toEqual([
+    ['car-2', 'car-3'], ['car-2', 'car-4'], ['car-2', 'car-5'], ['car-3', 'car-4'], ['car-3', 'car-5'], ['car-4', 'car-5'],
+  ]);
+  expect(state.auditLog.at(-1)).toMatchObject({
+    action: 'finals.playoff-generated',
+    details: { purpose: 'qualification-playoff', heatIds: state.finals.map((heat: any) => heat.id), tiedEntryIds: ['car-2', 'car-3', 'car-4', 'car-5'], needed: 1, baseQualifiedIds: ['car-1'] },
+  });
 
   await expect(page.getByRole('table', { name: 'Finals standings' }).locator('tbody tr')).toHaveCount(5);
   await expect(page.getByRole('table', { name: 'Finals standings' })).not.toContainText(/1 win/i);
   await expect(page.getByText('Championship finals have not been generated.', { exact: true })).toBeVisible();
   await expect(page.getByRole('button', { name: 'Manual champion decision' })).toBeDisabled();
   await expect(page.getByRole('button', { name: 'Seal official results' })).toBeDisabled();
+});
+
+test('projects structurally audited playoff results for one and three cutoff places without arbitrary tie resolution', async ({ page }) => {
+  for (const finalistCount of [2, 4]) {
+    await openFinals(page, cutoffTieEvent(4, finalistCount));
+    await page.getByRole('button', { name: 'Generate qualification playoff' }).click();
+    const completed = await page.evaluate(() => {
+      const state = (window as any).RR3.getState();
+      delete state.activeView; delete state.theme;
+      const priority = new Map([['car-2', 4], ['car-3', 3], ['car-4', 2], ['car-5', 1]]);
+      state.finals.forEach((heat: any) => { heat.status = 'completed'; heat.winnerEntryId = priority.get(heat.lanes[0])! > priority.get(heat.lanes[1])! ? heat.lanes[0] : heat.lanes[1]; heat.laneTimesMs = [1000, 1100, null]; });
+      return state;
+    });
+    await openFinals(page, completed);
+    const expected = finalistCount === 2 ? ['Finalist 1', 'Finalist 2'] : ['Finalist 1', 'Finalist 2', 'Finalist 3', 'Finalist 4'];
+    const selected = await page.getByRole('list', { name: 'Selected finalists' }).getByRole('listitem').allTextContents();
+    expect(selected).toHaveLength(finalistCount);
+    expected.forEach((name) => expect(selected.join(' ')).toContain(name));
+    await expect(page.getByRole('button', { name: 'Generate finals schedule' })).toBeEnabled();
+  }
+
+  await openFinals(page, cutoffTieEvent(4, 4));
+  await page.getByRole('button', { name: 'Generate qualification playoff' }).click();
+  const unresolved = await page.evaluate(() => {
+    const state = (window as any).RR3.getState();
+    delete state.activeView; delete state.theme;
+    const winners: Record<string, string> = {
+      'car-2|car-3': 'car-2', 'car-2|car-4': 'car-2', 'car-2|car-5': 'car-5',
+      'car-3|car-4': 'car-3', 'car-3|car-5': 'car-3', 'car-4|car-5': 'car-4',
+    };
+    state.finals.forEach((heat: any) => { heat.status = 'completed'; heat.winnerEntryId = winners[`${heat.lanes[0]}|${heat.lanes[1]}`]; heat.laneTimesMs = [1000, 1000, null]; });
+    return state;
+  });
+  await openFinals(page, unresolved);
+  await expect(page.getByText('Qualification playoff remains unresolved.', { exact: true })).toBeVisible();
+  await expect(page.getByRole('button', { name: 'Repeat qualification playoff' })).toBeVisible();
+  await expect(page.getByRole('button', { name: 'Manual selection with reason' })).toBeVisible();
+  await expect(page.getByRole('button', { name: 'Generate finals schedule' })).toBeDisabled();
+  await expect(page.getByRole('list', { name: 'Selected finalists' })).toHaveCount(0);
+});
+
+test('uses audit heat IDs for phase identity and treats an unaudited legacy final as championship regardless of notes', async ({ page }) => {
+  const event = finalsEvent(4, 3) as any;
+  event.finals = [{ id: 'legacy-championship', phase: 'final', matchNumber: 1, heatNumber: 1, lanes: ['car-1', 'car-2', 'car-3'], status: 'completed', winnerEntryId: 'car-2', laneTimesMs: [1000, 900, 1100], notes: 'Qualification playoff' }];
+  await openFinals(page, event);
+  await expect(page.getByText('Championship finals have not been generated.', { exact: true })).toHaveCount(0);
+  await expect(page.getByRole('table', { name: 'Finals standings' })).toContainText('1');
+  await page.getByRole('button', { name: 'Live Racing' }).click();
+  await expect(page.getByLabel('Race phase').locator('option')).toHaveText(['Preliminary', 'Championship Finals']);
+  await page.getByLabel('Race phase').selectOption('championship');
+  await expect(page.getByLabel('Race phase')).toHaveValue('championship');
 });
 
 test('manual cutoff resolution requires the exact number of distinct eligible tied entrants plus a reason', async ({ page }) => {
@@ -245,6 +301,15 @@ test('resetting finals invalidates a stale manual champion and official seal whi
   expect(state.auditLog.at(-1)).toMatchObject({ action: 'finals.reset', details: { invalidatedChampionCarId: 'car-2', invalidatedSeal: 'official' } });
   await expect(page.locator('[data-official-champion]')).toHaveCount(0);
   await expect(page.getByText('Champion pending valid finals completion.', { exact: true })).toBeVisible();
+});
+
+test('championship schedule generation invalidates an earlier manual champion decision', async ({ page }) => {
+  const event = finalsEvent(4, 3) as any;
+  event.auditLog = [{ id: 'manual-before-schedule', timestamp: event.event.updatedAt, action: 'champion.manual-decided', summary: 'Old manual champion', entityType: 'event', entityId: event.event.id, details: { championCarId: 'car-2', reason: 'Prior abandoned finals' } }];
+  await openFinals(page, event);
+  await page.getByRole('button', { name: 'Generate finals schedule' }).click();
+  await expect(page.getByText('Champion pending valid finals completion.', { exact: true })).toBeVisible();
+  await expect(page.getByRole('button', { name: 'Seal official results' })).toBeDisabled();
 });
 
 test('manual champion rejects active cars that are not eligible finalists', async ({ page }) => {

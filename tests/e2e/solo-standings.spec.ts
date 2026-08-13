@@ -140,6 +140,16 @@ test('podium retains every entrant sharing a top-three competitive rank', async 
   expect(podiumNames).toHaveLength(4);
 });
 
+test('clips long opponent matrix labels inside the SVG while preserving full accessible table names', async ({ page }) => {
+  const event = standingsEvent() as any;
+  event.entries[0].name = `Ada ${'Extraordinarily Long Opponent Identity '.repeat(5)}`.slice(0, 200);
+  await openStandings(page, event);
+  const label = page.locator('[data-chart="Opponent repeat matrix"] [data-matrix-label="car-1"]');
+  await expect(label).toHaveAttribute('textLength', '136');
+  await expect(label).toHaveAttribute('lengthAdjust', 'spacingAndGlyphs');
+  await expect(page.locator('[data-chart="Opponent repeat matrix"] table')).toContainText(event.entries[0].name);
+});
+
 test('makes analytical movement instant when reduced motion is requested', async ({ page }) => {
   await page.emulateMedia({ reducedMotion: 'reduce' });
   await openStandings(page, standingsEvent());
