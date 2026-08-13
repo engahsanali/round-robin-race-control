@@ -192,3 +192,94 @@ test('warns before withdrawing a scheduled demo car and can restore it', async (
   await page.getByRole('button', { name: 'Restore Sample Car 01' }).click();
   await expect(page.getByText('Active', { exact: true }).first()).toBeVisible();
 });
+
+test('keyboard-edits participant contact fields without replacing its stable ID', async ({ page }) => {
+  await page.goto(fileUrl);
+  await page.getByRole('button', { name: 'Load Demo Event' }).click();
+  await page.getByRole('button', { name: 'Load separate demo' }).click();
+  await page.getByRole('button', { name: 'Registration' }).click();
+  const before = await page.evaluate(() => (window as unknown as { RR3: { getState(): any } }).RR3.getState());
+  const trigger = page.getByRole('button', { name: 'Edit participant Sample 01 - Ada' });
+  await trigger.focus();
+  await trigger.press('Enter');
+  await page.getByLabel('Edit participant name').fill('');
+  await page.getByRole('button', { name: 'Save participant' }).click();
+  const invalid = page.getByLabel('Edit participant name');
+  await expect(invalid).toHaveAttribute('aria-invalid', 'true');
+  await expect(page.getByLabel('Edit participant email')).not.toHaveAttribute('aria-invalid');
+  const errorId = await invalid.getAttribute('aria-describedby');
+  await expect(page.locator(`#${errorId}`)).toHaveAttribute('role', 'alert');
+  await page.getByLabel('Edit participant name').fill('Ada Lovelace');
+  await page.getByLabel('Edit participant email').fill('ada.l@example.test');
+  await page.getByLabel('Edit participant phone').fill('+61 411 111 111');
+  await page.getByLabel('Edit participant notes').fill('Updated at registration desk');
+  await page.getByRole('button', { name: 'Save participant' }).click();
+  const after = await page.evaluate(() => (window as unknown as { RR3: { getState(): any } }).RR3.getState());
+  expect(after.participants[0]).toMatchObject({ id: before.participants[0].id, name: 'Ada Lovelace', email: 'ada.l@example.test', phone: '+61 411 111 111', notes: 'Updated at registration desk' });
+  expect(after.auditLog.length).toBeGreaterThan(before.auditLog.length);
+  await expect(page.getByText('Ada Lovelace', { exact: true }).first()).toBeVisible();
+});
+
+test('validates and confirms scheduled car corrections while preserving ID and recalculating fees', async ({ page }) => {
+  await page.goto(fileUrl);
+  await page.getByRole('button', { name: 'Load Demo Event' }).click();
+  await page.getByRole('button', { name: 'Load separate demo' }).click();
+  await page.getByRole('button', { name: 'Registration' }).click();
+  const before = await page.evaluate(() => (window as unknown as { RR3: { getState(): any } }).RR3.getState());
+  await page.getByRole('button', { name: 'Edit Sample Car 01' }).press('Enter');
+  await expect(page.getByRole('dialog')).toContainText('appears in 4 heats');
+  await page.getByLabel('Edit car number').fill('2');
+  await page.getByRole('button', { name: 'Save car' }).click();
+  const duplicate = page.getByLabel('Edit car number');
+  await expect(duplicate).toHaveAttribute('aria-invalid', 'true');
+  await expect(page.getByLabel('Edit car name')).not.toHaveAttribute('aria-invalid');
+  await page.getByLabel('Edit car number').fill('21');
+  await page.getByLabel('Edit car name').fill('Ada Arrow GT');
+  await page.getByLabel('Edit car category').selectOption('standard');
+  await page.getByLabel('Edit entry quantity').fill('2');
+  await page.getByRole('button', { name: 'Save car' }).click();
+  await expect(page.getByRole('dialog')).toContainText(/scheduled-impact confirmation/i);
+  await page.getByRole('button', { name: 'Confirm car changes' }).click();
+  const after = await page.evaluate(() => (window as unknown as { RR3: { getState(): any } }).RR3.getState());
+  expect(after.entries[0]).toMatchObject({ id: before.entries[0].id, carNumber: 21, name: 'Ada Arrow GT', categoryId: 'standard', quantity: 2 });
+  await expect(page.locator(`[data-account-row="${before.participants[0].id}"]`)).toContainText('$12.00');
+  expect(after.auditLog.length).toBeGreaterThan(before.auditLog.length);
+});
+
+test('safely corrects a payment record in place and updates accounting and audit', async ({ page }) => {
+  await page.goto(fileUrl);
+  await page.getByRole('button', { name: 'Load Demo Event' }).click();
+  await page.getByRole('button', { name: 'Load separate demo' }).click();
+  await page.getByRole('button', { name: 'Registration' }).click();
+  const before = await page.evaluate(() => (window as unknown as { RR3: { getState(): any } }).RR3.getState());
+  await page.getByRole('button', { name: 'Edit payment Paid in full example' }).press('Enter');
+  await page.getByLabel('Edit amount in cents').fill('-1');
+  await page.getByRole('button', { name: 'Save payment correction' }).click();
+  await expect(page.getByLabel('Edit amount in cents')).toHaveAttribute('aria-invalid', 'true');
+  await expect(page.getByLabel('Edit transaction type')).not.toHaveAttribute('aria-invalid');
+  await page.getByLabel('Edit amount in cents').fill('600');
+  await page.getByLabel('Edit transaction type').selectOption('payment');
+  await page.getByLabel('Edit payment reference').fill('Corrected receipt');
+  await page.getByLabel('Edit paid at').fill('2026-08-13T03:00:00.000Z');
+  await page.getByLabel('Correction reason').fill('Receipt amount corrected');
+  await page.getByRole('button', { name: 'Save payment correction' }).click();
+  const after = await page.evaluate(() => (window as unknown as { RR3: { getState(): any } }).RR3.getState());
+  expect(after.payments[0]).toMatchObject({ id: before.payments[0].id, amountCents: 600, kind: 'payment', note: 'Corrected receipt', paidAt: '2026-08-13T03:00:00.000Z' });
+  await expect(page.locator(`[data-account-row="${before.participants[0].id}"]`)).toContainText('$6.00');
+  expect(after.auditLog.at(-1)).toMatchObject({ action: 'payment.corrected', entityId: before.payments[0].id });
+});
+
+test('associates setup event validation only with affected fields', async ({ page }) => {
+  await page.goto(fileUrl);
+  await page.getByRole('button', { name: 'Load Demo Event' }).click();
+  await page.getByRole('button', { name: 'Load separate demo' }).click();
+  await page.getByRole('button', { name: 'Race Setup' }).click();
+  await page.getByLabel('Event name').fill('');
+  await page.getByRole('button', { name: 'Save event details' }).click();
+  const invalid = page.getByLabel('Event name');
+  await expect(invalid).toHaveAttribute('aria-invalid', 'true');
+  await expect(page.getByLabel('Event date')).not.toHaveAttribute('aria-invalid');
+  const errorId = await invalid.getAttribute('aria-describedby');
+  await expect(page.locator(`#${errorId}`)).toHaveText('Event name is required.');
+  await expect(page.locator(`#${errorId}`)).toHaveAttribute('aria-live', 'assertive');
+});
