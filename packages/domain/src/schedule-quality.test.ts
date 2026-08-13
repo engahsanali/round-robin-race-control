@@ -61,6 +61,18 @@ describe("analyseSchedule", () => {
     ]));
   });
 
+  it("rejects a car assigned to more than one heat in the same match", () => {
+    const report = analyseSchedule([
+      heat({ id: "heat-1", lanes: ["car-a", "car-b", "car-c"] }),
+      heat({ id: "heat-2", heatNumber: 2, lanes: ["car-a", "car-d", "car-e"] })
+    ], ["car-a", "car-b", "car-c", "car-d", "car-e"]);
+
+    expect(report.status).toBe("invalid");
+    expect(report.errors).toEqual(expect.arrayContaining([
+      expect.stringMatching(/car-a.*more than once.*match/i)
+    ]));
+  });
+
   it("reports byes and two-car participation as warnings while retaining their schedule metrics", () => {
     const report = analyseSchedule([
       heat({ lanes: ["car-a", "car-b", null] }),
@@ -76,6 +88,16 @@ describe("analyseSchedule", () => {
     ]));
   });
 
+  it("counts a bye once when a car misses every heat in a multi-heat match", () => {
+    const report = analyseSchedule([
+      heat({ id: "heat-1", lanes: ["car-a", "car-b", "car-c"] }),
+      heat({ id: "heat-2", heatNumber: 2, lanes: ["car-d", "car-e", "car-f"] })
+    ], ["car-a", "car-b", "car-c", "car-d", "car-e", "car-f", "car-g"]);
+
+    expect(report.status).toBe("valid-with-warnings");
+    expect(report.byeCounts).toMatchObject({ "car-g": 1 });
+  });
+
   it("counts repeated opponents using sorted stable-ID pair keys", () => {
     const report = analyseSchedule([
       heat({ lanes: ["car-b", "car-a", "car-c"] }),
@@ -85,5 +107,16 @@ describe("analyseSchedule", () => {
     expect(report.pairCounts).toEqual({ "car-a::car-b": 2, "car-a::car-c": 2, "car-b::car-c": 2 });
     expect(report.repeatedOpponentCount).toBe(3);
     expect(report.maximumPairFrequency).toBe(2);
+  });
+
+  it("counts every opponent repeat beyond the first occurrence", () => {
+    const report = analyseSchedule([
+      heat({ id: "heat-1", matchNumber: 1 }),
+      heat({ id: "heat-2", matchNumber: 2 }),
+      heat({ id: "heat-3", matchNumber: 3 })
+    ], ["car-a", "car-b", "car-c"]);
+
+    expect(report.pairCounts).toEqual({ "car-a::car-b": 3, "car-a::car-c": 3, "car-b::car-c": 3 });
+    expect(report.repeatedOpponentCount).toBe(6);
   });
 });

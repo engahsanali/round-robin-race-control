@@ -1,7 +1,7 @@
 import { describe, expect, it } from "vitest";
 
 import schedules from "../../../fixtures/schedules.json";
-import { getPreset, mapPresetToCars } from "./presets";
+import { getPreset, mapPresetToCars, schedulePresets } from "./presets";
 
 const PRESET_KEYS = ["template9", "template12", "template15", "finals15"] as const;
 
@@ -74,5 +74,22 @@ describe("fixed schedule presets", () => {
   it("rejects a car list that cannot map the preset slots", () => {
     expect(() => mapPresetToCars(getPreset("template9"), ["car-1", "car-2"])).toThrow(/9/);
     expect(() => mapPresetToCars(getPreset("template9"), Array.from({ length: 9 }, () => "car-1"))).toThrow(/unique/i);
+  });
+
+  it.each([0, 10, 1.5])("rejects a preset slot outside its integer entrant range: %s", (invalidSlot) => {
+    const preset = getPreset("template9");
+    preset.matches[0]![0]![0] = invalidSlot;
+
+    expect(() => mapPresetToCars(preset, Array.from({ length: 9 }, (_, index) => `car-${index + 1}`))).toThrow(/slot/i);
+  });
+
+  it("exposes frozen schedule presets without sharing mutable backing arrays", () => {
+    expect(Object.isFrozen(schedulePresets)).toBe(true);
+    expect(Object.isFrozen(schedulePresets.template9)).toBe(true);
+    expect(Object.isFrozen(schedulePresets.template9.matches)).toBe(true);
+    expect(Object.isFrozen(schedulePresets.template9.matches[0])).toBe(true);
+    expect(Object.isFrozen(schedulePresets.template9.matches[0]![0])).toBe(true);
+    expect(() => { schedulePresets.template9.matches[0]![0]![0] = 9; }).toThrow();
+    expect(getPreset("template9").matches[0]![0]![0]).toBe(1);
   });
 });

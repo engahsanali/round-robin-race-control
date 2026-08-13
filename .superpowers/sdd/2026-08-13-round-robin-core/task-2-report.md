@@ -56,3 +56,38 @@ Outcome: exit code `0`.
 ## Concerns
 
 None. The ambient shell still requires the bundled Node directory to be prepended before pnpm commands; this was applied only to the verification process.
+
+## Review Follow-up (Round 1/5)
+
+### Status
+
+Complete. Addressed all reviewer findings with focused regression coverage.
+
+### Changes
+
+- Rejects an active car assigned to multiple heats within the same phase/match.
+- Counts a bye once per match when an active car has no heat in that match.
+- Defines `repeatedOpponentCount` as repeat excess: `sum(max(0, frequency - 1))`.
+- Rejects non-integer and out-of-range preset slots before car-ID mapping.
+- Publishes a deep-frozen schedule-preset snapshot; `getPreset` continues to return a mutable clone.
+
+### Verification
+
+```powershell
+$env:PATH='C:\Users\engah\.cache\codex-runtimes\codex-primary-runtime\dependencies\node\bin;'+$env:PATH
+pnpm vitest run packages/domain/src/presets.test.ts packages/domain/src/schedule-quality.test.ts
+```
+
+Outcome: `2 passed`, `26 passed`.
+
+```powershell
+pnpm typecheck
+```
+
+Outcome: exit code `0` (`tsc -b --pretty false`).
+
+### Self-review
+
+- Focused tests fail against the previous implementation for all four findings and pass after the minimal changes.
+- Match identity includes phase plus match number, avoiding a false duplicate or bye interaction if preliminary and final heats are analysed together.
+- Frozen public presets cannot mutate the internal canonical source, and each `getPreset` call remains isolated.

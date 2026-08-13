@@ -30,6 +30,15 @@ export function mapPresetToCars(preset: SchedulePreset, orderedCarIds: readonly 
   if (new Set(orderedCarIds).size !== orderedCarIds.length) {
     throw new TypeError("Car IDs must be unique");
   }
+  for (const match of preset.matches) {
+    for (const slots of match) {
+      for (const slot of slots) {
+        if (!Number.isInteger(slot) || slot < 1 || slot > preset.entrantCount) {
+          throw new RangeError(`Preset ${preset.key} contains an invalid slot: ${slot}`);
+        }
+      }
+    }
+  }
 
   return preset.matches.flatMap((match, matchIndex) =>
     match.map((slots, heatIndex) => ({
@@ -46,4 +55,19 @@ export function mapPresetToCars(preset: SchedulePreset, orderedCarIds: readonly 
   );
 }
 
-export const schedulePresets = presetDefinitions;
+function freezePreset(preset: SchedulePreset): SchedulePreset {
+  const snapshot = clonePreset(preset);
+  for (const match of snapshot.matches) {
+    for (const slots of match) Object.freeze(slots);
+    Object.freeze(match);
+  }
+  Object.freeze(snapshot.matches);
+  return Object.freeze(snapshot);
+}
+
+export const schedulePresets: Readonly<Record<SchedulePreset["key"], SchedulePreset>> = Object.freeze({
+  template9: freezePreset(presetDefinitions.template9),
+  template12: freezePreset(presetDefinitions.template12),
+  template15: freezePreset(presetDefinitions.template15),
+  finals15: freezePreset(presetDefinitions.finals15)
+});

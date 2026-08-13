@@ -21,6 +21,7 @@ export function analyseSchedule(heats: readonly Heat[], activeCarIds: readonly s
   const twoCarHeatCounts = emptyRecord<number>();
   const pairCounts = emptyRecord<number>();
   const activeIds = new Set<string>();
+  const entriesByMatch = new Map<string, Set<string>>();
 
   for (const carId of activeCarIds) {
     if (activeIds.has(carId)) {
@@ -56,9 +57,14 @@ export function analyseSchedule(heats: readonly Heat[], activeCarIds: readonly s
     }
 
     const activeAssigned = [...distinctAssigned].filter((carId) => activeIds.has(carId));
-    const activeAssignedSet = new Set(activeAssigned);
-    for (const carId of activeIds) {
-      if (!activeAssignedSet.has(carId)) byeCounts[carId]! += 1;
+    const matchKey = `${heat.phase}::${heat.matchNumber}`;
+    const entriesInMatch = entriesByMatch.get(matchKey) ?? new Set<string>();
+    entriesByMatch.set(matchKey, entriesInMatch);
+    for (const carId of activeAssigned) {
+      if (entriesInMatch.has(carId)) {
+        errors.push(`Car ${carId} appears more than once in match ${heat.matchNumber}`);
+      }
+      entriesInMatch.add(carId);
     }
     if (activeAssigned.length === 2) {
       for (const carId of activeAssigned) twoCarHeatCounts[carId]! += 1;
@@ -77,13 +83,19 @@ export function analyseSchedule(heats: readonly Heat[], activeCarIds: readonly s
     }
   }
 
+  for (const entriesInMatch of entriesByMatch.values()) {
+    for (const carId of activeIds) {
+      if (!entriesInMatch.has(carId)) byeCounts[carId]! += 1;
+    }
+  }
+
   const totalByes = Object.values(byeCounts).reduce((sum, count) => sum + count, 0);
   if (totalByes > 0) warnings.push(`Schedule contains ${totalByes} bye assignment(s)`);
   const totalTwoCarParticipations = Object.values(twoCarHeatCounts).reduce((sum, count) => sum + count, 0);
   if (totalTwoCarParticipations > 0) warnings.push("Schedule contains two-car heat participation");
 
   const pairFrequencies = Object.values(pairCounts);
-  const repeatedOpponentCount = pairFrequencies.filter((count) => count > 1).length;
+  const repeatedOpponentCount = pairFrequencies.reduce((total, count) => total + Math.max(0, count - 1), 0);
   const maximumPairFrequency = pairFrequencies.length === 0 ? 0 : Math.max(...pairFrequencies);
   const appearanceImbalance = range(Object.values(appearances));
   const maximumLaneSpread = Math.max(0, ...Object.values(laneCounts).map((counts) => range(counts)));
