@@ -1,3 +1,4 @@
+import { compareCodeUnits } from "./ordering";
 import type { Standing } from "./results";
 import type { EventStateV1, TieBreakKey } from "./types";
 
@@ -43,7 +44,7 @@ export function calculateRankings(
   const active = standings
     .filter(({ active }) => active)
     .map((standing): RankedWork => ({ standing, values: new Map(), resolvedKeys: new Set() }))
-    .sort((left, right) => left.standing.carId.localeCompare(right.standing.carId));
+    .sort((left, right) => compareCodeUnits(left.standing.carId, right.standing.carId));
   const hasOfficialResult = active.some(({ standing }) => standing.completedHeats > 0);
 
   if (!hasOfficialResult) {

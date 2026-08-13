@@ -1,4 +1,5 @@
 import { calculateEventAccounts } from "./payments";
+import { compareCodeUnits } from "./ordering";
 import { calculateRankings } from "./rankings";
 import { calculateStandings } from "./results";
 import type { EventStateV1 } from "./types";
@@ -97,10 +98,6 @@ function encodeCell(value: CsvCell): string {
 
 function phaseOrder(phase: "preliminary" | "final"): number {
   return phase === "preliminary" ? 0 : 1;
-}
-
-function compareCodeUnits(left: string, right: string): number {
-  return left < right ? -1 : left > right ? 1 : 0;
 }
 
 function stableJson(value: unknown): string {

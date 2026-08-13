@@ -111,6 +111,18 @@ describe("calculateRankings", () => {
     expect(rankings[0]!.displayOrderReason).toMatch(/stable ID.*non-competitive/i);
   });
 
+  it("uses locale-independent code-unit ordering for tied Unicode stable IDs", () => {
+    const rankings = calculateRankings([
+      standing("car-ä", 2, { carNumber: 1 }),
+      standing("car-z", 2, { carNumber: 2 })
+    ], settings());
+
+    expect(rankings.map(({ carId, rank }) => [carId, rank])).toEqual([
+      ["car-z", 1],
+      ["car-ä", 1]
+    ]);
+  });
+
   it("treats car number as competitive only when explicitly configured", () => {
     const rankings = calculateRankings([
       standing("car-a", 2, { carNumber: 9 }),

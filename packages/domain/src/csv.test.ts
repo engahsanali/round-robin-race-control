@@ -100,4 +100,23 @@ describe("safe CSV", () => {
     expect(buildResultsRows(state).slice(1).map((row) => row[0])).toEqual(["heat-z", "heat-ä"]);
     expect(buildAuditRows(state).slice(1).map((row) => row[0])).toEqual(["audit-z", "audit-ä"]);
   });
+
+  it("orders tied no-results standings rows by locale-independent stable IDs", () => {
+    const state = structuredClone(demoEvent) as unknown as EventStateV1;
+    state.participants = state.participants.slice(0, 2);
+    state.entries = state.entries.slice(0, 2);
+    state.entries[0]!.id = "car-ä";
+    state.entries[1]!.id = "car-z";
+    state.matches = [];
+    state.finals = [];
+    state.payments = [];
+    state.auditLog = [];
+
+    const rows = buildStandingsRows(state, "preliminary");
+
+    expect(rows.slice(1).map((row) => [row[0], row[2]])).toEqual([
+      [null, "car-z"],
+      [null, "car-ä"]
+    ]);
+  });
 });

@@ -1,3 +1,4 @@
+import { compareCodeUnits } from "./ordering";
 import { validateEventState } from "./schema";
 import type { AuditEntry, EventStateV1, Heat, JsonValue } from "./types";
 
@@ -107,7 +108,7 @@ export function calculateStandings(
   const heats = (phase === "preliminary" ? state.matches : state.finals)
     .filter((heat) => heat.phase === phase)
     .slice()
-    .sort((left, right) => left.matchNumber - right.matchNumber || left.heatNumber - right.heatNumber || left.id.localeCompare(right.id));
+    .sort((left, right) => left.matchNumber - right.matchNumber || left.heatNumber - right.heatNumber || compareCodeUnits(left.id, right.id));
   const participantById = new Map(state.participants.map((participant) => [participant.id, participant]));
 
   return state.entries.filter(({ active }) => active).map((entry): Standing => {

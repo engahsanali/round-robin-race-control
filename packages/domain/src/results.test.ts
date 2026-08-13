@@ -178,6 +178,20 @@ describe("result commands", () => {
     expect(standings.every((standing) => standing.totalWins === 0 && standing.completedHeats === 0)).toBe(true);
   });
 
+  it("orders same-slot Unicode heat IDs by locale-independent code units", () => {
+    const state = eventState({
+      matches: [
+        heat({ id: "heat-ä", status: "completed", winnerEntryId: "car-a", laneTimesMs: [900, 1000, 1100] }),
+        heat({ id: "heat-z", status: "completed", winnerEntryId: "car-b", laneTimesMs: [1200, 800, 1300] })
+      ]
+    });
+
+    expect(calculateStandings(state, "preliminary").find(({ carId }) => carId === "car-a")?.recentForm).toEqual([
+      "loss",
+      "win"
+    ]);
+  });
+
   it("keeps generated audit IDs schema-valid for maximum-length heat IDs", () => {
     const maximumHeatId = "h".repeat(128);
     const next = recordWinner(eventState({ matches: [heat({ id: maximumHeatId })] }), maximumHeatId, "car-a");
