@@ -1,6 +1,6 @@
 import { z } from "zod";
 
-import type { EventStateV1, ValidationIssue, ValidationResult } from "./types";
+import type { EventStateV1, JsonValue, ValidationIssue, ValidationResult } from "./types";
 
 const DANGEROUS_KEYS = new Set(["__proto__", "constructor", "prototype"]);
 const MAX_COLLECTION_SIZE = 10_000;
@@ -11,7 +11,7 @@ const stableId = requiredString(128);
 const timestamp = requiredString(64);
 const moneyCents = z.number().finite().int().nonnegative();
 const positiveInteger = z.number().finite().int().positive();
-const jsonValueSchema: z.ZodType<unknown> = z.lazy(() =>
+const jsonValueSchema: z.ZodType<JsonValue> = z.lazy(() =>
   z.union([
     z.string(),
     z.number().finite(),
@@ -98,7 +98,7 @@ const tieBreakKeySchema = z.enum([
   "carNumber"
 ]);
 
-export const eventStateV1Schema = z.object({
+const eventStateV1CoreSchema = z.object({
   version: z.literal(1),
   event: z.object({
     id: stableId,
@@ -167,9 +167,29 @@ export const eventStateV1Schema = z.object({
   });
 
   const entryIds = new Set(state.entries.map(({ id }) => id));
+  validateHeatPhases(state.matches, "matches", "preliminary", context);
+  validateHeatPhases(state.finals, "finals", "final", context);
   validateHeatEntryReferences(state.matches, "matches", entryIds, context);
   validateHeatEntryReferences(state.finals, "finals", entryIds, context);
 });
+
+function validateHeatPhases(
+  heats: ReadonlyArray<{ phase: "preliminary" | "final" }>,
+  collection: "matches" | "finals",
+  expectedPhase: "preliminary" | "final",
+  context: z.RefinementCtx
+): void {
+  heats.forEach((heat, index) => {
+    if (heat.phase !== expectedPhase) {
+      addReferenceIssue(
+        context,
+        [collection, index, "phase"],
+        "phase_mismatch",
+        `${collection} heats must use the ${expectedPhase} phase`
+      );
+    }
+  });
+}
 
 function validateHeatEntryReferences(
   heats: ReadonlyArray<{ lanes: [string | null, string | null, string | null] }>,
@@ -216,7 +236,8 @@ function findDangerousKeys(value: unknown, path: Array<string | number> = [], se
 
   const issues: ValidationIssue[] = [];
   for (const key of Object.keys(value)) {
-    const nextPath = [...path, key];
+    const pathSegment = Array.isArray(value) && /^\d+$/.test(key) ? Number(key) : key;
+    const nextPath = [...path, pathSegment];
     if (DANGEROUS_KEYS.has(key)) {
       issues.push({ code: "dangerous_key", path: nextPath, message: `Unsafe object key is not allowed: ${key}` });
     }
@@ -224,6 +245,19 @@ function findDangerousKeys(value: unknown, path: Array<string | number> = [], se
   }
   return issues;
 }
+
+const dangerousKeyGuard = z.unknown().superRefine((input, context) => {
+  for (const issue of findDangerousKeys(input)) {
+    context.addIssue({
+      code: z.ZodIssueCode.custom,
+      path: issue.path,
+      message: issue.message,
+      params: { code: issue.code }
+    });
+  }
+});
+
+export const eventStateV1Schema = dangerousKeyGuard.pipe(eventStateV1CoreSchema);
 
 function toValidationIssue(issue: z.ZodIssue): ValidationIssue {
   const customCode = issue.code === z.ZodIssueCode.custom && "params" in issue
@@ -237,10 +271,7 @@ function toValidationIssue(issue: z.ZodIssue): ValidationIssue {
 }
 
 export function validateEventState(input: unknown): ValidationResult<EventStateV1> {
-  const dangerousIssues = findDangerousKeys(input);
   const parsed = eventStateV1Schema.safeParse(input);
-  const schemaIssues = parsed.success ? [] : parsed.error.issues.map(toValidationIssue);
-  const issues = [...dangerousIssues, ...schemaIssues];
-  if (issues.length > 0 || !parsed.success) return { success: false, issues };
-  return { success: true, data: parsed.data as EventStateV1 };
+  if (!parsed.success) return { success: false, issues: parsed.error.issues.map(toValidationIssue) };
+  return { success: true, data: parsed.data };
 }

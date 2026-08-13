@@ -65,3 +65,46 @@ Implemented the pnpm/TypeScript/Vitest workspace foundation, canonical schedule 
 ## Concerns
 
 None outstanding. The bundled runtime requires its Node `bin` directory on `PATH`; the repository records the required `esbuild` build approval so pnpm's dependency status check is no longer blocked.
+
+## Review fix round 1 of 5
+
+### Status
+
+DONE
+
+Addressed all four reviewer findings in `packages/domain/src/schema.ts` and `packages/domain/src/schema.test.ts`.
+
+### Changes
+
+- Moved recursive dangerous-key validation to a raw-input guard that is piped into the exported `eventStateV1Schema`. Both direct `parse`/`safeParse` callers and `validateEventState` now use the same guard, including for `__proto__` before Zod reconstructs nested records.
+- Added indexed collection-level phase validation: `matches` accepts only `preliminary`, and `finals` accepts only `final`.
+- Replaced fixture endpoint/count sampling with a single deep-equality assertion against independent, complete, literal expected arrays for all four presets.
+- Removed the `parsed.data as EventStateV1` cast. `jsonValueSchema` is typed as `z.ZodType<JsonValue>`, so TypeScript now checks the inferred schema output directly against `ValidationResult<EventStateV1>`.
+
+### TDD and verification evidence
+
+1. RED: `pnpm vitest run packages/domain/src/schema.test.ts`
+   - Exit 1: 27 tests collected; 5 failed and 22 passed.
+   - Expected failures reproduced both phase-placement gaps and all three dangerous-key bypasses through the exported schema.
+2. First implementation check: `pnpm vitest run packages/domain/src/schema.test.ts && pnpm typecheck`
+   - Tests reached 27/27 passing, then typecheck exited 1 because the inferred audit `details` output was `Record<string, unknown>` and no longer hidden by the removed cast.
+3. Type correction: declared the recursive JSON schema as `z.ZodType<JsonValue>`.
+4. Fresh required and full verification: `pnpm vitest run packages/domain/src/schema.test.ts && pnpm typecheck && pnpm test`
+   - Exit 0.
+   - Targeted: 1 test file passed; 27 tests passed.
+   - Typecheck: `tsc -b --pretty false` completed with zero errors.
+   - Full suite: 1 test file passed; 27 tests passed.
+5. `git diff --check`
+   - Exit 0; Git emitted only expected Windows LF-to-CRLF working-copy notices.
+
+### Self-review
+
+- Confirmed `eventStateV1Schema.safeParse` reports the exact nested path for `__proto__`, `constructor`, and `prototype`, while `.parse` throws for the same inputs.
+- Confirmed `validateEventState` maps the guard's custom issue to stable code `dangerous_key` and still does not mutate or pollute prototypes.
+- Confirmed wrong-phase paths are `matches.0.phase` and `finals.0.phase`, with stable code `phase_mismatch`.
+- Confirmed the full fixture literal matches the authoritative amended Task 1 brief, including six and only six preliminary template15 matches.
+- Confirmed the removed success cast is replaced by a compile-time schema/output contract, not another assertion.
+
+### Concerns
+
+None.

@@ -2,7 +2,38 @@ import { describe, expect, it } from "vitest";
 
 import demoEvent from "../../../fixtures/demo-event.json";
 import schedules from "../../../fixtures/schedules.json";
-import { validateEventState } from "./schema";
+import { eventStateV1Schema, validateEventState } from "./schema";
+
+const EXPECTED_SCHEDULES = {
+  template9: [
+    [[1, 2, 3], [4, 5, 6], [7, 8, 9]],
+    [[1, 4, 7], [2, 5, 8], [3, 6, 9]],
+    [[1, 8, 6], [4, 2, 9], [7, 5, 3]],
+    [[1, 5, 9], [4, 8, 3], [7, 2, 6]]
+  ],
+  template12: [
+    [[1, 2, 3], [4, 5, 6], [7, 8, 9], [10, 11, 12]],
+    [[1, 6, 11], [5, 10, 4], [9, 3, 8], [2, 7, 12]],
+    [[1, 10, 8], [6, 4, 2], [11, 9, 7], [5, 3, 12]],
+    [[1, 4, 7], [10, 2, 5], [8, 11, 3], [6, 9, 12]],
+    [[1, 5, 9], [2, 6, 10], [3, 7, 11], [4, 8, 12]]
+  ],
+  template15: [
+    [[1, 2, 3], [4, 5, 6], [7, 8, 9], [10, 11, 12], [13, 14, 15]],
+    [[1, 12, 9], [6, 3, 14], [11, 8, 5], [2, 13, 10], [7, 4, 15]],
+    [[1, 14, 13], [12, 11, 10], [9, 8, 7], [6, 5, 4], [3, 2, 15]],
+    [[1, 10, 5], [14, 9, 4], [13, 8, 3], [12, 7, 2], [11, 6, 15]],
+    [[1, 4, 7], [10, 13, 2], [5, 8, 11], [14, 3, 6], [9, 12, 15]],
+    [[1, 6, 11], [2, 7, 12], [3, 8, 13], [4, 9, 14], [5, 10, 15]]
+  ],
+  finals15: [
+    [[15, 1, 14], [11, 9, 7], [13, 8, 10], [5, 12, 2], [4, 6, 3]],
+    [[12, 10, 4], [1, 3, 13], [6, 7, 5], [9, 2, 15], [8, 14, 11]],
+    [[7, 13, 1], [2, 4, 8], [10, 11, 6], [3, 15, 12], [14, 5, 9]],
+    [[5, 1, 10], [15, 8, 7], [11, 6, 3], [13, 9, 14], [4, 12, 2]],
+    [[7, 3, 13], [6, 2, 15], [8, 9, 5], [12, 14, 11], [1, 10, 4]]
+  ]
+} as const;
 
 function validEvent() {
   return {
@@ -81,14 +112,8 @@ describe("validateEventState", () => {
     expect(validateEventState(demoEvent)).toMatchObject({ success: true });
   });
 
-  it("keeps the canonical fixture shape and omits a seventh template15 match", () => {
-    expect(Object.keys(schedules)).toEqual(["template9", "template12", "template15", "finals15"]);
-    expect(schedules.template9).toHaveLength(4);
-    expect(schedules.template12).toHaveLength(5);
-    expect(schedules.template15).toHaveLength(6);
-    expect(schedules.finals15).toHaveLength(5);
-    expect(schedules.template9[2]).toEqual([[1, 8, 6], [4, 2, 9], [7, 5, 3]]);
-    expect(schedules.finals15[4]).toEqual([[7, 3, 13], [6, 2, 15], [8, 9, 5], [12, 14, 11], [1, 10, 4]]);
+  it("keeps all four canonical fixture arrays exactly equal to the supplied immutable values", () => {
+    expect(schedules).toEqual(EXPECTED_SCHEDULES);
   });
 
   it("accepts schema version 1 and returns normalized data without mutating the input", () => {
@@ -169,6 +194,36 @@ describe("validateEventState", () => {
     }
   });
 
+  it("rejects final-phase heats in the preliminary matches collection", () => {
+    const input = validEvent();
+    input.matches[0]!.phase = "final";
+
+    const result = validateEventState(input);
+
+    expect(result.success).toBe(false);
+    if (!result.success) {
+      expect(result.issues).toContainEqual(expect.objectContaining({
+        code: "phase_mismatch",
+        path: ["matches", 0, "phase"]
+      }));
+    }
+  });
+
+  it("rejects preliminary-phase heats in the finals collection", () => {
+    const input = validEvent();
+    input.finals[0]!.phase = "preliminary";
+
+    const result = validateEventState(input);
+
+    expect(result.success).toBe(false);
+    if (!result.success) {
+      expect(result.issues).toContainEqual(expect.objectContaining({
+        code: "phase_mismatch",
+        path: ["finals", 0, "phase"]
+      }));
+    }
+  });
+
   it.each([
     ["participants", "participant-1"],
     ["entries", "car-1"],
@@ -225,6 +280,24 @@ describe("validateEventState", () => {
     if (!result.success) {
       expect(result.issues.some((issue) => issue.code === "dangerous_key" && issue.path.at(-1) === dangerousKey)).toBe(true);
     }
+    expect(({} as { polluted?: boolean }).polluted).toBeUndefined();
+  });
+
+  it.each(["__proto__", "constructor", "prototype"])("the exported Zod schema recursively rejects the dangerous key %s", (dangerousKey) => {
+    const input = validEvent();
+    const dangerousContainer = JSON.parse(`{"${dangerousKey}":{"polluted":true}}`);
+    input.auditLog[0]!.details = { safe: { nested: dangerousContainer } };
+
+    const result = eventStateV1Schema.safeParse(input);
+
+    expect(result.success).toBe(false);
+    if (!result.success) {
+      expect(result.error.issues).toContainEqual(expect.objectContaining({
+        code: "custom",
+        path: ["auditLog", 0, "details", "safe", "nested", dangerousKey]
+      }));
+    }
+    expect(() => eventStateV1Schema.parse(input)).toThrow();
     expect(({} as { polluted?: boolean }).polluted).toBeUndefined();
   });
 
