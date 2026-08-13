@@ -68,3 +68,43 @@ All commands used the bundled Node runtime by prepending `C:\Users\engah\.cache\
 - The plan names `GeneratedSchedule` but does not define its fields. The implementation uses the minimal inspectable shape `{ heats, score }`; `score` is the exact tuple ordered in the Task 3 brief.
 - Git emitted the repository's existing LF-to-CRLF checkout warnings during staging; `git diff --check` remained clean.
 - No change to `packages/domain/src/schedule-quality.ts` was needed because the existing committed analyzer already supplied the required validity checks.
+
+## Review Fix Round 1
+
+Resolved both Important findings from the first scheduler review.
+
+- Two-car lane assignment now permutes the vacant `null` slot together with the two entrants. The same deterministic greedy lane-count objective balances entrant lanes and the vacant lane instead of fixing every vacancy in lane 3.
+- Scheduler pair keys now use a JSON-serialized sorted ID array, so distinct opaque-ID pairs such as `("a", "b::c")` and `("a::b", "c")` cannot collide.
+- The independent test scorer uses its own unambiguous pair counter rather than relying on the domain analyzer's delimiter-formatted reporting keys.
+
+### Round 1 TDD evidence
+
+1. RED command:
+
+   `pnpm vitest run packages/scheduler/src/generate.test.ts`
+
+   Outcome: exit 1; 2 regression failures and 29 passes. The five-entrant/ten-match fixture reported lane spread 2 instead of at most 1, and delimiter-containing IDs produced scheduler pair metrics `119/9` instead of the independently calculated `110/5`.
+
+2. Focused GREEN command after the production fix:
+
+   `pnpm vitest run packages/scheduler/src/generate.test.ts`
+
+   Outcome: exit 0; 31/31 tests passed.
+
+3. First combined verification:
+
+   `pnpm vitest run packages/scheduler/src/generate.test.ts packages/scheduler/src/generate.property.test.ts; if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }; pnpm typecheck`
+
+   Outcome: scheduler tests passed 32/32, then typecheck exited 1 on generic permutation and nullable-map annotations. No behavioral failure remained.
+
+4. Fresh combined verification after correcting only those annotations:
+
+   `pnpm vitest run packages/scheduler/src/generate.test.ts packages/scheduler/src/generate.property.test.ts; if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }; pnpm typecheck`
+
+   Outcome: exit 0; 2 test files and 32/32 tests passed in 10.32 seconds, then `tsc -b --pretty false` completed with zero type errors.
+
+5. Diff hygiene:
+
+   `git diff --check`
+
+   Outcome: exit 0 with no whitespace errors.

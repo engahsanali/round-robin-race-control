@@ -12,12 +12,23 @@ function carIds(count: number): string[] {
 }
 
 function pairKey(first: string, second: string): string {
-  return first < second ? `${first}::${second}` : `${second}::${first}`;
+  return JSON.stringify(first < second ? [first, second] : [second, first]);
 }
 
 function independentlyScore(heats: readonly Heat[], ids: readonly string[]): Score {
   const report = analyseSchedule(heats, ids);
-  const weightedPairRepeatPenalty = Object.values(report.pairCounts).reduce(
+  const pairCounts = new Map<string, number>();
+  for (const heat of heats) {
+    const assigned = heat.lanes.filter((id): id is string => id !== null);
+    for (let first = 0; first < assigned.length; first += 1) {
+      for (let second = first + 1; second < assigned.length; second += 1) {
+        const key = pairKey(assigned[first]!, assigned[second]!);
+        pairCounts.set(key, (pairCounts.get(key) ?? 0) + 1);
+      }
+    }
+  }
+  const pairFrequencies = [...pairCounts.values()];
+  const weightedPairRepeatPenalty = pairFrequencies.reduce(
     (total, count) => total + Math.max(0, count - 1) + 4 * Math.max(0, count - 2),
     0
   );
@@ -53,7 +64,7 @@ function independentlyScore(heats: readonly Heat[], ids: readonly string[]): Sco
     report.errors.length,
     report.appearanceImbalance,
     weightedPairRepeatPenalty,
-    report.maximumPairFrequency,
+    pairFrequencies.length === 0 ? 0 : Math.max(...pairFrequencies),
     report.maximumLaneSpread,
     consecutiveByePenalty,
     immediateRepeatPenalty,
@@ -179,12 +190,41 @@ describe("generateCustomSchedule", () => {
     expect(Object.values(report.twoCarHeatCounts).reduce((sum, count) => sum + count, 0)).toBe(10);
   });
 
+  it("balances the vacant lane as well as entrants in two-car heats", () => {
+    const ids = carIds(5);
+    const generated = generateCustomSchedule(ids, {
+      matches: 10,
+      seed: "balanced-vacant-lane",
+      restarts: 3,
+      iterationsPerRestart: 60
+    });
+    const report = analyseSchedule(generated.heats, ids);
+
+    expect(report.maximumLaneSpread).toBeLessThanOrEqual(1);
+    const vacantLaneCounts = [0, 1, 2].map((lane) =>
+      generated.heats.filter((heat) => heat.lanes[lane] === null).length
+    );
+    expect(Math.max(...vacantLaneCounts) - Math.min(...vacantLaneCounts)).toBeLessThanOrEqual(1);
+  });
+
   it("preserves opaque stable IDs instead of treating array positions as identities", () => {
     const ids = ["car-900", "007", "alpha:id", "__proto__", "car-2"];
     const generated = generateCustomSchedule(ids, { matches: 3, seed: "opaque-ids", restarts: 2, iterationsPerRestart: 20 });
     const assigned = new Set(generated.heats.flatMap((heat) => heat.lanes).filter((id): id is string => id !== null));
 
     expect(assigned).toEqual(new Set(ids));
+  });
+
+  it("scores delimiter-containing stable IDs as distinct opponent pairs", () => {
+    const ids = ["a", "b::c", "a::b", "c", "extra"];
+    const generated = generateCustomSchedule(ids, {
+      matches: 10,
+      seed: "pair-key-collision",
+      restarts: 1,
+      iterationsPerRestart: 1
+    });
+
+    expect(generated.score).toEqual(independentlyScore(generated.heats, ids));
   });
 
   it.each([7, 8, 10, 11, 13, 16])("is lexicographically no worse than sequential grouping for %i entrants", (entrantCount) => {

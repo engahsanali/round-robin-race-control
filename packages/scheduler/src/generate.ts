@@ -30,6 +30,8 @@ type MatchPlan = {
   byes: string[];
 };
 
+type LaneSlot = string | null;
+
 const DEFAULT_RESTARTS = 24;
 const DEFAULT_ITERATIONS_PER_RESTART = 1_500;
 const MAX_SEARCH_UNITS = 250_000;
@@ -37,7 +39,7 @@ const MAX_RESTARTS = 128;
 const MAX_ITERATIONS_PER_RESTART = 10_000;
 
 function pairKey(first: string, second: string): string {
-  return first < second ? `${first}::${second}` : `${second}::${first}`;
+  return JSON.stringify(first < second ? [first, second] : [second, first]);
 }
 
 function range(values: readonly number[]): number {
@@ -106,9 +108,9 @@ function seededPlan(
   });
 }
 
-function permutations(values: readonly string[]): string[][] {
+function permutations<T>(values: readonly T[]): T[][] {
   if (values.length <= 1) return [[...values]];
-  const result: string[][] = [];
+  const result: T[][] = [];
   for (let index = 0; index < values.length; index += 1) {
     const first = values[index]!;
     for (const tail of permutations([...values.slice(0, index), ...values.slice(index + 1)])) {
@@ -119,8 +121,8 @@ function permutations(values: readonly string[]): string[][] {
 }
 
 function laneCost(
-  orderedGroup: readonly string[],
-  laneCounts: ReadonlyMap<string, readonly [number, number, number]>
+  orderedGroup: readonly LaneSlot[],
+  laneCounts: ReadonlyMap<LaneSlot, readonly [number, number, number]>
 ): readonly [number, number, string] {
   let maximumSpread = 0;
   let squaredCounts = 0;
@@ -134,13 +136,14 @@ function laneCost(
 }
 
 function assignLanes(plan: readonly MatchPlan[], carIds: readonly string[]): Heat[] {
-  const laneCounts = new Map<string, [number, number, number]>(
-    carIds.map((id) => [id, [0, 0, 0]])
-  );
+  const laneCounts = new Map<LaneSlot, [number, number, number]>();
+  for (const id of carIds) laneCounts.set(id, [0, 0, 0]);
+  laneCounts.set(null, [0, 0, 0]);
   const heats: Heat[] = [];
   plan.forEach((match, matchIndex) => {
     match.groups.forEach((group, heatIndex) => {
-      const ordered = permutations(group).sort((left, right) => {
+      const laneSlots: [LaneSlot, LaneSlot, LaneSlot] = [group[0] ?? null, group[1] ?? null, group[2] ?? null];
+      const ordered = permutations(laneSlots).sort((left, right) => {
         const leftCost = laneCost(left, laneCounts);
         const rightCost = laneCost(right, laneCounts);
         for (let index = 0; index < leftCost.length; index += 1) {
