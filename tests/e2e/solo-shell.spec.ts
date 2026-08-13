@@ -184,7 +184,11 @@ test('embeds exact inert presets and exposes a safe read-only diagnostic API', a
   expect(diagnostic.keys).toEqual(['getState', 'runAllTests', 'version']);
   expect(diagnostic.version).toBe('1.0.0');
   expect(diagnostic.state).toMatchObject({ event: null, participants: [], heats: [], results: [] });
-  expect(diagnostic.tests).toEqual({ passed: 0, failed: 0, total: 0, groups: [] });
+  expect(diagnostic.tests).toMatchObject({ failed: 0 });
+  expect((diagnostic.tests as { passed: number; total: number; groups: unknown[] }).total).toBeGreaterThan(0);
+  expect((diagnostic.tests as { passed: number; total: number; groups: unknown[] }).passed)
+    .toBe((diagnostic.tests as { passed: number; total: number; groups: unknown[] }).total);
+  expect((diagnostic.tests as { groups: unknown[] }).groups).toHaveLength(9);
 });
 
 test('contains no external runtime assets, unsafe handlers, or forbidden JavaScript APIs', async () => {

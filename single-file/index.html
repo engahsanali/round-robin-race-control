@@ -253,9 +253,6 @@
     .trust-list strong { display: block; color: var(--text); }
     .signal { display: grid; width: 1.75rem; height: 1.75rem; place-items: center; border-radius: 50%; background: var(--cyan-soft); color: var(--cyan); font-weight: 900; }
 
-    .view-placeholder { max-width: 46rem; padding: var(--space-5); }
-    .view-placeholder p { color: var(--text-muted); }
-
     .workspace { display: grid; gap: var(--space-5); }
     .panel-section { padding: clamp(1rem, 3vw, 1.75rem); }
     .panel-section h2, .panel-section h3 { margin-top: 0; }
@@ -327,6 +324,9 @@
     .share-canvas { display: block; width: min(100%, 48rem); height: auto; border: 1px solid var(--line); border-radius: var(--radius-md); background: #10161b; }
     .seal { display: inline-flex; align-items: center; gap: var(--space-2); padding: .55rem .8rem; border: 2px double var(--gold); border-radius: 999px; color: var(--gold); font-weight: 900; letter-spacing: .06em; text-transform: uppercase; }
     .print-sheet { margin-top: var(--space-4); }
+    .diagnostic-report { width: 100%; min-height: 18rem; padding: var(--space-4); border: 1px solid var(--line); border-radius: var(--radius-sm); background: var(--surface-raised); color: var(--text); font: .8rem/1.5 ui-monospace, SFMono-Regular, Consolas, monospace; resize: vertical; }
+    .checklist { display: grid; gap: var(--space-3); padding-left: 1.4rem; }
+    .test-detail { overflow-wrap: anywhere; color: var(--text-muted); }
 
     .shell-footer { border-top: 1px solid var(--line); background: var(--surface-raised); }
     .footer-inner { display: flex; justify-content: space-between; gap: var(--space-4); padding-block: var(--space-5); color: var(--text-muted); font-size: .8rem; }
@@ -534,6 +534,7 @@
       let displayedRanks = new Map();
       let rankProofCarId = null;
       let printRoute = 'registration';
+      let lastDiagnosticResult = null;
 
       function resetEventScopedTransients() {
         clearTimeout(saveTimer);
@@ -640,6 +641,8 @@
         const raw = value instanceof Error ? value.message : String(value || 'Unexpected application error');
         return raw.replace(/[\r\n\t]+/g, ' ').replace(/(?:file|https?):\/\/\S+/gi, '[location]').slice(0, 180);
       }
+
+      function sameValue(left, right) { return JSON.stringify(sortKeys(left)) === JSON.stringify(sortKeys(right)); }
       function captureError(value) {
         const message = sanitizeError(value);
         diagnosticErrors.push({ id: createStableId('error'), message });
@@ -1538,6 +1541,100 @@
         if (!eventState) { container.append(element('div', { className: 'notice', text: 'No event is loaded.' })); return; }
         appendStatus(container); const previousKey = demoMode ? DEMO_PREVIOUS_KEY : PREVIOUS_KEY; const actions = demoMode ? [...(storageRead(previousKey) ? [button('Restore previous save', 'restore-previous')] : []), button('Return to official event', 'return-official'), button('Reset event', 'reset-event')] : [button('Restore previous save', 'restore-previous'), button('Reset event', 'reset-event')]; container.append(element('section', { className: 'panel panel-section' }, [element('h3', { text: 'Recovery' }), element('p', { text: storageRead(previousKey) ? 'A previous valid save is available.' : (demoMode ? 'This separate demo never replaces official current or previous saves.' : 'No previous valid save is available yet.') }), element('div', { className: 'action-row' }, actions)]));
       }
+
+      function diagnosticFixture() {
+        const fixture = buildDemo();
+        fixture.matches.forEach((heat) => { heat.status = 'scheduled'; heat.winnerEntryId = null; heat.laneTimesMs = [null, null, null]; });
+        fixture.payments = [];
+        return fixture;
+      }
+      function runAllTests() {
+        const originalEvent = eventState; const originalDemoMode = demoMode; const originalCategories = categoryNames;
+        const groups = []; let activeGroup = null;
+        const group = (name) => { activeGroup = { name, passed: 0, failed: 0, total: 0, tests: [] }; groups.push(activeGroup); };
+        const check = (name, expected, operation) => {
+          activeGroup.total += 1;
+          try {
+            const actual = operation(); const passed = sameValue(actual, expected);
+            activeGroup.tests.push({ name, passed, expected, actual });
+            activeGroup[passed ? 'passed' : 'failed'] += 1;
+          } catch (caught) {
+            activeGroup.failed += 1;
+            activeGroup.tests.push({ name, passed: false, expected, actual: null, error: sanitizeError(caught) });
+          }
+        };
+        try {
+          eventState = diagnosticFixture(); demoMode = false; categoryNames = { standard: 'Standard' };
+          const presets = JSON.parse(document.getElementById('preset-data').textContent);
+
+          group('Schedules');
+          check('Workbook preset match counts stay exact', [4, 5, 6, 5], () => ['template9', 'template12', 'template15', 'finals15'].map((key) => presets[key].length));
+          check('Workbook preset heat counts stay exact', [12, 20, 30, 25], () => ['template9', 'template12', 'template15', 'finals15'].map((key) => presets[key].flat().length));
+
+          group('Scoring');
+          check('Only completed assigned winners score', 1, () => { const fixture = diagnosticFixture(); fixture.matches[0].status = 'completed'; fixture.matches[0].winnerEntryId = fixture.matches[0].lanes[0]; eventState = fixture; return calculateStandings('preliminary').reduce((sum, row) => sum + row.totalWins, 0); });
+          check('Cancelled heats do not count as completed appearances', 3, () => { const fixture = diagnosticFixture(); fixture.matches[0].status = 'completed'; fixture.matches[0].winnerEntryId = fixture.matches[0].lanes[0]; fixture.matches[1].status = 'cancelled'; eventState = fixture; return calculateStandings('preliminary').reduce((sum, row) => sum + row.completedHeats, 0); });
+
+          group('Ranking');
+          check('Competition ranking skips after a tie', [1, 2, 2, 4], () => { const fixture = diagnosticFixture(); fixture.entries = fixture.entries.slice(0, 4); fixture.participants = fixture.participants.slice(0, 4); fixture.settings.rankingMode = 'competition'; fixture.settings.tieBreakOrder = ['totalWins']; eventState = fixture; const rows = calculateStandings('preliminary'); [3, 2, 2, 1].forEach((wins, index) => Object.assign(rows[index], { totalWins: wins, completedHeats: 3 })); return calculateRankings(rows).map((row) => row.rank); });
+          check('Dense ranking advances by one after a tie', [1, 2, 2, 3], () => { const fixture = diagnosticFixture(); fixture.entries = fixture.entries.slice(0, 4); fixture.participants = fixture.participants.slice(0, 4); fixture.settings.rankingMode = 'dense'; fixture.settings.tieBreakOrder = ['totalWins']; eventState = fixture; const rows = calculateStandings('preliminary'); [3, 2, 2, 1].forEach((wins, index) => Object.assign(rows[index], { totalWins: wins, completedHeats: 3 })); return calculateRankings(rows).map((row) => row.rank); });
+
+          group('Payments');
+          check('Integer-cent partial payment derives the remaining balance', 700, () => { const fixture = diagnosticFixture(); fixture.entries = fixture.entries.slice(0, 1); fixture.participants = fixture.participants.slice(0, 1); fixture.payments = [{ id: 'test-payment', participantId: fixture.participants[0].id, amountCents: 500, kind: 'payment', paidAt: nowIso(), note: '' }]; return calculateAccountsForState(fixture).accounts.get(fixture.participants[0].id).balance; });
+          check('Refund reverses collected cents', 400, () => { const fixture = diagnosticFixture(); fixture.entries = fixture.entries.slice(0, 1); fixture.participants = fixture.participants.slice(0, 1); fixture.payments = [{ id: 'test-payment', participantId: fixture.participants[0].id, amountCents: 1200, kind: 'payment', paidAt: nowIso(), note: '' }, { id: 'test-refund', participantId: fixture.participants[0].id, amountCents: 400, kind: 'refund', paidAt: nowIso(), note: '' }]; return calculateAccountsForState(fixture).accounts.get(fixture.participants[0].id).balance; });
+
+          group('Persistence / import');
+          check('Serialized schema-v1 event validates on round trip', true, () => validateEvent(JSON.parse(serializeEvent(diagnosticFixture()))).ok);
+          check('Invalid completed heat is rejected atomically', false, () => { const fixture = diagnosticFixture(); fixture.matches[0].status = 'completed'; fixture.matches[0].winnerEntryId = null; return validateEvent(fixture).ok; });
+
+          group('CSV');
+          check('Formula-capable cells are neutralized', "'=2+2", () => toCsv([['=2+2']]));
+          check('Quotes and commas are escaped with CRLF rows', '"go, ""now"""\r\nnext', () => toCsv([['go, "now"'], ['next']]));
+
+          group('Timing');
+          check('Average time uses completed assigned-lane results', 1200, () => { const fixture = diagnosticFixture(); const heat = fixture.matches[0]; heat.status = 'completed'; heat.winnerEntryId = heat.lanes[0]; heat.laneTimesMs = [1200, 1300, 1400]; eventState = fixture; return calculateStandings('preliminary').find((row) => row.carId === heat.lanes[0]).averageTimeMs; });
+          check('Best time selects the fastest completed result', 1100, () => { const fixture = diagnosticFixture(); const carId = fixture.matches[0].lanes[0]; const heats = fixture.matches.filter((heat) => heat.lanes.includes(carId)).slice(0, 2); heats.forEach((heat, index) => { heat.status = 'completed'; heat.winnerEntryId = heat.lanes[0]; heat.laneTimesMs = heat.lanes.map((id) => id === carId ? 1200 - index * 100 : 1400); }); eventState = fixture; return calculateStandings('preliminary').find((row) => row.carId === carId).bestTimeMs; });
+
+          group('Scheduler quality');
+          check('Canonical nine-car preset is valid', 'valid', () => { const fixture = diagnosticFixture(); eventState = fixture; return analyseSchedule(fixture.matches, fixture.entries.map((entry) => entry.id)).status; });
+          check('Duplicate lane assignment is invalid', 'invalid', () => { const fixture = diagnosticFixture(); fixture.matches[0].lanes[1] = fixture.matches[0].lanes[0]; return analyseSchedule(fixture.matches, fixture.entries.map((entry) => entry.id)).status; });
+
+          group('Lane balance');
+          check('Seeded custom schedule keeps entrant lane spread at most one', true, () => { const ids = ['a', 'b', 'c', 'd', 'e']; return generateCustomSchedule(ids, 4, 'embedded-lane-proof').quality.maximumLaneSpread <= 1; });
+          check('Two-car schedule balances the vacant lane', true, () => { const ids = ['a', 'b', 'c', 'd', 'e']; const heats = generateCustomSchedule(ids, 6, 'embedded-vacant-proof').heats; const counts = [0, 1, 2].map((lane) => heats.filter((heat) => heat.lanes[lane] === null).length); return Math.max(...counts) - Math.min(...counts) <= 1; });
+        } catch (caught) {
+          if (!activeGroup) group('Harness');
+          activeGroup.total += 1; activeGroup.failed += 1; activeGroup.tests.push({ name: 'Harness completes safely', passed: false, expected: true, actual: false, error: sanitizeError(caught) });
+        } finally {
+          eventState = originalEvent; demoMode = originalDemoMode; categoryNames = originalCategories;
+        }
+        const passed = groups.reduce((sum, item) => sum + item.passed, 0); const failed = groups.reduce((sum, item) => sum + item.failed, 0);
+        return { passed, failed, total: passed + failed, groups };
+      }
+      function diagnosticFacts() {
+        const previousKey = demoMode ? DEMO_PREVIOUS_KEY : PREVIOUS_KEY; const currentKey = demoMode ? DEMO_KEY : CURRENT_KEY;
+        let storageState = 'Browser-local storage is available.'; try { void localStorage.length; } catch (_) { storageState = 'Browser-local storage is unavailable; use downloaded backups.'; }
+        const integrity = !eventState ? null : (eventState.matches.length ? analyseSchedule(eventState.matches, eventState.entries.filter((entry) => entry.active).map((entry) => entry.id)) : null);
+        return { protocol: location.protocol, storageState, current: storageRead(currentKey) ? 'Current valid snapshot is present.' : 'No current snapshot is present.', previous: storageRead(previousKey) ? 'A previous valid snapshot is available for recovery.' : 'No previous valid snapshot is currently available.', integrity };
+      }
+      function diagnosticReport(result = lastDiagnosticResult) {
+        const facts = diagnosticFacts(); const lines = ['Round Robin Race Control diagnostic report', 'Made by Cesar Lacsamana and Ahsan Ali', `Version: ${VERSION}`, `Protocol: ${facts.protocol}`, facts.storageState, facts.current, facts.previous, `Schedule integrity: ${facts.integrity ? titleCase(facts.integrity.status) : 'No active schedule'}`];
+        if (result) { lines.push(`Embedded tests: ${result.passed} passed, ${result.failed} failed, ${result.total} total`); result.groups.forEach((item) => { lines.push(`${item.name}: ${item.passed} passed, ${item.failed} failed, ${item.total} total`); item.tests.filter((test) => !test.passed).forEach((test) => lines.push(`  ${test.name}: expected ${JSON.stringify(test.expected)}, actual ${JSON.stringify(test.actual)}${test.error ? `, error ${test.error}` : ''}`)); }); }
+        lines.push('Sanitized diagnostic log:'); if (diagnosticErrors.length) diagnosticErrors.forEach((entry) => lines.push(`- ${entry.message}`)); else lines.push('- No captured application errors.'); return lines.join('\n');
+      }
+      function renderDiagnostics(container) {
+        appendWorkspaceHeader(container, 'Local confidence', 'Diagnostics', 'Run isolated checks without changing the live event, then copy a sanitized support report.'); const facts = diagnosticFacts();
+        container.append(element('section', { className: 'panel panel-section', attributes: { role: 'region', 'aria-label': 'Environment and recovery' } }, [element('h3', { text: 'Environment and recovery' }), element('p', { text: `Protocol: ${facts.protocol}` }), element('p', { text: facts.storageState }), element('p', { text: facts.current }), element('p', { text: facts.previous }), element('p', { text: location.protocol === 'file:' ? 'Downloaded event JSON is the durable portable recovery copy.' : 'This browser profile owns the local snapshots.' })]));
+        const integrityPanel = element('section', { className: 'panel panel-section', attributes: { role: 'region', 'aria-label': 'Schedule integrity' } }, [element('h3', { text: 'Schedule integrity' })]);
+        if (facts.integrity) integrityPanel.append(element('p', { className: `badge ${facts.integrity.status === 'invalid' ? 'warn' : 'good'}`, text: titleCase(facts.integrity.status) }), element('p', { text: `${facts.integrity.errors.length} errors · ${facts.integrity.warnings.length} warnings · lane spread ${facts.integrity.maximumLaneSpread}` })); else integrityPanel.append(element('p', { text: 'No active schedule is available to inspect.' })); container.append(integrityPanel);
+        const resultsPanel = element('section', { className: 'panel panel-section', attributes: { 'aria-labelledby': 'embedded-tests-title' } }, [element('h3', { text: 'Embedded isolated tests', attributes: { id: 'embedded-tests-title' } }), element('div', { className: 'action-row' }, [button('Run embedded tests', 'run-embedded-tests', 'primary-action')])]);
+        if (lastDiagnosticResult) { resultsPanel.append(element('p', { text: `${lastDiagnosticResult.passed} passed · ${lastDiagnosticResult.failed} failed · ${lastDiagnosticResult.total} total`, attributes: { role: 'status', 'aria-label': 'Embedded test summary' } })); lastDiagnosticResult.groups.forEach((item) => { const groupPanel = element('section', { className: 'summary-card', attributes: { 'data-test-group': item.name, 'aria-label': `${item.name} test group` } }, [element('strong', { text: item.name }), element('span', { text: `${item.passed} passed · ${item.failed} failed · ${item.total} total` })]); item.tests.filter((test) => !test.passed).forEach((test) => groupPanel.append(element('p', { className: 'test-detail', text: `${test.name}: expected ${JSON.stringify(test.expected)}, actual ${JSON.stringify(test.actual)}${test.error ? ` · ${test.error}` : ''}` }))); resultsPanel.append(groupPanel); }); } container.append(resultsPanel);
+        const log = element('section', { className: 'panel panel-section', attributes: { role: 'region', 'aria-label': 'Sanitized diagnostic log' } }, [element('h3', { text: 'Sanitized diagnostic log' })]); if (diagnosticErrors.length) { const list = element('ul'); diagnosticErrors.forEach((entry) => list.append(element('li', { text: entry.message }))); log.append(list); } else log.append(element('p', { text: 'No captured application errors.' })); container.append(log);
+        const report = element('textarea', { className: 'diagnostic-report', attributes: { id: 'diagnostic-report', readonly: '', 'aria-label': 'Diagnostic report' } }); report.value = diagnosticReport(); container.append(element('section', { className: 'panel panel-section' }, [element('h3', { text: 'Support report' }), report, element('div', { className: 'action-row' }, [button('Copy diagnostic report', 'copy-diagnostic-report')])]));
+        const checklistItems = ['Open the standalone file with network disabled and confirm zero requests or console errors.', 'Navigate all nine views and verify empty, populated, and error states.', 'Complete the event-day workflow using only the keyboard and documented shortcuts.', 'Verify dialog focus return, Escape cancellation, and visible focus.', 'Check 320 px, tablet, desktop, and projector layouts without page overflow.', 'Enable reduced motion and confirm transitions and animations become effectively instant.', 'Check light and dark theme contrast and confirm status is never communicated by color alone.', 'Print every report route and confirm controls hide while creator credit remains visible.', 'Test long and Unicode participant, car, event, venue, and organizer names.', 'Export, import, restore the previous save, and retain a downloaded durable backup.']; const checklist = element('ol', { className: 'checklist', attributes: { 'aria-label': 'Manual verification checklist' } }); checklistItems.forEach((item) => checklist.append(element('li', { text: item }))); container.append(element('section', { className: 'panel panel-section' }, [element('h3', { text: 'Manual verification checklist' }), checklist]));
+      }
+      function copyDiagnosticReport() { const report = document.getElementById('diagnostic-report'); if (!report) return; const selected = () => { report.focus(); report.select(); announce('Diagnostic report selected; press Ctrl+C to copy.'); }; if (!navigator.clipboard?.writeText) { selected(); return; } navigator.clipboard.writeText(report.value).then(() => announce('Diagnostic report copied.')).catch(selected); }
+      function runEmbeddedTests() { lastDiagnosticResult = runAllTests(); renderView('diagnostics'); announce(`Embedded tests complete: ${lastDiagnosticResult.passed} passed and ${lastDiagnosticResult.failed} failed.`); }
       function restorePrevious() { const previousKey = demoMode ? DEMO_PREVIOUS_KEY : PREVIOUS_KEY; const currentKey = demoMode ? DEMO_KEY : CURRENT_KEY; const raw = storageRead(previousKey); if (!raw) { announce('No previous valid save is available.'); return; } try { const result = validateEvent(JSON.parse(raw)); if (!result.ok) { announce('Previous save failed validation.'); return; } const displaced = storageRead(currentKey); resetEventScopedTransients(); eventState = result.data; categoryNames = Object.fromEntries(Object.keys(eventState.settings.prices).map((id) => [id, titleCase(id)])); storageSet(currentKey, serializeEvent(eventState)); if (displaced) storageSet(previousKey, displaced); storageSet(WORKSPACE_KEY, demoMode ? 'demo' : 'official'); lastSavedAt = new Date(); registerIds(eventState); updateChrome(); renderView(activeView); announce('Previous valid save restored; restore again to undo.'); } catch (_) { announce('Previous save could not be restored.'); } }
       function returnToOfficial() { clearTimeout(saveTimer); if (demoMode && eventState) saveNow(false); resetEventScopedTransients(); storageSet(WORKSPACE_KEY, 'official'); demoMode = false; eventState = null; loadStored(); updateChrome(); selectView('dashboard'); announce(eventState ? 'Official event restored.' : 'No official event is saved.'); }
       function resetEvent() { resetEventScopedTransients(); if (demoMode) { storageRemove(DEMO_KEY); storageRemove(DEMO_PREVIOUS_KEY); storageSet(WORKSPACE_KEY, 'official'); demoMode = false; eventState = null; loadStored(); } else { eventState = null; storageRemove(CURRENT_KEY); storageRemove(PREVIOUS_KEY); storageRemove(WORKSPACE_KEY); } importError = ''; categoryNames = eventState ? Object.fromEntries(Object.keys(eventState.settings.prices).map((id) => [id, titleCase(id)])) : {}; updateChrome(); selectView('dashboard'); announce('Event reset.'); }
@@ -1547,7 +1644,7 @@
       function liveHeatById(id) { return [...eventState.matches, ...eventState.finals].find((heat) => heat.id === id); }
       function heatStatusLabel(status) { return status === 'rerun' ? 'Rerun pending' : titleCase(status); }
       function carLabel(id) { const entry = eventState.entries.find((item) => item.id === id); return entry ? `#${entry.carNumber} ${entry.name}` : 'Unassigned'; }
-      function focusAfterRender(findTarget) { requestAnimationFrame(() => { const target = findTarget(); if (target && typeof target.focus === 'function') target.focus(); }); }
+      function focusAfterRender(findTarget) { requestAnimationFrame(() => setTimeout(() => { const target = findTarget(); if (target && typeof target.focus === 'function') target.focus(); }, 0)); }
       function focusLiveHeading() { focusAfterRender(() => document.getElementById('live-heat-heading')); }
       function focusWinnerCard(id) { focusAfterRender(() => [...document.querySelectorAll('[data-action="select-winner"]')].find((item) => item.dataset.entryId === id)); }
       function appendHeatAudit(action, summary, heat, details) { const timestamp = nowIso(); eventState.event.updatedAt = timestamp; eventState.auditLog.push({ id: createStableId('audit'), timestamp, action, summary, entityType: 'heat', entityId: heat.id, details: cloneValue(details) }); if (location.protocol === 'file:') meaningfulFileChange = true; scheduleSave(); }
@@ -1597,13 +1694,13 @@
       function confirmHeatRerun() { const action = pendingHeatAction; const heat = action?.type === 'rerun' ? liveHeatById(action.heatId) : null; if (!heat) return; const input = document.getElementById('rerun-heat-reason'); const reason = input.value.trim(); if (!reason || reason.length > 500) { setFieldError(input.id, 'Rerun reason is required and must be 500 characters or fewer.'); return; } const before = cloneValue(heat); const publishedChampionId = eventState.event.resultSeal === 'official' ? championCarId() : null; const previousWinnerEntryId = heat.winnerEntryId; heat.status = 'rerun'; heat.winnerEntryId = null; heat.laneTimesMs = [null, null, null]; const after = cloneValue(heat); undoRecord = Object.freeze({ heatId: heat.id, before, after, sourceAction: 'heat.rerun-marked' }); const text = `Marked heat ${heat.id} for rerun; removed official winner ${previousWinnerEntryId ?? 'none'}. Reason: ${reason}.`; closeDialog(); appendHeatAudit('heat.rerun-marked', text, heat, { previousWinnerEntryId, reason }); invalidateOfficialSeal('heat.rerun-marked', reason, heat, publishedChampionId); lastReceipt = Object.freeze({ text, timestamp: eventState.event.updatedAt }); selectedWinnerId = null; pendingResult = null; renderView('live'); }
       function saveIssueNote() { const heat = currentLiveHeat(); if (!heat) return; const note = document.getElementById('live-issue-note').value.trim(); if (note.length > 2000) { setFieldError('live-issue-note', 'Issue note must be 2000 characters or fewer.'); return; } const before = heat.notes; heat.notes = note; appendHeatAudit('heat.issue-noted', `Issue note updated for match ${heat.matchNumber} heat ${heat.heatNumber}.`, heat, { before, after: note }); liveMessage = ''; renderView('live'); }
 
-      function renderPlaceholder(container, view) {
+      function renderFallback(container, view) {
         const detail = viewDetails[view]; appendWorkspaceHeader(container, detail[0], detail[1], view === 'live' ? 'Race controls stay inactive until a valid schedule is armed.' : 'This view will project official event data without duplicating canonical state.');
         if (view === 'live') container.append(element('aside', { className: 'panel live-dock', attributes: { 'data-live-dock': '', 'aria-label': 'Live control dock' } }, [element('strong', { text: 'Live control dock' }), element('span', { text: 'Waiting for an armed event' })]));
       }
       function renderView(view) {
         const container = document.getElementById('view-content'); if (!container) return; container.replaceChildren();
-        if (view === 'dashboard') renderDashboard(container); else if (view === 'registration') renderRegistration(container); else if (view === 'setup') renderSetup(container); else if (view === 'live') renderLive(container); else if (view === 'standings') renderStandings(container); else if (view === 'finals') renderFinals(container); else if (view === 'reports') renderReports(container); else if (view === 'settings') renderSettings(container); else renderPlaceholder(container, view);
+        if (view === 'dashboard') renderDashboard(container); else if (view === 'registration') renderRegistration(container); else if (view === 'setup') renderSetup(container); else if (view === 'live') renderLive(container); else if (view === 'standings') renderStandings(container); else if (view === 'finals') renderFinals(container); else if (view === 'reports') renderReports(container); else if (view === 'settings') renderSettings(container); else if (view === 'diagnostics') renderDiagnostics(container); else renderFallback(container, view);
       }
       function selectView(view) {
         if (!Object.hasOwn(viewDetails, view)) return; activeView = view; const main = document.getElementById('main-content'); main.dataset.activeView = view;
@@ -1671,6 +1768,8 @@
         else if (action === 'prepare-print') preparePrint();
         else if (action === 'download-share-card') downloadShareCard();
         else if (action === 'share-results') shareResults().catch(captureError);
+        else if (action === 'run-embedded-tests') runEmbeddedTests();
+        else if (action === 'copy-diagnostic-report') copyDiagnosticReport();
         else if (action === 'restore-previous') openDialog('Restore previous save?', 'The current event will be replaced by the previous valid local snapshot.', [{ text: 'Confirm restore', action: 'confirm-restore', primary: true }]);
         else if (action === 'confirm-restore') restorePrevious();
         else if (action === 'reset-event') openDialog('Reset this event?', demoMode ? 'This clears only the separate demo workspace; official saves remain untouched.' : 'This clears current and previous browser saves and cannot be undone without a downloaded backup.', [{ text: 'Confirm reset', action: 'confirm-reset', primary: true }]);
@@ -1688,11 +1787,11 @@
       }
       function handleKeydown(event) {
         if (activeView !== 'live' || !eventState || !eventState.matches.length || document.getElementById('app-dialog').open) return;
-        const tag = event.target?.tagName?.toLowerCase(); if (['input', 'textarea', 'select'].includes(tag)) return;
+        const tag = event.target?.tagName?.toLowerCase(); if (['input', 'textarea', 'select'].includes(tag)) return; if (['button', 'a', 'summary'].includes(tag) && ['Enter', ' '].includes(event.key) && event.target?.dataset?.action !== 'select-winner') return;
         if ((event.ctrlKey && event.key.toLowerCase() === 'z') || (!event.ctrlKey && event.key.toLowerCase() === 'u')) { event.preventDefault(); undoLastHeatMutation(); return; }
         if (event.key === 'ArrowLeft') { event.preventDefault(); navigateLive(-1); return; }
         if (event.key === 'ArrowRight') { event.preventDefault(); navigateLive(1); return; }
-        if (['1', '2', '3'].includes(event.key)) { event.preventDefault(); const heat = currentLiveHeat(); const id = heat?.lanes[Number(event.key) - 1]; if (id === null || id === undefined) { liveMessage = 'Winner must be assigned to this heat.'; renderView('live'); } else selectLiveWinner(id); return; }
+        if (['1', '2', '3'].includes(event.key)) { event.preventDefault(); const heat = currentLiveHeat(); const id = heat?.lanes[Number(event.key) - 1]; if (id === null || id === undefined) { liveMessage = 'Winner must be assigned to this heat.'; renderView('live'); } else { selectLiveWinner(id); focusWinnerCard(id); } return; }
         if (event.key === 'Enter' && selectedWinnerId) { event.preventDefault(); reviewWinner(); }
       }
       function publicState() {
@@ -1710,7 +1809,7 @@
       matchMedia('(prefers-color-scheme: dark)').addEventListener('change', () => { if (theme === 'system') applyTheme('system'); });
 
       applyTheme(storageRead(THEME_KEY) || 'system'); loadStored(); updateChrome(); renderView('dashboard');
-      const api = Object.freeze({ version: VERSION, getState: () => publicState(), runAllTests: () => ({ passed: 0, failed: 0, total: 0, groups: [] }) });
+      const api = Object.freeze({ version: VERSION, getState: () => publicState(), runAllTests });
       Object.defineProperty(window, 'RR3', { value: api, writable: false, configurable: false, enumerable: true });
     })();
   </script>
