@@ -6,6 +6,32 @@ const htmlPath = fileURLToPath(new URL('../../single-file/index.html', import.me
 const fixturePath = fileURLToPath(new URL('../../fixtures/schedules.json', import.meta.url));
 const fileUrl = pathToFileURL(htmlPath).href;
 
+function parseRgb(color: string): [number, number, number] {
+  const channels = color.match(/[\d.]+/g)?.slice(0, 3).map(Number);
+  if (!channels || channels.length !== 3) throw new Error(`Unsupported computed color: ${color}`);
+  return channels as [number, number, number];
+}
+
+function relativeLuminance(color: string): number {
+  const linear = parseRgb(color).map((channel) => {
+    const value = channel / 255;
+    return value <= 0.04045 ? value / 12.92 : ((value + 0.055) / 1.055) ** 2.4;
+  });
+  return 0.2126 * linear[0] + 0.7152 * linear[1] + 0.0722 * linear[2];
+}
+
+function contrastRatio(foreground: string, background: string): number {
+  const values = [relativeLuminance(foreground), relativeLuminance(background)].sort((a, b) => b - a);
+  return (values[0] + 0.05) / (values[1] + 0.05);
+}
+
+function secondsList(value: string): number[] {
+  return value.split(',').map((part) => {
+    const duration = part.trim();
+    return duration.endsWith('ms') ? Number.parseFloat(duration) / 1000 : Number.parseFloat(duration);
+  });
+}
+
 test('opens the standalone shell locally without runtime failures or external requests', async ({ page }) => {
   const consoleErrors: string[] = [];
   const pageErrors: string[] = [];
@@ -88,6 +114,49 @@ test('persists light, dark, and system themes and follows platform color scheme'
   await theme.selectOption('system');
   await expect(page.locator('html')).toHaveAttribute('data-theme', 'dark');
   expect(await page.evaluate(() => localStorage.getItem('rr3:theme'))).toBe('system');
+
+  await page.emulateMedia({ colorScheme: 'light' });
+  await expect(page.locator('html')).toHaveAttribute('data-theme', 'light');
+  await page.emulateMedia({ colorScheme: 'dark' });
+  await expect(page.locator('html')).toHaveAttribute('data-theme', 'dark');
+});
+
+test('keeps primary action text at WCAG AA contrast in light and dark themes', async ({ page }) => {
+  await page.goto(fileUrl);
+  const theme = page.getByLabel('Theme');
+  const primary = page.getByRole('button', { name: 'Create Real Event' });
+
+  for (const preference of ['light', 'dark']) {
+    await theme.selectOption(preference);
+    const colors = await primary.evaluate((element) => {
+      const style = getComputedStyle(element);
+      return { foreground: style.color, background: style.backgroundColor };
+    });
+    expect(
+      contrastRatio(colors.foreground, colors.background),
+      `${preference} primary action contrast for ${colors.foreground} on ${colors.background}`,
+    ).toBeGreaterThanOrEqual(4.5);
+  }
+});
+
+test('computes near-zero motion when reduced motion is requested', async ({ page }) => {
+  await page.emulateMedia({ reducedMotion: 'reduce' });
+  await page.goto(fileUrl);
+
+  const motion = await page.getByRole('button', { name: 'Create Real Event' }).evaluate((element) => {
+    const style = getComputedStyle(element);
+    return { transitions: style.transitionDuration, animations: style.animationDuration };
+  });
+  expect(secondsList(motion.transitions).every((seconds) => seconds <= 0.001)).toBe(true);
+  expect(secondsList(motion.animations).every((seconds) => seconds <= 0.001)).toBe(true);
+});
+
+test('hides navigation and actions in computed print styles', async ({ page }) => {
+  await page.goto(fileUrl);
+  await page.emulateMedia({ media: 'print' });
+
+  await expect(page.locator('.view-nav')).toHaveCSS('display', 'none');
+  await expect(page.locator('.action-row')).toHaveCSS('display', 'none');
 });
 
 test('embeds exact inert presets and exposes a safe read-only diagnostic API', async ({ page }) => {
@@ -129,8 +198,6 @@ test('contains no external runtime assets, unsafe handlers, or forbidden JavaScr
   expect(html).not.toMatch(/\bFunction\s*\(/);
   expect(html).not.toMatch(/document\.write\s*\(/);
   expect(html).not.toMatch(/TODO|FIXME|starter|pseudocode/i);
-  expect(html).toContain('@media print');
-  expect(html).toContain('prefers-reduced-motion');
 });
 
 test('keeps race controls touch-ready and the shell usable at 320px', async ({ page }) => {
@@ -142,6 +209,29 @@ test('keeps race controls touch-ready and the shell usable at 320px', async ({ p
   const nav = page.locator('nav');
   expect(await nav.evaluate((element) => element.scrollWidth > element.clientWidth)).toBe(true);
   expect(await nav.evaluate((element) => getComputedStyle(element).overflowX)).toBe('auto');
+  expect(await page.evaluate(() => document.documentElement.scrollWidth)).toBeLessThanOrEqual(320);
+
+  const regions = await page.locator('body > header, body > nav, body > main, body > footer').evaluateAll((elements) =>
+    elements.map((element) => {
+      const bounds = element.getBoundingClientRect();
+      return { top: bounds.top, bottom: bounds.bottom };
+    }),
+  );
+  for (let index = 0; index < regions.length - 1; index += 1) {
+    expect(regions[index].bottom).toBeLessThanOrEqual(regions[index + 1].top + 0.5);
+  }
+
+  const mastheadRegions = await page.locator('.brand-lockup, .theme-control').evaluateAll((elements) =>
+    elements.map((element) => {
+      const bounds = element.getBoundingClientRect();
+      return { left: bounds.left, right: bounds.right, top: bounds.top, bottom: bounds.bottom };
+    }),
+  );
+  const [brand, theme] = mastheadRegions;
+  const mastheadOverlap = brand.left < theme.right && brand.right > theme.left
+    && brand.top < theme.bottom && brand.bottom > theme.top;
+  expect(mastheadOverlap).toBe(false);
+
   await page.locator('[data-view="live"]').click();
   await expect(page.locator('[data-live-dock]')).toHaveCSS('position', 'sticky');
 });
