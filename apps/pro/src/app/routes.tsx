@@ -1,4 +1,6 @@
 import { Link, Route, Routes } from "react-router-dom";
+import { DashboardPage } from "../features/dashboard/DashboardPage";
+import { RegistrationPage } from "../features/registration/RegistrationPage";
 
 export const operatorDestinations = [
   { label: "Dashboard", path: "/" },
@@ -27,27 +29,6 @@ function PlaceholderPage({ eyebrow, heading, description }: PlaceholderPageProps
       <div className="empty-panel">
         <strong>Ready for event data</strong>
         <p>This workspace is intentionally empty until you create or load an event.</p>
-      </div>
-    </section>
-  );
-}
-
-function DashboardPage() {
-  return (
-    <section className="page-frame dashboard-page" aria-labelledby="page-title">
-      <p className="eyebrow">Local race control</p>
-      <h2 id="page-title">Event dashboard</h2>
-      <div className="empty-event">
-        <div>
-          <p className="status-kicker">Empty real event</p>
-          <h3>No event loaded</h3>
-          <p>Create a real event when you are ready to register cars and arm a schedule.</p>
-        </div>
-        <div className="demo-callout">
-          <p><strong>Practise safely first.</strong></p>
-          <p>The demo rehearsal is separate from your real event and will always be clearly labeled.</p>
-          <button type="button" className="secondary-action">Load demo rehearsal</button>
-        </div>
       </div>
     </section>
   );
@@ -83,16 +64,7 @@ export function AppRoutes() {
   return (
     <Routes>
       <Route path="/" element={<DashboardPage />} />
-      <Route
-        path="/registration"
-        element={
-          <PlaceholderPage
-            eyebrow="Entrants and accounts"
-            heading="Registration & fees"
-            description="Participant, car, category, price, and payment controls will live here."
-          />
-        }
-      />
+      <Route path="/registration" element={<RegistrationPage />} />
       <Route
         path="/schedule"
         element={

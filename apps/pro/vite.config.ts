@@ -17,5 +17,22 @@ export default defineConfig({
   ],
   build: {
     sourcemap: false,
+    rollupOptions: {
+      output: {
+        manualChunks(id) {
+          const moduleId = id.replaceAll("\\", "/");
+          if (/\/node_modules\/(?:\.pnpm\/)?(?:recharts|d3-|victory-vendor|@reduxjs|redux|reselect|immer)/.test(moduleId)) {
+            return "charts-vendor";
+          }
+          if (/\/node_modules\/(?:\.pnpm\/)?(?:motion|motion-dom|motion-utils)/.test(moduleId)) {
+            return "motion-vendor";
+          }
+          if (/\/node_modules\/(?:\.pnpm\/)?dexie/.test(moduleId)) return "storage-vendor";
+          if (/\/node_modules\/(?:\.pnpm\/)?(?:react|react-dom|scheduler)/.test(moduleId)) return "react-vendor";
+          if (/\/node_modules\/(?:\.pnpm\/)?react-router/.test(moduleId)) return "router-vendor";
+          return undefined;
+        },
+      },
+    },
   },
 });

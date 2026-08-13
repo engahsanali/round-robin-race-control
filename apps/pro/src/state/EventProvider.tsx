@@ -99,7 +99,11 @@ export function EventProvider({
     ]).then(([event, status, revisionList]) => {
       if (!active) return;
       setState(event);
-      setPersistenceStatus(status);
+      setPersistenceStatus(
+        status === "not-requested" && !repository.isPersistentStorageSupported()
+          ? "unavailable"
+          : status,
+      );
       setSnapshots(revisionList);
       setLoading(false);
     }).catch((cause: unknown) => {
@@ -212,6 +216,10 @@ export function useEventState(): EventContextValue {
   const context = useContext(EventContext);
   if (!context) throw new Error("useEventState must be used within EventProvider");
   return context;
+}
+
+export function useOptionalEventState(): EventContextValue | null {
+  return useContext(EventContext);
 }
 
 function toSafeErrorMessage(cause: unknown): string {

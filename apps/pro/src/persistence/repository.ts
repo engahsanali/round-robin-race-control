@@ -183,6 +183,10 @@ export class EventRepository {
     return isStoragePersistenceStatus(record?.value) ? record.value : "not-requested";
   }
 
+  isPersistentStorageSupported(): boolean {
+    return this.storageManager !== null;
+  }
+
   async requestPersistentStorage(options: { userInitiated: boolean }): Promise<StoragePersistenceStatus> {
     if (!options.userInitiated) {
       throw new Error("Persistent storage may be requested only after user interaction");
