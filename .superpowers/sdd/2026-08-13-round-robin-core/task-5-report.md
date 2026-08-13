@@ -92,3 +92,43 @@ All commands prepended `C:\Users\engah\.cache\codex-runtimes\codex-primary-runti
 - The plan requires report-specific row builders but does not prescribe names or exact column layouts. The public API uses `buildRegistrationRows`, `buildFeesRows`, `buildResultsRows`, `buildStandingsRows`, and `buildAuditRows`, with stable-ID columns retained throughout.
 - `serializeEvent` returns normalized validated state (including the schema's existing string trimming) with recursively sorted object keys and a final newline. Array order is preserved because participant, entry, heat, payment, and audit ordering is meaningful event data.
 - Git emitted the repository's existing LF-to-CRLF checkout warnings during staging; both unstaged and cached `git diff --check` were clean.
+
+## Review Fix Round 1
+
+Resolved all four Important review findings.
+
+- The shared schema now bounds exact integer fields to `Number.MAX_SAFE_INTEGER`, including category prices, payment cents, lane times, car numbers, entry quantities, match/heat numbers, and the existing finalist-count bound. Accounting and import regression tests cover unsafe cents and times.
+- `calculateEventAccounts` validates once, performs one pass over entries and one pass over payments using participant-keyed maps, and appends accounts into one result array. A structure-based regression instruments collection filtering across 25 participants without depending on wall-clock timing.
+- CSV row ordering now uses direct UTF-16 code-unit comparison for IDs and timestamps instead of host-locale collation. Unicode ID tests prove `z` precedes `ä` consistently where numeric/time keys tie.
+- Import safety traversal is iterative and identity-aware, with depth 128 and 100,000-object budgets. Deep JSON, excessive node counts, and unexpected validation/traversal exceptions return discriminated issues rather than escaping or changing the separately held current state.
+
+### Round 1 TDD evidence
+
+1. Initial RED command:
+
+   `pnpm vitest run packages/domain/src/schema.test.ts packages/domain/src/payments.test.ts packages/domain/src/serialization.test.ts packages/domain/src/csv.test.ts`
+
+   Outcome: exit 1 with 13 focused failures and 71 passes. Failures reproduced seven unsafe schema integers, three unsafe imports, 25 repeated entry filters, locale-dependent Unicode ordering, and deep-import stack overflow.
+
+2. Branch-coverage RED command:
+
+   `pnpm vitest run packages/domain/src/serialization.test.ts`
+
+   Outcome: exit 1 with exactly two failures and 20 passes: excessive object nodes fell through to ordinary schema errors under the initial budget, and a synthetic traversal exception escaped.
+
+3. Focused GREEN plus explicit type checking:
+
+   `pnpm vitest run packages/domain/src/schema.test.ts packages/domain/src/payments.test.ts packages/domain/src/serialization.test.ts packages/domain/src/csv.test.ts; pnpm typecheck`
+
+   Outcome: exit 0; 4 focused files and 86/86 tests passed, then `tsc -b --pretty false` completed with zero type errors.
+
+4. Fresh full verification:
+
+   `pnpm check`
+
+   Outcome: exit 0; type checking completed with zero errors, then 11 test files and 169/169 tests passed.
+
+### Round 1 concerns
+
+- The explicit import budgets are defensive limits, not schema capacity claims. Current valid event collections are capped at 10,000 each, while 100,000 object nodes leaves substantial room for all defined collections and bounded audit details.
+- `calculateParticipantAccount` intentionally remains a separately validated public boundary; only the event-wide operation avoids calling it repeatedly.
