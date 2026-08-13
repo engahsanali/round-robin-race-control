@@ -304,6 +304,29 @@
     .confirmation-dock { position: sticky; z-index: 10; bottom: 0; padding: var(--space-4); border-color: var(--cyan); box-shadow: 0 -10px 30px rgba(0, 0, 0, .3); }
     .receipt { border-color: var(--success); }
     .shortcut-list { color: var(--text-muted); font-size: .82rem; }
+    .analytics-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(min(100%, 20rem), 1fr)); gap: var(--space-4); }
+    .chart-card { min-width: 0; padding: var(--space-4); overflow: hidden; }
+    .chart-card h3 { margin: 0; font-size: 1rem; }
+    .chart-graphic { display: block; width: 100%; height: auto; min-height: 11rem; margin-block: var(--space-3); border-radius: var(--radius-sm); background: color-mix(in srgb, var(--cyan) 4%, var(--surface-raised)); }
+    .chart-takeaway { margin-bottom: var(--space-2); color: var(--text-muted); }
+    .chart-status { display: inline-flex; gap: var(--space-2); align-items: center; color: var(--text); font-size: .8rem; font-weight: 800; }
+    .chart-status::before { content: "◆"; color: var(--cyan); }
+    .chart-card details { margin-top: var(--space-3); }
+    .chart-card summary { min-block-size: 44px; padding-block: .65rem; cursor: pointer; color: var(--cyan); font-weight: 750; }
+    .standings-table [data-rank-delta] { display: block; color: var(--cyan); font-size: .72rem; font-weight: 800; animation: rank-confirm 220ms ease both; }
+    @keyframes rank-confirm { from { opacity: .35; transform: translateY(.25rem); } to { opacity: 1; transform: translateY(0); } }
+    .rank-proof { margin-top: var(--space-3); padding: var(--space-4); border: 1px solid var(--cyan); border-radius: var(--radius-md); background: var(--surface-raised); }
+    .rank-proof ul { margin-bottom: 0; }
+    .podium { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); align-items: end; gap: var(--space-2); min-height: 12rem; padding: var(--space-3); }
+    .podium-place { display: grid; place-items: center; min-height: 6rem; padding: var(--space-2); border: 1px solid var(--line); border-radius: var(--radius-sm); text-align: center; }
+    .podium-place:first-child { min-height: 10rem; border-color: var(--gold); }
+    .podium-place:nth-child(2) { min-height: 8rem; border-color: var(--silver); }
+    .podium-place:nth-child(3) { border-color: var(--bronze); }
+    .qualification-band { display: grid; grid-template-columns: repeat(auto-fit, minmax(8rem, 1fr)); gap: var(--space-2); }
+    .qualification-band > div { padding: var(--space-3); border: 1px solid var(--line); border-radius: var(--radius-sm); }
+    .share-canvas { display: block; width: min(100%, 48rem); height: auto; border: 1px solid var(--line); border-radius: var(--radius-md); background: #10161b; }
+    .seal { display: inline-flex; align-items: center; gap: var(--space-2); padding: .55rem .8rem; border: 2px double var(--gold); border-radius: 999px; color: var(--gold); font-weight: 900; letter-spacing: .06em; text-transform: uppercase; }
+    .print-sheet { margin-top: var(--space-4); }
 
     .shell-footer { border-top: 1px solid var(--line); background: var(--surface-raised); }
     .footer-inner { display: flex; justify-content: space-between; gap: var(--space-4); padding-block: var(--space-5); color: var(--text-muted); font-size: .8rem; }
@@ -333,6 +356,8 @@
       .footer-inner { flex-direction: column; }
       .wizard-steps { grid-template-columns: 1fr; }
       .lane-grid { grid-template-columns: 1fr; }
+      .podium { grid-template-columns: 1fr; align-items: stretch; }
+      .podium-place, .podium-place:first-child, .podium-place:nth-child(2) { min-height: 5rem; }
     }
 
     @media (max-width: 420px) {
@@ -355,7 +380,7 @@
     @media print {
       :root { color-scheme: light; --surface: #fff; --surface-raised: #fff; --surface-panel: #fff; --text: #000; --text-muted: #333; --line: #777; }
       body { background: #fff; }
-      .skip-link, .theme-control, .view-nav, .action-row, .live-dock, dialog { display: none !important; }
+      .skip-link, .theme-control, .view-nav, .action-row, .live-dock, dialog, [data-print-controls], [data-share-controls] { display: none !important; }
       .shell-header, .shell-footer, .panel { box-shadow: none; }
       .main-inner { padding-block: 1rem; }
       .credit { color: #000; }
@@ -504,6 +529,9 @@
       let undoRecord = null;
       let lastReceipt = null;
       let liveMessage = '';
+      let displayedRanks = new Map();
+      let rankProofCarId = null;
+      let printRoute = 'registration';
 
       function resetEventScopedTransients() {
         clearTimeout(saveTimer);
@@ -523,6 +551,9 @@
         undoRecord = null;
         lastReceipt = null;
         liveMessage = '';
+        displayedRanks = new Map();
+        rankProofCarId = null;
+        printRoute = 'registration';
         meaningfulFileChange = false;
         lastSavedAt = null;
         importError = '';
@@ -545,7 +576,7 @@
 
       function cloneValue(value) { return JSON.parse(JSON.stringify(value)); }
       function nowIso() { return new Date().toISOString(); }
-      function titleCase(value) { return String(value).replace(/[-_]+/g, ' ').replace(/\b\w/g, (letter) => letter.toUpperCase()); }
+      function titleCase(value) { return String(value).replace(/([a-z])([A-Z])/g, '$1 $2').replace(/[-_]+/g, ' ').replace(/\b\w/g, (letter) => letter.toUpperCase()); }
       function createStableId(prefix = 'item') {
         let candidate = '';
         do {
@@ -885,7 +916,7 @@
             element('div', { className: 'summary-card' }, [element('strong', { text: eventState.participants.length }), element('span', { text: 'Participants' })]),
             element('div', { className: 'summary-card' }, [element('strong', { text: eventState.entries.filter((entry) => entry.active).length }), element('span', { text: 'Active cars' })]),
             element('div', { className: 'summary-card' }, [element('strong', { text: money(accounts.totalBalance) }), element('span', { text: 'Outstanding' })])
-          ]), element('div', { className: 'action-row' }, demoMode ? [button('Return to official event', 'return-official')] : [button('Load Demo Event', 'confirm-demo')]));
+          ]), renderDashboardAnalytics(), element('div', { className: 'action-row' }, demoMode ? [button('Return to official event', 'return-official')] : [button('Load Demo Event', 'confirm-demo')]));
           return;
         }
         appendWorkspaceHeader(container, 'Ready when race control is', 'Your next race starts clean.', 'Create an empty real event for official work, or deliberately choose the separate demo action for exploration.');
@@ -1231,12 +1262,78 @@
       function confirmWithdraw(id) { const entry = eventState.entries.find((item) => item.id === id); if (!entry) return; entry.active = false; closeDialog(); meaningfulChange('Car withdrawn', 'entry', id); renderView('registration'); }
       function restoreCar(id) { const entry = eventState.entries.find((item) => item.id === id); if (!entry) return; if (eventState.entries.some((item) => item.active && item.id !== id && item.carNumber === entry.carNumber)) { announce(`Cannot restore: active car number ${entry.carNumber} is in use.`); return; } entry.active = true; meaningfulChange('Car restored', 'entry', id); renderView('registration'); }
 
+      function appendNamedAudit(action, summary, entityType, entityId, details = {}) { const timestamp = nowIso(); eventState.event.updatedAt = timestamp; eventState.auditLog.push({ id: createStableId('audit'), timestamp, action, summary, entityType, entityId, details: cloneValue(details) }); if (location.protocol === 'file:') meaningfulFileChange = true; scheduleSave(); }
+      function finalsCutoffChart(rankings) {
+        const decision = qualificationDecision(rankings); const rows = rankings.map((row) => [row.carName, qualificationLabel(row, decision), row.totalWins]); const takeaway = decision.tied.length ? `${decision.tied.length} cars are tied across the ${decision.count}-place cutoff; a recorded decision is required.` : `${decision.automatic.length} of ${decision.count} requested places are currently resolved.`;
+        return chartFigure('Finals qualification cutoff', takeaway, ['Car', 'Qualification', 'Wins'], rows, decision.tied.length ? 'Decision required at cutoff' : 'Cutoff resolved', 'bars');
+      }
+      function finalistsFromIds(ids) { return ids.map((id) => eventState.entries.find((entry) => entry.id === id)).filter(Boolean); }
+      function recordFinalists(action, ids, reason = '') { appendNamedAudit(action, action === 'finals.include-all' ? 'Included every car tied across the finals cutoff.' : `Finalists selected manually. Reason: ${reason}.`, 'event', eventState.event.id, { selectedCarIds: ids, reason }); renderView('finals'); }
+      function includeAllTiedFinalists() { const rankings = calculateRankings(calculateStandings('preliminary')); const decision = qualificationDecision(rankings); recordFinalists('finals.include-all', [...decision.automatic, ...decision.tied].map((row) => row.carId)); }
+      function openManualFinalists() {
+        const rankings = calculateRankings(calculateStandings('preliminary')); const decision = qualificationDecision(rankings); if (!decision.tied.length) return; const needed = Math.max(1, decision.count - decision.automatic.length); const dialog = document.getElementById('app-dialog'); dialogReturnFocus = document.activeElement;
+        dialog.replaceChildren(element('div', { className: 'dialog-inner' }, [element('h2', { text: 'Manual finalist selection', attributes: { id: 'dialog-title' } }), element('p', { text: `Choose ${needed} cutoff qualifier and record the competitive reason.` }), selectField('Manual cutoff qualifier', 'manual-finalist', decision.tied.map((row) => [row.carId, carLabel(row.carId)]), decision.tied[0].carId), field('Manual qualification reason', 'manual-finalist-reason', '', { maxlength: 500 }), element('div', { className: 'action-row' }, [button('Confirm manual finalists', 'confirm-manual-finalists', 'primary-action'), button('Cancel', 'close-dialog')])])); dialog.showModal();
+      }
+      function confirmManualFinalists() { const reasonInput = document.getElementById('manual-finalist-reason'); const reason = reasonInput.value.trim(); if (!reason || reason.length > 500) { setFieldError(reasonInput.id, 'Manual qualification reason is required and must be 500 characters or fewer.'); return; } const rankings = calculateRankings(calculateStandings('preliminary')); const decision = qualificationDecision(rankings); const chosen = document.getElementById('manual-finalist').value; const ids = [...decision.automatic.map((row) => row.carId), chosen]; closeDialog(); recordFinalists('finals.manual-qualified', ids, reason); }
+      function generateQualificationPlayoff() { const rankings = calculateRankings(calculateStandings('preliminary')); const decision = qualificationDecision(rankings); if (!decision.tied.length) return; const lanes = [decision.tied[0]?.carId ?? null, decision.tied[1]?.carId ?? null, decision.tied[2]?.carId ?? null]; eventState.finals = [{ id: createStableId('qualification-playoff'), phase: 'final', matchNumber: 1, heatNumber: 1, lanes, status: 'scheduled', winnerEntryId: null, laneTimesMs: [null, null, null], notes: 'Qualification playoff' }]; appendNamedAudit('finals.playoff-generated', 'Generated a qualification playoff for the tied cutoff entrants.', 'event', eventState.event.id, { tiedCarIds: decision.tied.map((row) => row.carId) }); renderView('finals'); }
+      function generateFinalsSchedule() {
+        const rankings = calculateRankings(calculateStandings('preliminary')); const ids = selectedFinalistIds(rankings); if (!ids.length) { announce('Finals generation blocked until qualification is resolved.'); return; }
+        const ordered = finalistsFromIds(ids).sort((left, right) => left.carNumber - right.carNumber || compareCodeUnits(left.id, right.id)).map((entry) => entry.id); let finals;
+        if (ordered.length === 15) { const preset = JSON.parse(document.getElementById('preset-data').textContent).finals15; finals = preset.flatMap((match, matchIndex) => match.map((slots, heatIndex) => ({ id: `finals15-m${matchIndex + 1}-h${heatIndex + 1}`, phase: 'final', matchNumber: matchIndex + 1, heatNumber: heatIndex + 1, lanes: slots.map((slot) => ordered[slot - 1]), status: 'scheduled', winnerEntryId: null, laneTimesMs: [null, null, null], notes: 'Fixed 15-car finals preset' }))); }
+        else { const matchCount = Math.min(5, Math.max(1, ordered.length)); const generated = generateCustomSchedule(ordered, matchCount, `${eventState.settings.seed}:finals`); finals = generated.heats.map((heat) => ({ ...heat, id: `final-${heat.id}`, phase: 'final', notes: 'Balanced custom finals' })); }
+        eventState.finals = finals; appendNamedAudit('finals.schedule-generated', `Generated ${finals.length} finals heats for ${ordered.length} finalists.`, 'event', eventState.event.id, { finalistCarIds: ordered, mode: ordered.length === 15 ? 'finals15' : 'custom' }); renderView('finals');
+      }
+      function openResetFinals() { const dialog = document.getElementById('app-dialog'); dialogReturnFocus = document.activeElement; dialog.replaceChildren(element('div', { className: 'dialog-inner' }, [element('h2', { text: 'Reset finals only?', attributes: { id: 'dialog-title' } }), element('p', { text: 'Preliminary heats and their official results remain untouched.' }), field('Finals reset reason', 'finals-reset-reason', '', { maxlength: 500 }), element('div', { className: 'action-row' }, [button('Confirm finals reset', 'confirm-finals-reset', 'primary-action'), button('Cancel', 'close-dialog')])])); dialog.showModal(); }
+      function confirmFinalsReset() { const input = document.getElementById('finals-reset-reason'); const reason = input.value.trim(); if (!reason || reason.length > 500) { setFieldError(input.id, 'Finals reset reason is required and must be 500 characters or fewer.'); return; } const removed = eventState.finals.length; eventState.finals = []; closeDialog(); appendNamedAudit('finals.reset', `Reset ${removed} finals heats. Reason: ${reason}.`, 'event', eventState.event.id, { reason, removedHeatCount: removed }); renderView('finals'); }
+      function manualChampionDecision() { return eventState.auditLog.slice().reverse().find((entry) => entry.action === 'champion.manual-decided' && typeof entry.details?.championCarId === 'string'); }
+      function completedFinalsChampion() { if (!eventState.finals.length || eventState.finals.some((heat) => heat.status !== 'completed')) return null; try { const rankings = calculateRankings(calculateStandings('final')); const first = rankings[0]; return first && first.rank === 1 && !first.isTied ? first.carId : null; } catch (_) { return null; } }
+      function championCarId() { return manualChampionDecision()?.details?.championCarId || completedFinalsChampion(); }
+      function openManualChampion() { const preliminary = calculateRankings(calculateStandings('preliminary')); const ids = selectedFinalistIds(preliminary); const candidates = finalistsFromIds(ids.length ? ids : [...new Set(eventState.finals.flatMap((heat) => heat.lanes.filter(Boolean)))]); const dialog = document.getElementById('app-dialog'); dialogReturnFocus = document.activeElement; dialog.replaceChildren(element('div', { className: 'dialog-inner' }, [element('h2', { text: 'Manual champion decision', attributes: { id: 'dialog-title' } }), element('p', { text: 'Use only when completed finals cannot produce a champion. The reason becomes permanent audit history.' }), selectField('Manual champion', 'manual-champion', candidates.map((entry) => [entry.id, carLabel(entry.id)]), candidates[0]?.id || ''), field('Manual champion reason', 'manual-champion-reason', '', { maxlength: 500 }), element('div', { className: 'action-row' }, [button('Confirm manual champion', 'confirm-manual-champion', 'primary-action'), button('Cancel', 'close-dialog')])])); dialog.showModal(); }
+      function confirmManualChampion() { const input = document.getElementById('manual-champion-reason'); const reason = input.value.trim(); const championId = document.getElementById('manual-champion').value; if (!reason || reason.length > 500) { setFieldError(input.id, 'Manual champion reason is required and must be 500 characters or fewer.'); return; } if (!eventState.entries.some((entry) => entry.id === championId && entry.active)) { setFieldError('manual-champion', 'Choose an eligible active finalist.'); return; } closeDialog(); appendNamedAudit('champion.manual-decided', `Champion manually decided as ${carLabel(championId)}. Reason: ${reason}.`, 'event', eventState.event.id, { championCarId: championId, reason }); renderView('finals'); }
+      function sealOfficialResults() { const championId = championCarId(); if (!championId) { announce('Official seal blocked until finals complete or a reasoned manual champion decision exists.'); return; } eventState.event.resultSeal = 'official'; appendNamedAudit('results.sealed', `Official results sealed with champion ${carLabel(championId)}.`, 'event', eventState.event.id, { championCarId: championId }); renderView('finals'); }
+      function renderSelectedFinalists(ids) { const list = element('ol', { attributes: { 'aria-label': 'Selected finalists' } }); finalistsFromIds(ids).forEach((entry) => list.append(element('li', { text: `#${entry.carNumber} ${entry.name}` }))); return list; }
+      function renderFinals(container) {
+        appendWorkspaceHeader(container, 'Qualification and podium', 'Finals', 'Resolve the cutoff explicitly, build finals separately, and seal only a defensible champion.'); if (!eventState) { container.append(element('div', { className: 'notice', text: 'Create or import an event to prepare finals.' })); return; } appendStatus(container);
+        let rankings; try { rankings = calculateRankings(calculateStandings('preliminary')); } catch (caught) { container.append(element('div', { className: 'notice error', text: sanitizeError(caught), attributes: { role: 'alert' } })); return; } const decision = qualificationDecision(rankings); const selectedIds = selectedFinalistIds(rankings);
+        container.append(finalsCutoffChart(rankings));
+        const qualification = element('section', { className: 'panel panel-section' }, [element('h3', { text: 'Qualification decision' })]);
+        if (decision.tied.length) qualification.append(element('p', { className: 'notice', text: `${decision.count} places requested · ${decision.tied.length} cars tied across the cutoff` }), element('div', { className: 'action-row' }, [button('Include all tied cars', 'include-all-finalists'), button('Generate qualification playoff', 'generate-playoff'), button('Manual selection with reason', 'manual-finalists')])); else qualification.append(element('p', { text: selectedIds.length ? `${selectedIds.length} finalists qualify automatically.` : 'No car qualifies until an official preliminary result exists.' }));
+        if (selectedIds.length) qualification.append(element('h4', { text: 'Selected finalists' }), renderSelectedFinalists(selectedIds), element('div', { className: 'action-row' }, [button('Generate finals schedule', 'generate-finals', 'primary-action')])); container.append(qualification);
+        const finalRows = calculateRankings(calculateStandings('final')); const finalsPanel = element('section', { className: 'panel panel-section' }, [element('div', { className: 'split-heading' }, [element('h3', { text: 'Finals standings' }), eventState.finals.length ? button('Reset finals only', 'reset-finals') : element('span', { className: 'badge', text: 'No finals schedule' })]), element('div', { className: 'data-table-wrap' }, [basicStandingsTable(finalRows, 'final', 'Finals standings')])]); container.append(finalsPanel);
+        const championId = championCarId(); const champion = championId ? eventState.entries.find((entry) => entry.id === championId) : null; const official = eventState.event.resultSeal === 'official' && champion;
+        const sealPanel = element('section', { className: 'panel panel-section', attributes: { role: 'region', 'aria-label': 'Champion and official seal' } }, [element('h3', { text: 'Champion and official seal' }), official ? element('p', { className: 'seal', text: 'Official seal' }) : element('p', { text: champion ? `Provisional champion: ${carLabel(champion.id)}. Seal to publish.` : 'Champion pending valid finals completion.' })]);
+        if (official) sealPanel.append(element('p', { text: `Official champion — #${champion.carNumber} ${champion.name}`, attributes: { 'data-official-champion': '' } }));
+        sealPanel.append(element('div', { className: 'action-row' }, [button('Manual champion decision', 'manual-champion'), button('Seal official results', 'seal-results', 'primary-action', championId && !official ? {} : { disabled: '' })])); container.append(sealPanel);
+      }
+
       function renderReports(container) {
         appendWorkspaceHeader(container, 'Portable records', 'Reports', 'JSON is the durable event backup; CSV reports are spreadsheet-safe and preserve Unicode.');
         if (!eventState) { container.append(element('div', { className: 'notice', text: 'Create or import an event to enable reports.' })); return; }
         appendStatus(container); if (importError) container.append(element('div', { className: 'notice error', text: importError, attributes: { role: 'alert' } }));
-        container.append(element('section', { className: 'panel panel-section' }, [element('h3', { text: 'Event backup' }), element('div', { className: 'action-row' }, [button('Download event JSON', 'download-json', 'primary-action'), button('Choose event JSON to import', 'choose-import')])]), element('section', { className: 'panel panel-section' }, [element('h3', { text: 'CSV downloads' }), element('div', { className: 'action-row' }, ['Participant registration CSV', 'Accounts CSV', 'Schedule and results CSV', 'Standings CSV', 'Audit CSV'].map((name, index) => button(`Download ${name}`, `download-csv-${index}`))) ]));
+        container.append(element('section', { className: 'panel panel-section' }, [element('h3', { text: 'Event backup' }), element('div', { className: 'action-row' }, [button('Download event JSON', 'download-json', 'primary-action'), button('Choose event JSON to import', 'choose-import')])]), element('section', { className: 'panel panel-section' }, [element('h3', { text: 'CSV downloads' }), element('div', { className: 'action-row' }, ['Participant registration CSV', 'Accounts CSV', 'Schedule and results CSV', 'Standings CSV', 'Audit CSV'].map((name, index) => button(`Download ${name}`, `download-csv-${index}`))) ]), renderPrintStudio(), renderShareStudio());
       }
+      function printLayoutContent(route) {
+        const panel = element('section', { className: 'panel panel-section print-sheet', attributes: { role: 'region', 'aria-label': `${titleCase(route)} print layout`, 'data-print-sheet': route } }, [element('p', { className: 'eyebrow', text: 'Round Robin Race Control' }), element('h3', { text: `${eventState.event.name} — ${titleCase(route)}` })]);
+        if (route === 'registration') panel.append(renderParticipants(), renderCars());
+        else if (route === 'payments') panel.append(renderAccounts(), renderPayments());
+        else if (route === 'schedule-cards') { const list = element('div', { className: 'schedule-list' }); [...eventState.matches, ...eventState.finals].forEach((heat) => list.append(element('article', { className: 'schedule-heat' }, [element('strong', { text: `${titleCase(heat.phase)} · Match ${heat.matchNumber} · Heat ${heat.heatNumber}` }), element('span', { text: heat.lanes.map((id, lane) => `Lane ${lane + 1}: ${carLabel(id)}`).join(' · ') })]))); panel.append(list); }
+        else if (route === 'standings') { let rows = []; try { rows = calculateRankings(calculateStandings('preliminary')); } catch (_) { rows = []; } panel.append(element('div', { className: 'data-table-wrap' }, [basicStandingsTable(rows, 'preliminary', 'Printable standings')])); }
+        else if (route === 'podium') { let rows = []; try { rows = calculateRankings(calculateStandings('preliminary')); } catch (_) { rows = []; } panel.append(podiumChart(rows)); }
+        else if (route === 'finals') { let rows = []; try { rows = calculateRankings(calculateStandings('final')); } catch (_) { rows = []; } panel.append(element('div', { className: 'data-table-wrap' }, [basicStandingsTable(rows, 'final', 'Printable finals standings')])); }
+        else { const table = element('table', { attributes: { 'aria-label': 'Printable audit log' } }); const body = element('tbody'); table.append(element('thead', {}, [element('tr', {}, ['Timestamp', 'Action', 'Summary'].map((label) => element('th', { text: label })))]), body); eventState.auditLog.forEach((entry) => body.append(element('tr', {}, [element('td', { text: entry.timestamp }), element('td', { text: entry.action }), element('td', { text: entry.summary })]))); panel.append(table); }
+        panel.append(element('p', { className: 'credit', text: 'Made by Cesar Lacsamana and Ahsan Ali' })); return panel;
+      }
+      function renderPrintStudio() { const options = [['registration', 'Registration'], ['payments', 'Payments'], ['schedule-cards', 'Schedule & cards'], ['standings', 'Standings'], ['podium', 'Podium'], ['finals', 'Finals'], ['audit', 'Audit']]; return element('section', { className: 'panel panel-section' }, [element('h3', { text: 'Print routes' }), element('div', { className: 'form-grid', attributes: { 'data-print-controls': '' } }, [selectField('Print layout', 'print-layout', options, printRoute)]), element('div', { className: 'action-row', attributes: { 'data-print-controls': '' } }, [button('Prepare print layout', 'prepare-print', 'primary-action')]), printLayoutContent(printRoute)]); }
+      function drawShareCard(canvas) {
+        const context = canvas.getContext('2d'); if (!context) return; canvas.width = 1200; canvas.height = 630; const rankings = (() => { try { return calculateRankings(calculateStandings('preliminary')); } catch (_) { return []; } })();
+        const gradient = context.createLinearGradient(0, 0, 1200, 630); gradient.addColorStop(0, '#090d10'); gradient.addColorStop(1, '#123642'); context.fillStyle = gradient; context.fillRect(0, 0, 1200, 630); context.fillStyle = '#26d9ff'; context.font = '900 34px system-ui'; context.fillText('RR · 3  ROUND ROBIN RACE CONTROL', 72, 82); context.fillStyle = '#f6f9fb'; context.font = '900 62px system-ui'; context.fillText(eventState.event.name.slice(0, 28), 72, 170); context.fillStyle = eventState.event.resultSeal === 'official' ? '#b5f23d' : '#ffbd45'; context.font = '800 28px system-ui'; context.fillText(`${titleCase(eventState.event.resultSeal)} results`, 72, 218); context.fillStyle = '#aebbc3'; context.font = '700 22px system-ui'; context.fillText(`${eventState.event.date} · ${eventState.event.venue || 'Venue not set'}`, 72, 260);
+        rankings.slice(0, 3).forEach((row, index) => { const y = 340 + index * 72; context.fillStyle = index === 0 ? '#f4c95d' : '#f6f9fb'; context.font = '900 34px system-ui'; context.fillText(`${row.rank ?? '—'}. #${row.carNumber} ${row.carName}`.slice(0, 36), 96, y); context.fillStyle = '#aebbc3'; context.font = '700 20px system-ui'; context.fillText(`${row.totalWins} wins · ${row.isTied ? 'tied' : 'placed'}`, 760, y); });
+        context.strokeStyle = '#344550'; context.beginPath(); context.moveTo(72, 546); context.lineTo(1128, 546); context.stroke(); context.fillStyle = '#f6f9fb'; context.font = '700 22px system-ui'; context.fillText('Made by Cesar Lacsamana and Ahsan Ali', 72, 590);
+      }
+      function renderShareStudio() { const canvas = element('canvas', { className: 'share-canvas', attributes: { width: 1200, height: 630, 'aria-label': 'Event results share card preview', 'data-share-credit': 'Made by Cesar Lacsamana and Ahsan Ali' } }); requestAnimationFrame(() => drawShareCard(canvas)); const controls = [button('Download share card', 'download-share-card', 'primary-action')]; if (typeof navigator.share === 'function') controls.push(button('Share results', 'share-results')); return element('section', { className: 'panel panel-section', attributes: { role: 'region', 'aria-label': 'Share card studio' } }, [element('h3', { text: 'Share card studio' }), element('p', { text: 'A local 1200 × 630 image with event identity, result status, top standings, and creator credit.' }), canvas, element('div', { className: 'action-row', attributes: { 'data-share-controls': '' } }, controls)]); }
+      function preparePrint() { printRoute = document.getElementById('print-layout').value; document.body.dataset.printRoute = printRoute; renderView('reports'); }
+      function downloadShareCard() { const canvas = document.querySelector('.share-canvas'); if (!canvas) return; const link = element('a', { attributes: { href: canvas.toDataURL('image/png'), download: `${eventState.event.name.replace(/[^a-z0-9]+/gi, '-').toLowerCase()}-results.png` } }); document.body.append(link); link.click(); link.remove(); }
+      async function shareResults() { const canvas = document.querySelector('.share-canvas'); if (!canvas || typeof navigator.share !== 'function') return; const blob = await new Promise((resolve) => canvas.toBlob(resolve, 'image/png')); const file = new File([blob], 'round-robin-results.png', { type: 'image/png' }); await navigator.share({ title: eventState.event.name, text: `${titleCase(eventState.event.resultSeal)} Round Robin Race Control results`, files: [file] }); }
       function csvCell(value) { const original = value === null || value === undefined ? '' : String(value); const protectedValue = /^\s*[=+\-@]/u.test(original) ? `'${original}` : original; return /[",\r\n]/u.test(protectedValue) ? `"${protectedValue.replaceAll('"', '""')}"` : protectedValue; }
       function toCsv(rows) { return rows.map((row) => row.map(csvCell).join(',')).join('\r\n'); }
       function csvRows(kind) {
@@ -1251,9 +1348,9 @@
         const heats = (phase === 'preliminary' ? eventState.matches : eventState.finals).filter((heat) => heat.phase === phase).slice().sort((left, right) => left.matchNumber - right.matchNumber || left.heatNumber - right.heatNumber || compareCodeUnits(left.id, right.id));
         const participantById = new Map(eventState.participants.map((participant) => [participant.id, participant]));
         return eventState.entries.filter((entry) => entry.active).map((entry) => {
-          const participant = participantById.get(entry.participantId); const matchWins = {}; const headToHeadWins = {}; const laneCounts = [0, 0, 0]; const times = []; let completedHeats = 0;
-          for (const heat of heats) { if (heat.status !== 'completed' || heat.winnerEntryId === null) continue; const laneIndex = heat.lanes.indexOf(entry.id); if (laneIndex < 0) continue; const matchKey = String(heat.matchNumber); matchWins[matchKey] ??= 0; completedHeats += 1; laneCounts[laneIndex] += 1; const time = heat.laneTimesMs[laneIndex]; if (time !== null) times.push(time); if (heat.winnerEntryId === entry.id) { matchWins[matchKey] += 1; for (const opponentId of heat.lanes) if (opponentId !== null && opponentId !== entry.id) headToHeadWins[opponentId] = (headToHeadWins[opponentId] || 0) + 1; } }
-          return { carId: entry.id, participantId: participant.id, participantName: participant.name, carNumber: entry.carNumber, carName: entry.name, categoryId: entry.categoryId, active: entry.active, totalWins: Object.values(matchWins).reduce((total, wins) => total + wins, 0), matchesWon: Object.values(matchWins).filter((wins) => wins > 0).length, completedHeats, averageTimeMs: times.length ? times.reduce((total, time) => total + time, 0) / times.length : null, bestTimeMs: times.length ? Math.min(...times) : null, laneBalanceScore: Math.max(...laneCounts) - Math.min(...laneCounts), headToHeadWins };
+          const participant = participantById.get(entry.participantId); const matchWins = {}; const headToHeadWins = {}; const laneCounts = [0, 0, 0]; const times = []; const recentForm = []; let completedHeats = 0;
+          for (const heat of heats) { if (heat.status !== 'completed' || heat.winnerEntryId === null) continue; const laneIndex = heat.lanes.indexOf(entry.id); if (laneIndex < 0) continue; const matchKey = String(heat.matchNumber); matchWins[matchKey] ??= 0; completedHeats += 1; laneCounts[laneIndex] += 1; const time = heat.laneTimesMs[laneIndex]; if (time !== null) times.push(time); if (heat.winnerEntryId === entry.id) { matchWins[matchKey] += 1; recentForm.push('win'); for (const opponentId of heat.lanes) if (opponentId !== null && opponentId !== entry.id) headToHeadWins[opponentId] = (headToHeadWins[opponentId] || 0) + 1; } else recentForm.push('loss'); }
+          return { phase, carId: entry.id, participantId: participant.id, participantName: participant.name, carNumber: entry.carNumber, carName: entry.name, categoryId: entry.categoryId, active: entry.active, matchWins, totalWins: Object.values(matchWins).reduce((total, wins) => total + wins, 0), matchesWon: Object.values(matchWins).filter((wins) => wins > 0).length, completedHeats, averageTimeMs: times.length ? times.reduce((total, time) => total + time, 0) / times.length : null, bestTimeMs: times.length ? Math.min(...times) : null, laneBalanceScore: Math.max(...laneCounts) - Math.min(...laneCounts), laneCounts, headToHeadWins, recentForm };
         });
       }
       function rankingMetric(key, standing, group) {
@@ -1261,12 +1358,104 @@
       }
       function compareRankingMetric(key, left, right) { if (left === null && right === null) return 0; if (left === null) return 1; if (right === null) return -1; if (left === right) return 0; return ['averageTime', 'bestTime', 'laneBalance', 'carNumber'].includes(key) ? left - right : right - left; }
       function calculateRankings(standings) {
-        const active = standings.filter((row) => row.active).slice().sort((left, right) => compareCodeUnits(left.carId, right.carId));
-        if (!active.some((row) => row.completedHeats > 0)) return active.map((row) => ({ ...row, rank: null, isTied: active.length > 1 }));
+        const active = standings.filter((row) => row.active).slice().sort((left, right) => compareCodeUnits(left.carId, right.carId)).map((row) => ({ row, values: new Map(), resolved: new Set() }));
+        if (!active.some((work) => work.row.completedHeats > 0)) return active.map((work) => ({ ...work.row, rank: null, isTied: active.length > 1, tiedWithCarIds: active.filter((other) => other !== work).map((other) => other.row.carId), tieBreaks: eventState.settings.tieBreakOrder.map((key) => ({ key, value: rankingMetric(key, work.row, active.map((item) => item.row)), resolved: false })) }));
         let groups = [active];
-        for (const key of eventState.settings.tieBreakOrder) { const next = []; for (const group of groups) { const sorted = group.slice().sort((left, right) => compareRankingMetric(key, rankingMetric(key, left, group), rankingMetric(key, right, group))); const partitions = []; for (const row of sorted) { const previous = partitions.at(-1)?.[0]; if (!previous || compareRankingMetric(key, rankingMetric(key, previous, group), rankingMetric(key, row, group)) !== 0) partitions.push([row]); else partitions.at(-1).push(row); } next.push(...partitions); } groups = next; }
+        for (const key of eventState.settings.tieBreakOrder) { const next = []; for (const group of groups) { const rows = group.map((work) => work.row); group.forEach((work) => work.values.set(key, rankingMetric(key, work.row, rows))); const sorted = group.slice().sort((left, right) => compareRankingMetric(key, left.values.get(key), right.values.get(key))); const partitions = []; for (const work of sorted) { const previous = partitions.at(-1)?.[0]; if (!previous || compareRankingMetric(key, previous.values.get(key), work.values.get(key)) !== 0) partitions.push([work]); else partitions.at(-1).push(work); } if (partitions.length > 1) partitions.forEach((partition) => { if (partition.length === 1) partition[0].resolved.add(key); }); next.push(...partitions); } groups = next; }
         if (eventState.settings.rankingMode === 'ordinal' && groups.some((group) => group.length > 1)) throw new Error('Ordinal ranking requires configured tie breaks to resolve every tie.');
-        const ranked = []; let competitionPosition = 1; groups.forEach((group, index) => { const rank = eventState.settings.rankingMode === 'dense' ? index + 1 : competitionPosition; group.forEach((row) => ranked.push({ ...row, rank, isTied: group.length > 1 })); competitionPosition += group.length; }); return ranked;
+        const ranked = []; let competitionPosition = 1; groups.forEach((group, index) => { const rank = eventState.settings.rankingMode === 'dense' ? index + 1 : competitionPosition; group.forEach((work) => ranked.push({ ...work.row, rank, isTied: group.length > 1, tiedWithCarIds: group.filter((other) => other !== work).map((other) => other.row.carId), tieBreaks: eventState.settings.tieBreakOrder.map((key) => ({ key, value: work.values.get(key) ?? rankingMetric(key, work.row, [work.row]), resolved: work.resolved.has(key) })) })); competitionPosition += group.length; }); return ranked;
+      }
+      function svgNode(name, attributes = {}, text = '') { const node = document.createElementNS('http://www.w3.org/2000/svg', name); Object.entries(attributes).forEach(([key, value]) => node.setAttribute(key, String(value))); if (text !== '') node.textContent = String(text); return node; }
+      function chartFigure(title, takeaway, headers, rows, status, kind = 'bars') {
+        const figure = element('section', { className: 'panel chart-card', attributes: { 'data-chart': title, role: 'region', 'aria-label': title } });
+        const graphic = svgNode('svg', { class: 'chart-graphic', viewBox: '0 0 600 230', role: 'img', 'aria-label': `${title}. ${takeaway}` });
+        graphic.append(svgNode('title', {}, `${title}. ${takeaway}`));
+        const numeric = rows.map((row) => Number(row.at(-1)) || 0); const maximum = Math.max(1, ...numeric);
+        if (kind === 'ring' || kind === 'donut') {
+          graphic.append(svgNode('circle', { cx: 130, cy: 112, r: 72, fill: 'none', stroke: 'currentColor', 'stroke-opacity': .18, 'stroke-width': 24 }));
+          const ratio = Math.max(0, Math.min(1, numeric[0] / maximum));
+          graphic.append(svgNode('circle', { cx: 130, cy: 112, r: 72, fill: 'none', stroke: 'var(--cyan)', 'stroke-width': 24, 'stroke-linecap': 'round', 'stroke-dasharray': `${ratio * 452} 452`, transform: 'rotate(-90 130 112)' }));
+          rows.slice(0, 4).forEach((row, index) => graphic.append(svgNode('text', { x: 250, y: 70 + index * 34, fill: 'currentColor', 'font-size': 16 }, `${row[0]}: ${row.at(-1)}`)));
+        } else if (kind === 'matrix') {
+          const cell = Math.max(18, Math.min(38, 320 / Math.max(1, rows.length)));
+          rows.slice(0, 10).forEach((row, index) => { const count = Number(row.at(-1)) || 0; graphic.append(svgNode('rect', { x: 190, y: 18 + index * (cell + 3), width: Math.max(8, count * 42), height: cell, rx: 4, fill: 'var(--cyan)', 'fill-opacity': count > 1 ? .92 : .38 })); graphic.append(svgNode('text', { x: 10, y: 40 + index * (cell + 3), fill: 'currentColor', 'font-size': 13 }, String(row[0]).slice(0, 24))); graphic.append(svgNode('text', { x: 200 + Math.max(8, count * 42), y: 40 + index * (cell + 3), fill: 'currentColor', 'font-size': 13 }, count)); });
+        } else if (kind === 'lines') {
+          rows.slice(0, 8).forEach((row, index) => { const value = Number(row.at(-1)) || 0; const y = 30 + index * 24; graphic.append(svgNode('line', { x1: 150, y1: y, x2: 150 + value / maximum * 380, y2: y, stroke: 'var(--cyan)', 'stroke-width': 5, 'stroke-linecap': 'round' })); graphic.append(svgNode('circle', { cx: 150 + value / maximum * 380, cy: y, r: 6, fill: index % 2 ? 'var(--lime)' : 'var(--cyan)' })); graphic.append(svgNode('text', { x: 8, y: y + 5, fill: 'currentColor', 'font-size': 13 }, String(row[0]).slice(0, 20))); });
+        } else {
+          rows.slice(0, 8).forEach((row, index) => { const value = Number(row.at(-1)) || 0; const y = 18 + index * 25; graphic.append(svgNode('text', { x: 8, y: y + 15, fill: 'currentColor', 'font-size': 13 }, String(row[0]).slice(0, 20))); graphic.append(svgNode('line', { x1: 155, y1: y + 9, x2: 155 + value / maximum * 360, y2: y + 9, stroke: 'var(--cyan)', 'stroke-width': 8, 'stroke-linecap': 'round' })); graphic.append(svgNode('circle', { cx: 155 + value / maximum * 360, cy: y + 9, r: 7, fill: index % 2 ? 'var(--lime)' : 'var(--cyan)' })); graphic.append(svgNode('text', { x: 530, y: y + 15, fill: 'currentColor', 'font-size': 13 }, value)); });
+        }
+        const table = element('table', { attributes: { 'aria-label': `${title} data` } }); const body = element('tbody');
+        table.append(element('thead', {}, [element('tr', {}, headers.map((header) => element('th', { text: header })))]), body);
+        rows.forEach((row) => body.append(element('tr', {}, row.map((value) => element('td', { text: value }))))) ;
+        const details = element('details', {}, [element('summary', { text: 'View data table' }), element('div', { className: 'data-table-wrap' }, [table])]);
+        figure.append(element('h3', { text: title }), graphic, element('p', { className: 'chart-takeaway', text: takeaway, attributes: { 'data-chart-takeaway': '' } }), element('span', { className: 'chart-status', text: status, attributes: { 'data-status-text': '' } }), details);
+        return figure;
+      }
+      function renderDashboardAnalytics() {
+        const heats = [...eventState.matches, ...eventState.finals]; const complete = heats.filter((heat) => heat.status === 'completed').length; const completion = heats.length ? Math.round(complete / heats.length * 100) : 0;
+        const categories = new Map(); activeCars().forEach((entry) => categories.set(categoryLabel(entry.categoryId), (categories.get(categoryLabel(entry.categoryId)) || 0) + 1));
+        const accounts = calculateAccounts(); const paymentCounts = { Paid: 0, Partial: 0, Unpaid: 0, Credit: 0 }; accounts.forEach((account) => { paymentCounts[accountStatus(account)[0]] += 1; });
+        return element('div', { className: 'analytics-grid' }, [
+          chartFigure('Event completion', `${complete} of ${heats.length} heats have an official result.`, ['Measure', 'Percent'], [['Completed', completion], ['Remaining', 100 - completion]], completion === 100 ? 'Complete' : 'In progress', 'ring'),
+          chartFigure('Category mix', `${activeCars().length} active cars are spread across ${categories.size} categories.`, ['Category', 'Cars'], [...categories], 'Counts are labeled, not color-only.', 'donut'),
+          chartFigure('Payment status', `${paymentCounts.Paid} participant accounts are paid in full.`, ['Status', 'Accounts'], Object.entries(paymentCounts), `${paymentCounts.Unpaid + paymentCounts.Partial} accounts need attention.`, 'donut')
+        ]);
+      }
+      function qualificationDecision(rankings) {
+        const count = eventState.settings.finalistCount; const eligible = rankings.filter((row) => row.completedHeats > 0 && row.rank !== null);
+        if (!count || !eligible.length) return { count, automatic: [], tied: [], actions: [] };
+        if (count >= eligible.length) return { count, automatic: eligible, tied: [], actions: [] };
+        const cutoff = eligible[count - 1]; const group = eligible.filter((row) => row.rank === cutoff.rank); const start = eligible.findIndex((row) => row.rank === cutoff.rank);
+        if (group.length > 1 && start < count && start + group.length > count) return { count, automatic: eligible.slice(0, start), tied: group, actions: ['include-all', 'playoff', 'manual'] };
+        return { count, automatic: eligible.slice(0, count), tied: [], actions: [] };
+      }
+      function selectedFinalistIds(rankings) {
+        const audited = eventState.auditLog.slice().reverse().find((entry) => ['finals.include-all', 'finals.manual-qualified'].includes(entry.action) && Array.isArray(entry.details?.selectedCarIds));
+        if (audited) return audited.details.selectedCarIds.filter((id) => eventState.entries.some((entry) => entry.id === id && entry.active));
+        const decision = qualificationDecision(rankings); return decision.tied.length ? [] : decision.automatic.map((row) => row.carId);
+      }
+      function qualificationLabel(row, decision) { if (decision.automatic.some((item) => item.carId === row.carId)) return 'Qualified'; if (decision.tied.some((item) => item.carId === row.carId)) return 'Cutoff tie — decision required'; return 'Outside cutoff'; }
+      function formatMetric(key, value) { if (value === null) return 'Not available'; if (['averageTime', 'bestTime'].includes(key)) return `${Number(value).toFixed(2)} ms`; return String(value); }
+      function renderRankProof(row) {
+        const region = element('section', { className: 'rank-proof', attributes: { role: 'region', 'aria-label': `Rank proof for ${row.carName}` } }, [element('h3', { text: `Why ${row.carName} is rank ${row.rank ?? '—'}` })]);
+        const list = element('ul'); row.tieBreaks.forEach((comparison) => list.append(element('li', { text: `${titleCase(comparison.key)}: ${formatMetric(comparison.key, comparison.value)} — ${comparison.resolved ? 'resolved this rank' : 'equal'}` }))); region.append(list, element('p', { text: row.isTied ? `Comparator equality remains with ${row.tiedWithCarIds.map(carLabel).join(', ')}. Stable ID order is display-only and non-competitive.` : 'The first resolving configured key determines the competitive order.' })); return region;
+      }
+      function basicStandingsTable(rankings, phase, label, showProof = false) {
+        const matchNumbers = [...new Set((phase === 'preliminary' ? eventState.matches : eventState.finals).map((heat) => heat.matchNumber))].sort((a, b) => a - b); const decision = phase === 'preliminary' ? qualificationDecision(rankings) : null;
+        const table = element('table', { className: 'standings-table', attributes: { 'aria-label': label } }); const body = element('tbody'); const headers = ['Rank', 'Car', 'Driver', 'Category', ...matchNumbers.map((number) => `Match ${number}`), 'Wins', 'Completed', 'Average', 'Best', 'Tie status', ...(decision ? ['Qualification'] : []), ...(showProof ? ['Proof'] : [])];
+        table.append(element('thead', {}, [element('tr', {}, headers.map((header) => element('th', { text: header })))]), body);
+        rankings.forEach((row) => {
+          const previous = displayedRanks.get(`${phase}:${row.carId}`); const delta = row.rank === null ? 'Not ranked' : previous === undefined ? `New at rank ${row.rank}` : previous === row.rank ? 'No rank change' : `Moved ${previous > row.rank ? 'up' : 'down'} ${Math.abs(previous - row.rank)} to rank ${row.rank}`;
+          const cells = [element('td', {}, [element('strong', { text: row.rank ?? '—' }), element('span', { text: delta, attributes: { 'data-rank-delta': '' } })]), element('td', { text: `#${row.carNumber} ${row.carName}` }), element('td', { text: row.participantName }), element('td', { text: categoryLabel(row.categoryId) }), ...matchNumbers.map((number) => element('td', { text: row.matchWins[String(number)] || 0 })), element('td', { text: row.totalWins }), element('td', { text: row.completedHeats }), element('td', { text: row.averageTimeMs === null ? '—' : `${row.averageTimeMs.toFixed(2)} ms` }), element('td', { text: row.bestTimeMs === null ? '—' : `${row.bestTimeMs} ms` }), element('td', { text: row.isTied ? 'Unresolved tie' : 'Resolved' })];
+          if (decision) cells.push(element('td', { text: qualificationLabel(row, decision) })); if (showProof) cells.push(element('td', {}, [button(`Why this rank? ${row.carName}`, 'show-rank-proof', '', { 'data-entry-id': row.carId })]));
+          body.append(element('tr', { attributes: { 'data-standing-row': row.carId, 'data-car-id': row.carId, 'data-rank': row.rank ?? '' } }, cells)); displayedRanks.set(`${phase}:${row.carId}`, row.rank);
+        }); return table;
+      }
+      function podiumChart(rankings) {
+        const hasResult = rankings.some((row) => row.completedHeats > 0); const top = hasResult ? rankings.filter((row) => row.rank !== null && row.rank <= 3).slice(0, 3) : [];
+        const chart = chartFigure('Podium', hasResult ? 'Podium places reflect official results and configured competitive tie breaks.' : 'Podium opens after the first official result.', ['Place', 'Car', 'Status'], top.map((row) => [row.rank, row.carName, row.isTied ? 'Tied' : 'Placed']), hasResult ? 'Official-result projection' : 'No official result', 'bars');
+        if (top.length) { const podium = element('div', { className: 'podium' }); top.forEach((row) => podium.append(element('div', { className: 'podium-place', attributes: { 'data-podium-place': row.rank } }, [element('strong', { text: `#${row.rank}` }), element('span', { text: row.carName }), element('small', { text: row.isTied ? 'Tied place' : 'Placed' })]))); chart.append(podium); }
+        return chart;
+      }
+      function standingsAnalytics(rankings) {
+        const matches = [...new Set(eventState.matches.map((heat) => heat.matchNumber))].sort((a, b) => a - b); const cumulative = rankings.map((row) => [row.carName, matches.reduce((total, match) => total + (row.matchWins[String(match)] || 0), 0)]);
+        const lanes = rankings.map((row) => [row.carName, `L1 ${row.laneCounts[0]} · L2 ${row.laneCounts[1]} · L3 ${row.laneCounts[2]}`, Math.max(...row.laneCounts) - Math.min(...row.laneCounts)]);
+        const pairs = new Map(); eventState.matches.forEach((heat) => { const ids = heat.lanes.filter(Boolean); for (let first = 0; first < ids.length; first += 1) for (let second = first + 1; second < ids.length; second += 1) { const key = schedulePairKey(ids[first], ids[second]); pairs.set(key, (pairs.get(key) || 0) + 1); } });
+        const pairRows = [...pairs].map(([key, count]) => { const ids = JSON.parse(key); return [`${carLabel(ids[0])} vs ${carLabel(ids[1])}`, count > 1 ? 'Repeat' : 'First meeting', count]; }).sort((left, right) => right[2] - left[2] || compareCodeUnits(left[0], right[0]));
+        return element('div', { className: 'analytics-grid' }, [
+          chartFigure('Win distribution', `${rankings[0]?.carName || 'No car'} leads with ${rankings[0]?.totalWins || 0} wins.`, ['Car', 'Wins'], rankings.map((row) => [row.carName, row.totalWins]), rankings.some((row) => row.isTied) ? 'Tie status is shown in the standings.' : 'No unresolved rank tie.', 'bars'),
+          chartFigure('Cumulative wins by match', `${matches.length} preliminary matches contribute to the current totals.`, ['Car', 'Cumulative wins'], cumulative, 'Lines end at each labeled official total.', 'lines'),
+          chartFigure('Lane balance', `${lanes.filter((row) => row[2] > 1).length} cars have a lane spread above one.`, ['Car', 'Lane counts', 'Spread'], lanes, 'Lane numbers and spread are written out.', 'bars'),
+          chartFigure('Opponent repeat matrix', `${pairRows.filter((row) => row[2] > 1).length} opponent pairs meet more than once.`, ['Pair', 'Status', 'Meetings'], pairRows, 'Repeat pairs are explicitly labeled.', 'matrix'),
+          podiumChart(rankings)
+        ]);
+      }
+      function renderStandings(container) {
+        appendWorkspaceHeader(container, 'Official projection', 'Standings', 'Pure standings keep preliminary results separate and explain every configured comparison.');
+        if (!eventState) { container.append(element('div', { className: 'notice', text: 'Create or import an event to calculate standings.' })); return; } appendStatus(container);
+        let rankings; try { rankings = calculateRankings(calculateStandings('preliminary')); } catch (caught) { container.append(element('div', { className: 'notice error', text: sanitizeError(caught), attributes: { role: 'alert' } })); return; }
+        const hasResult = rankings.some((row) => row.completedHeats > 0); container.append(element('p', { className: hasResult ? 'notice' : 'notice', text: hasResult ? `Current leader: ${rankings[0].carName} with ${rankings[0].totalWins} wins.` : 'No leader until an official result exists.' }));
+        container.append(element('section', { className: 'panel panel-section' }, [element('h3', { text: 'Preliminary standings' }), element('div', { className: 'data-table-wrap' }, [basicStandingsTable(rankings, 'preliminary', 'Preliminary standings', true)]), ...(rankProofCarId ? [renderRankProof(rankings.find((row) => row.carId === rankProofCarId) || rankings[0])] : [])]), standingsAnalytics(rankings));
       }
       function downloadText(filename, text, type) { const blob = new Blob([text], { type }); const url = URL.createObjectURL(blob); const link = element('a', { attributes: { href: url, download: filename } }); document.body.append(link); link.click(); link.remove(); setTimeout(() => URL.revokeObjectURL(url), 0); }
       async function importFile(file) {
@@ -1343,7 +1532,7 @@
       }
       function renderView(view) {
         const container = document.getElementById('view-content'); if (!container) return; container.replaceChildren();
-        if (view === 'dashboard') renderDashboard(container); else if (view === 'registration') renderRegistration(container); else if (view === 'setup') renderSetup(container); else if (view === 'live') renderLive(container); else if (view === 'reports') renderReports(container); else if (view === 'settings') renderSettings(container); else renderPlaceholder(container, view);
+        if (view === 'dashboard') renderDashboard(container); else if (view === 'registration') renderRegistration(container); else if (view === 'setup') renderSetup(container); else if (view === 'live') renderLive(container); else if (view === 'standings') renderStandings(container); else if (view === 'finals') renderFinals(container); else if (view === 'reports') renderReports(container); else if (view === 'settings') renderSettings(container); else renderPlaceholder(container, view);
       }
       function selectView(view) {
         if (!Object.hasOwn(viewDetails, view)) return; activeView = view; const main = document.getElementById('main-content'); main.dataset.activeView = view;
@@ -1389,6 +1578,17 @@
         else if (action === 'rerun-heat') openHeatRerun();
         else if (action === 'confirm-rerun-heat') confirmHeatRerun();
         else if (action === 'save-issue') saveIssueNote();
+        else if (action === 'show-rank-proof') { rankProofCarId = id; renderView('standings'); }
+        else if (action === 'include-all-finalists') includeAllTiedFinalists();
+        else if (action === 'generate-playoff') generateQualificationPlayoff();
+        else if (action === 'manual-finalists') openManualFinalists();
+        else if (action === 'confirm-manual-finalists') confirmManualFinalists();
+        else if (action === 'generate-finals') generateFinalsSchedule();
+        else if (action === 'reset-finals') openResetFinals();
+        else if (action === 'confirm-finals-reset') confirmFinalsReset();
+        else if (action === 'manual-champion') openManualChampion();
+        else if (action === 'confirm-manual-champion') confirmManualChampion();
+        else if (action === 'seal-results') sealOfficialResults();
         else if (action === 'confirm-schedule-replacement') confirmScheduleReplacement();
         else if (action === 'save-event-details') { const name = document.getElementById('setup-event-name').value.trim(); const date = document.getElementById('setup-event-date').value; const venue = document.getElementById('setup-venue').value.trim(); const organizer = document.getElementById('setup-organizer').value.trim(); let invalid = false; clearValidation(['setup-event-name', 'setup-event-date', 'setup-venue', 'setup-organizer']); if (!name || name.length > 200) { setFieldError('setup-event-name', !name ? 'Event name is required.' : 'Event name must be 200 characters or fewer.'); invalid = true; } if (!date || date.length > 32) { setFieldError('setup-event-date', 'Event date is required and must be 32 characters or fewer.'); invalid = true; } if (venue.length > 200) { setFieldError('setup-venue', 'Venue must be 200 characters or fewer.'); invalid = true; } if (organizer.length > 200) { setFieldError('setup-organizer', 'Organizer must be 200 characters or fewer.'); invalid = true; } if (invalid) return; Object.assign(eventState.event, { name, date, venue, organizer }); meaningfulChange('Event details updated', 'event', eventState.event.id); updateChrome(); renderView('setup'); }
         else if (action === 'focus-prices') document.getElementById('price-editor').scrollIntoView({ block: 'center' });
@@ -1396,6 +1596,9 @@
         else if (action === 'download-json') downloadText(`${eventState.event.name.replace(/[^a-z0-9]+/gi, '-').toLowerCase()}-event.json`, serializeEvent(eventState), 'application/json;charset=utf-8');
         else if (action === 'choose-import') document.getElementById('import-input').click();
         else if (action?.startsWith('download-csv-')) { const kind = Number(action.at(-1)); downloadText(`round-robin-${kind}.csv`, toCsv(csvRows(kind)), 'text/csv;charset=utf-8'); }
+        else if (action === 'prepare-print') preparePrint();
+        else if (action === 'download-share-card') downloadShareCard();
+        else if (action === 'share-results') shareResults().catch(captureError);
         else if (action === 'restore-previous') openDialog('Restore previous save?', 'The current event will be replaced by the previous valid local snapshot.', [{ text: 'Confirm restore', action: 'confirm-restore', primary: true }]);
         else if (action === 'confirm-restore') restorePrevious();
         else if (action === 'reset-event') openDialog('Reset this event?', demoMode ? 'This clears only the separate demo workspace; official saves remain untouched.' : 'This clears current and previous browser saves and cannot be undone without a downloaded backup.', [{ text: 'Confirm reset', action: 'confirm-reset', primary: true }]);
