@@ -4,6 +4,9 @@ import { RegistrationPage } from "../features/registration/RegistrationPage";
 import { ScheduleLabPage } from "../features/schedule/ScheduleLabPage";
 import { RaceCommandPage } from "../features/race/RaceCommandPage";
 import { PresentationPage } from "../features/presentation/PresentationPage";
+import { StandingsPage } from "../features/standings/StandingsPage";
+import { FinalsPage } from "../features/finals/FinalsPage";
+import { ReportsPage } from "../features/reports/ReportsPage";
 
 export const operatorDestinations = [
   { label: "Dashboard", path: "/" },
@@ -54,36 +57,9 @@ export function AppRoutes() {
       <Route path="/registration" element={<RegistrationPage />} />
       <Route path="/schedule" element={<ScheduleLabPage />} />
       <Route path="/race" element={<RaceCommandPage />} />
-      <Route
-        path="/standings"
-        element={
-          <PlaceholderPage
-            eyebrow="Official projection"
-            heading="Standings"
-            description="Rankings remain empty until an official result exists."
-          />
-        }
-      />
-      <Route
-        path="/finals"
-        element={
-          <PlaceholderPage
-            eyebrow="Qualification and championship"
-            heading="Finals"
-            description="Finalists and champions will require explicit, auditable decisions."
-          />
-        }
-      />
-      <Route
-        path="/reports"
-        element={
-          <PlaceholderPage
-            eyebrow="Portable event evidence"
-            heading="Reports"
-            description="Printable views and local event exports will live here."
-          />
-        }
-      />
+      <Route path="/standings" element={<StandingsPage />} />
+      <Route path="/finals" element={<FinalsPage />} />
+      <Route path="/reports" element={<ReportsPage />} />
       <Route
         path="/settings"
         element={
