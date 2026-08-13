@@ -1,0 +1,10 @@
+.codex-tmp/
+node_modules/
+dist/
+playwright-report/
+test-results/
+.netlify/
+.env
+.env.*
+!.env.example
+Round robin.xlsx
