@@ -19,6 +19,7 @@ import {
   createCommandDispatcher,
   type CommandReceipt,
   type EventCommand,
+  type PostCommitIssue,
   type PublishCommittedEvent,
 } from "./commands";
 
@@ -26,6 +27,7 @@ type EventContextValue = {
   state: EventStateV1 | null;
   loading: boolean;
   error: string | null;
+  postCommitIssue: PostCommitIssue | null;
   persistenceStatus: StoragePersistenceStatus;
   snapshots: SnapshotMetadata[];
   dispatchEventCommand(command: EventCommand): Promise<CommandReceipt>;
@@ -56,6 +58,7 @@ export function EventProvider({
   const [state, setState] = useState<EventStateV1 | null>(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
+  const [postCommitIssue, setPostCommitIssue] = useState<PostCommitIssue | null>(null);
   const [persistenceStatus, setPersistenceStatus] =
     useState<StoragePersistenceStatus>("not-requested");
   const [snapshots, setSnapshots] = useState<SnapshotMetadata[]>([]);
@@ -69,7 +72,13 @@ export function EventProvider({
   );
 
   const dispatcher = useMemo(
-    () => createCommandDispatcher({ repository, now, createId, publish }),
+    () => createCommandDispatcher({
+      repository,
+      now,
+      createId,
+      publish,
+      onPostCommitIssue: setPostCommitIssue,
+    }),
     [repository, now, createId, publish],
   );
 
@@ -106,14 +115,24 @@ export function EventProvider({
   const dispatchEventCommand = useCallback(
     async (command: EventCommand) => {
       setError(null);
+      setPostCommitIssue(null);
+      let receipt: CommandReceipt;
       try {
-        const receipt = await dispatcher.dispatch(command);
-        await refreshSnapshots();
-        return receipt;
+        receipt = await dispatcher.dispatch(command);
       } catch (cause) {
         setError(toSafeErrorMessage(cause));
         throw cause;
       }
+      try {
+        await refreshSnapshots();
+      } catch (cause) {
+        setPostCommitIssue({
+          commandId: receipt.commandId,
+          area: "snapshot-history",
+          message: toSafeErrorMessage(cause),
+        });
+      }
+      return receipt;
     },
     [dispatcher, refreshSnapshots],
   );
@@ -160,6 +179,7 @@ export function EventProvider({
       state,
       loading,
       error,
+      postCommitIssue,
       persistenceStatus,
       snapshots,
       dispatchEventCommand,
@@ -173,6 +193,7 @@ export function EventProvider({
       state,
       loading,
       error,
+      postCommitIssue,
       persistenceStatus,
       snapshots,
       dispatchEventCommand,

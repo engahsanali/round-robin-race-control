@@ -103,6 +103,113 @@ describe("event commands", () => {
     expect(published).toEqual([{ event: committed, receipt }]);
   });
 
+  it("returns the committed receipt and separately reports a failed post-commit read-back", async () => {
+    await repository.save(eventFixture(), bootstrapRevision());
+    const originalLoad = repository.load.bind(repository);
+    vi.spyOn(repository, "load")
+      .mockImplementationOnce(originalLoad)
+      .mockRejectedValueOnce(new Error("Committed state read-back failed"));
+    const published: Array<{ event: EventStateV1; receipt: CommandReceipt }> = [];
+    const postCommitIssues: Array<{
+      commandId: string;
+      area: "state-readback" | "snapshot-history";
+      message: string;
+    }> = [];
+    const dispatcher = createCommandDispatcher({
+      repository,
+      now: () => "2026-08-14T01:02:03.000Z",
+      createId: () => "command-readback-failure",
+      publish: (event, receipt) => published.push({ event, receipt }),
+      onPostCommitIssue: (issue) => postCommitIssues.push(issue),
+    });
+
+    const receipt = await dispatcher.dispatch({
+      type: "result.record-winner",
+      heatId: "pre-m02-h03",
+      carId: "car-03",
+    });
+
+    expect(receipt.commandId).toBe("command-readback-failure");
+    expect((await database.liveEvents.get("current"))?.event.matches
+      .find(({ id }) => id === "pre-m02-h03")?.winnerEntryId).toBe("car-03");
+    expect(published).toHaveLength(1);
+    expect(published[0]?.event.matches
+      .find(({ id }) => id === "pre-m02-h03")?.winnerEntryId).toBe("car-03");
+    expect(postCommitIssues).toEqual([{
+      commandId: "command-readback-failure",
+      area: "state-readback",
+      message: "Committed state read-back failed",
+    }]);
+  });
+
+  it("uses finals standings for the before and after ranks of a finals result", async () => {
+    const event = eventFixture();
+    event.finals = [{
+      id: "final-m01-h01",
+      phase: "final",
+      matchNumber: 1,
+      heatNumber: 1,
+      lanes: ["car-01", "car-02", "car-03"],
+      status: "scheduled",
+      winnerEntryId: null,
+      laneTimesMs: [null, null, null],
+      notes: "Final round",
+    }];
+    await repository.save(event, bootstrapRevision());
+    const dispatcher = createCommandDispatcher({
+      repository,
+      now: () => "2026-08-14T01:02:03.000Z",
+      createId: () => "command-final-result",
+    });
+
+    const receipt = await dispatcher.dispatch({
+      type: "result.record-winner",
+      heatId: "final-m01-h01",
+      carId: "car-02",
+    });
+
+    expect(receipt.previousRanks).toEqual({
+      "car-01": null,
+      "car-02": null,
+      "car-03": null,
+      "car-04": null,
+      "car-05": null,
+      "car-06": null,
+      "car-07": null,
+      "car-08": null,
+      "car-09": null,
+    });
+    expect(receipt.nextRanks).toEqual({
+      "car-01": 2,
+      "car-02": 1,
+      "car-03": 2,
+      "car-04": 2,
+      "car-05": 2,
+      "car-06": 2,
+      "car-07": 2,
+      "car-08": 2,
+      "car-09": 2,
+    });
+  });
+
+  it("includes both unique old and new winners in a correction receipt", async () => {
+    await repository.save(eventFixture(), bootstrapRevision());
+    const dispatcher = createCommandDispatcher({
+      repository,
+      now: () => "2026-08-14T01:02:03.000Z",
+      createId: () => "command-correction",
+    });
+
+    const receipt = await dispatcher.dispatch({
+      type: "result.record-winner",
+      heatId: "pre-m01-h01",
+      carId: "car-02",
+      correctionReason: "Photo finish review",
+    });
+
+    expect(receipt.affectedCarIds).toEqual(["car-01", "car-02"]);
+  });
+
   it.each([
     [
       { type: "heat.cancel" as const, heatId: "pre-m01-h01", reason: "Track obstruction" },
@@ -198,6 +305,8 @@ function ProviderProbe() {
   const {
     state,
     loading,
+    error,
+    postCommitIssue,
     persistenceStatus,
     dispatchEventCommand,
     requestPersistentStorage,
@@ -210,6 +319,8 @@ function ProviderProbe() {
       <p>Event: {state?.event.name ?? "none"}</p>
       <p>Winner: {state?.matches.find(({ id }) => id === "pre-m02-h03")?.winnerEntryId ?? "none"}</p>
       <p>Storage: {persistenceStatus}</p>
+      <p>Error: {error ?? "none"}</p>
+      <p>Post-commit issue: {postCommitIssue?.message ?? "none"}</p>
       <p>Receipt: {receipt}</p>
       <button
         type="button"
@@ -218,7 +329,10 @@ function ProviderProbe() {
             type: "result.record-winner",
             heatId: "pre-m02-h03",
             carId: "car-03",
-          }).then((result) => setReceipt(result.summary));
+          }).then(
+            (result) => setReceipt(`Committed: ${result.summary}`),
+            (cause: unknown) => setReceipt(`Rejected: ${cause instanceof Error ? cause.message : "unknown"}`),
+          );
         }}
       >
         Record winner
@@ -254,7 +368,7 @@ describe("EventProvider", () => {
 
     await user.click(screen.getByRole("button", { name: "Record winner" }));
     await screen.findByText("Winner: car-03");
-    expect(screen.getByText(/Receipt: Recorded winner car-03/)).toBeTruthy();
+    expect(screen.getByText(/Receipt: Committed: Recorded winner car-03/)).toBeTruthy();
     expect(published).toHaveBeenCalledTimes(1);
     expect((await repository.load())?.matches.find(({ id }) => id === "pre-m02-h03")?.winnerEntryId).toBe(
       "car-03",
@@ -263,6 +377,38 @@ describe("EventProvider", () => {
     await user.click(screen.getByRole("button", { name: "Persist storage" }));
     await waitFor(() => expect(screen.getByText("Storage: granted")).toBeTruthy());
     expect(persist).toHaveBeenCalledTimes(1);
+  });
+
+  it("keeps a committed command successful when snapshot-history refresh fails", async () => {
+    await repository.save(eventFixture(), bootstrapRevision());
+    const originalListSnapshots = repository.listSnapshots.bind(repository);
+    vi.spyOn(repository, "listSnapshots")
+      .mockImplementationOnce(originalListSnapshots)
+      .mockRejectedValueOnce(new Error("Snapshot history refresh failed"));
+    const published = vi.fn();
+    const user = userEvent.setup();
+
+    render(
+      <EventProvider
+        repository={repository}
+        now={() => "2026-08-14T01:00:00.000Z"}
+        createId={() => "provider-history-failure"}
+        publishCommittedEvent={published}
+      >
+        <ProviderProbe />
+      </EventProvider>,
+    );
+    await screen.findByText("Event: Nine-Car Community Demo");
+
+    await user.click(screen.getByRole("button", { name: "Record winner" }));
+
+    await screen.findByText("Winner: car-03");
+    expect(screen.getByText(/Receipt: Committed: Recorded winner car-03/)).toBeTruthy();
+    expect(screen.getByText("Error: none")).toBeTruthy();
+    expect(screen.getByText("Post-commit issue: Snapshot history refresh failed")).toBeTruthy();
+    expect(published).toHaveBeenCalledTimes(1);
+    expect((await database.liveEvents.get("current"))?.event.matches
+      .find(({ id }) => id === "pre-m02-h03")?.winnerEntryId).toBe("car-03");
   });
 
   it("does not publish a failed provider command", async () => {

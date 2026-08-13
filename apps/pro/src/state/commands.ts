@@ -28,11 +28,18 @@ export type EventCommand =
 
 export type PublishCommittedEvent = (event: EventStateV1, receipt: CommandReceipt) => void;
 
-type CommandDispatcherOptions = {
+export type PostCommitIssue = {
+  commandId: string;
+  area: "state-readback" | "snapshot-history";
+  message: string;
+};
+
+export type CommandDispatcherOptions = {
   repository: EventRepository;
   now?: () => string;
   createId?: () => string;
   publish?: PublishCommittedEvent;
+  onPostCommitIssue?: (issue: PostCommitIssue) => void;
 };
 
 export class CommandAlreadyPendingError extends Error {
@@ -53,12 +60,14 @@ class TransactionalCommandDispatcher implements CommandDispatcher {
   private readonly now: () => string;
   private readonly createId: () => string;
   private readonly publish?: PublishCommittedEvent;
+  private readonly onPostCommitIssue?: (issue: PostCommitIssue) => void;
 
   constructor(options: CommandDispatcherOptions) {
     this.repository = options.repository;
     this.now = options.now ?? (() => new Date().toISOString());
     this.createId = options.createId ?? createCommandId;
     this.publish = options.publish;
+    this.onPostCommitIssue = options.onPostCommitIssue;
   }
 
   get pending(): boolean {
@@ -79,14 +88,15 @@ class TransactionalCommandDispatcher implements CommandDispatcher {
     const current = await this.repository.load();
     const commandId = this.createId();
     const timestamp = this.now();
-    const previousRanks = current ? rankMap(current) : {};
+    const rankingPhase = rankingPhaseForCommand(current, command);
+    const previousRanks = current ? rankMap(current, rankingPhase) : {};
     const { event: candidate, affectedCarIds, summary, undoable } = applyCommand(
       current,
       command,
       commandId,
       timestamp,
     );
-    const nextRanks = rankMap(candidate);
+    const nextRanks = rankMap(candidate, rankingPhase);
     const receipt: CommandReceipt = {
       commandId,
       timestamp,
@@ -98,10 +108,35 @@ class TransactionalCommandDispatcher implements CommandDispatcher {
     };
 
     await this.repository.save(candidate, { commandId, timestamp, summary });
-    const committed = await this.repository.load();
-    if (!committed) throw new Error("Committed event could not be read back");
+    let committed = candidate;
+    try {
+      const readBack = await this.repository.load();
+      if (readBack) {
+        committed = readBack;
+      } else {
+        this.reportPostCommitIssue({
+          commandId,
+          area: "state-readback",
+          message: "Committed event could not be read back",
+        });
+      }
+    } catch (cause) {
+      this.reportPostCommitIssue({
+        commandId,
+        area: "state-readback",
+        message: toSafeErrorMessage(cause, "Committed event read-back failed"),
+      });
+    }
     this.publish?.(committed, receipt);
     return receipt;
+  }
+
+  private reportPostCommitIssue(issue: PostCommitIssue): void {
+    try {
+      this.onPostCommitIssue?.(issue);
+    } catch {
+      // An advisory issue reporter cannot turn a committed command into a failure.
+    }
   }
 }
 
@@ -142,17 +177,17 @@ function applyCommand(
   timestamped.event.updatedAt = timestamp;
 
   if (command.type === "result.record-winner") {
+    const previousWinner = requireHeat(timestamped, command.heatId).winnerEntryId;
     const event = recordWinner(timestamped, command.heatId, command.carId, command.correctionReason);
     return {
       event,
-      affectedCarIds: [command.carId],
+      affectedCarIds: uniqueCarIds(previousWinner, command.carId),
       summary: requireLatestAuditSummary(event),
       undoable: true,
     };
   }
 
-  const heat = [...timestamped.matches, ...timestamped.finals].find(({ id }) => id === command.heatId);
-  if (!heat) throw new Error(`Unknown heat ID: ${command.heatId}`);
+  const heat = requireHeat(timestamped, command.heatId);
   const affectedCarIds = heat.lanes.filter((carId): carId is string => carId !== null);
   if (command.type === "heat.cancel") {
     const event = cancelHeat(timestamped, command.heatId, command.reason);
@@ -162,15 +197,36 @@ function applyCommand(
   return { event, affectedCarIds, summary: requireLatestAuditSummary(event), undoable: true };
 }
 
-function rankMap(event: EventStateV1): Record<string, number | null> {
+function rankingPhaseForCommand(
+  current: EventStateV1 | null,
+  command: EventCommand,
+): "preliminary" | "final" {
+  if (!current || command.type === "event.replace") return "preliminary";
+  return requireHeat(current, command.heatId).phase;
+}
+
+function rankMap(
+  event: EventStateV1,
+  phase: "preliminary" | "final",
+): Record<string, number | null> {
   try {
-    const standings = calculateStandings(event, "preliminary");
+    const standings = calculateStandings(event, phase);
     return Object.fromEntries(
       calculateRankings(standings, event.settings).map(({ carId, rank }) => [carId, rank]),
     );
   } catch {
     return Object.fromEntries(event.entries.filter(({ active }) => active).map(({ id }) => [id, null]));
   }
+}
+
+function requireHeat(event: EventStateV1, heatId: string) {
+  const heat = [...event.matches, ...event.finals].find(({ id }) => id === heatId);
+  if (!heat) throw new Error(`Unknown heat ID: ${heatId}`);
+  return heat;
+}
+
+function uniqueCarIds(...carIds: Array<string | null>): string[] {
+  return [...new Set(carIds.filter((carId): carId is string => carId !== null))];
 }
 
 function requireLatestAuditSummary(event: EventStateV1): string {
@@ -206,6 +262,10 @@ function addSeconds(timestamp: string, seconds: number): string {
   const milliseconds = Date.parse(timestamp);
   if (!Number.isFinite(milliseconds)) throw new Error("Command timestamp must be valid ISO date text");
   return new Date(milliseconds + seconds * 1_000).toISOString();
+}
+
+function toSafeErrorMessage(cause: unknown, fallback: string): string {
+  return cause instanceof Error ? cause.message : fallback;
 }
 
 let fallbackIdSequence = 0;
