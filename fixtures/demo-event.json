@@ -1,0 +1,72 @@
+{
+  "version": 1,
+  "event": {
+    "id": "event-demo-nine-car",
+    "name": "Nine-Car Community Demo",
+    "date": "2026-08-13",
+    "venue": "Round Robin Community Hall",
+    "organizer": "Demo Race Crew",
+    "laneCount": 3,
+    "status": "running",
+    "createdAt": "2026-08-13T01:00:00.000Z",
+    "updatedAt": "2026-08-13T02:30:00.000Z",
+    "resultSeal": "provisional"
+  },
+  "settings": {
+    "scheduleMode": "template9",
+    "seed": "canonical-demo-v1",
+    "rankingMode": "competition",
+    "allowSharedRanks": true,
+    "tieBreakOrder": ["totalWins", "headToHead", "matchesWon", "playoff"],
+    "finalistCount": 3,
+    "autoSave": true,
+    "confirmWinnerChanges": true,
+    "enableTiming": true,
+    "prices": { "standard": 1200 }
+  },
+  "participants": [
+    { "id": "participant-01", "name": "Sample 01 - Ada", "email": "ada@example.test", "phone": "", "notes": "Paid example" },
+    { "id": "participant-02", "name": "Sample 02 - Ben", "email": "ben@example.test", "phone": "", "notes": "Partial-payment example" },
+    { "id": "participant-03", "name": "Sample 03 - Cleo", "email": "cleo@example.test", "phone": "", "notes": "Unpaid example" },
+    { "id": "participant-04", "name": "Sample 04 - Dev", "email": "", "phone": "", "notes": "Demo participant" },
+    { "id": "participant-05", "name": "Sample 05 - Emi", "email": "", "phone": "", "notes": "Demo participant" },
+    { "id": "participant-06", "name": "Sample 06 - Finn", "email": "", "phone": "", "notes": "Demo participant" },
+    { "id": "participant-07", "name": "Sample 07 - Gia", "email": "", "phone": "", "notes": "Tied leader example" },
+    { "id": "participant-08", "name": "Sample 08 - Hugo", "email": "", "phone": "", "notes": "Demo participant" },
+    { "id": "participant-09", "name": "Sample 09 - Inez", "email": "", "phone": "", "notes": "Demo participant" }
+  ],
+  "entries": [
+    { "id": "car-01", "participantId": "participant-01", "carNumber": 1, "name": "Sample Car 01", "categoryId": "standard", "quantity": 1, "active": true },
+    { "id": "car-02", "participantId": "participant-02", "carNumber": 2, "name": "Sample Car 02", "categoryId": "standard", "quantity": 1, "active": true },
+    { "id": "car-03", "participantId": "participant-03", "carNumber": 3, "name": "Sample Car 03", "categoryId": "standard", "quantity": 1, "active": true },
+    { "id": "car-04", "participantId": "participant-04", "carNumber": 4, "name": "Sample Car 04", "categoryId": "standard", "quantity": 1, "active": true },
+    { "id": "car-05", "participantId": "participant-05", "carNumber": 5, "name": "Sample Car 05", "categoryId": "standard", "quantity": 1, "active": true },
+    { "id": "car-06", "participantId": "participant-06", "carNumber": 6, "name": "Sample Car 06", "categoryId": "standard", "quantity": 1, "active": true },
+    { "id": "car-07", "participantId": "participant-07", "carNumber": 7, "name": "Sample Car 07", "categoryId": "standard", "quantity": 1, "active": true },
+    { "id": "car-08", "participantId": "participant-08", "carNumber": 8, "name": "Sample Car 08", "categoryId": "standard", "quantity": 1, "active": true },
+    { "id": "car-09", "participantId": "participant-09", "carNumber": 9, "name": "Sample Car 09", "categoryId": "standard", "quantity": 1, "active": true }
+  ],
+  "matches": [
+    { "id": "pre-m01-h01", "phase": "preliminary", "matchNumber": 1, "heatNumber": 1, "lanes": ["car-01", "car-02", "car-03"], "status": "completed", "winnerEntryId": "car-01", "laneTimesMs": [1180, 1240, 1290], "notes": "Completed demo heat" },
+    { "id": "pre-m01-h02", "phase": "preliminary", "matchNumber": 1, "heatNumber": 2, "lanes": ["car-04", "car-05", "car-06"], "status": "completed", "winnerEntryId": "car-04", "laneTimesMs": [1210, 1250, 1280], "notes": "Completed demo heat" },
+    { "id": "pre-m01-h03", "phase": "preliminary", "matchNumber": 1, "heatNumber": 3, "lanes": ["car-07", "car-08", "car-09"], "status": "completed", "winnerEntryId": "car-07", "laneTimesMs": [1170, 1230, 1300], "notes": "Completed demo heat" },
+    { "id": "pre-m02-h01", "phase": "preliminary", "matchNumber": 2, "heatNumber": 1, "lanes": ["car-01", "car-04", "car-07"], "status": "completed", "winnerEntryId": "car-01", "laneTimesMs": [1160, 1200, 1190], "notes": "Creates a visible two-win tie" },
+    { "id": "pre-m02-h02", "phase": "preliminary", "matchNumber": 2, "heatNumber": 2, "lanes": ["car-02", "car-05", "car-08"], "status": "completed", "winnerEntryId": "car-05", "laneTimesMs": [1270, 1210, 1260], "notes": "Completed demo heat" },
+    { "id": "pre-m02-h03", "phase": "preliminary", "matchNumber": 2, "heatNumber": 3, "lanes": ["car-03", "car-06", "car-09"], "status": "scheduled", "winnerEntryId": null, "laneTimesMs": [null, null, null], "notes": "Next incomplete heat" },
+    { "id": "pre-m03-h01", "phase": "preliminary", "matchNumber": 3, "heatNumber": 1, "lanes": ["car-01", "car-08", "car-06"], "status": "scheduled", "winnerEntryId": null, "laneTimesMs": [null, null, null], "notes": "Incomplete demo heat" },
+    { "id": "pre-m03-h02", "phase": "preliminary", "matchNumber": 3, "heatNumber": 2, "lanes": ["car-04", "car-02", "car-09"], "status": "scheduled", "winnerEntryId": null, "laneTimesMs": [null, null, null], "notes": "Incomplete demo heat" },
+    { "id": "pre-m03-h03", "phase": "preliminary", "matchNumber": 3, "heatNumber": 3, "lanes": ["car-07", "car-05", "car-03"], "status": "completed", "winnerEntryId": "car-07", "laneTimesMs": [1150, 1220, 1280], "notes": "Creates a visible two-win tie" },
+    { "id": "pre-m04-h01", "phase": "preliminary", "matchNumber": 4, "heatNumber": 1, "lanes": ["car-01", "car-05", "car-09"], "status": "scheduled", "winnerEntryId": null, "laneTimesMs": [null, null, null], "notes": "Incomplete demo heat" },
+    { "id": "pre-m04-h02", "phase": "preliminary", "matchNumber": 4, "heatNumber": 2, "lanes": ["car-04", "car-08", "car-03"], "status": "scheduled", "winnerEntryId": null, "laneTimesMs": [null, null, null], "notes": "Incomplete demo heat" },
+    { "id": "pre-m04-h03", "phase": "preliminary", "matchNumber": 4, "heatNumber": 3, "lanes": ["car-07", "car-02", "car-06"], "status": "scheduled", "winnerEntryId": null, "laneTimesMs": [null, null, null], "notes": "Incomplete demo heat" }
+  ],
+  "finals": [],
+  "payments": [
+    { "id": "payment-paid-01", "participantId": "participant-01", "amountCents": 1200, "kind": "payment", "paidAt": "2026-08-13T01:15:00.000Z", "note": "Paid in full example" },
+    { "id": "payment-partial-02", "participantId": "participant-02", "amountCents": 600, "kind": "payment", "paidAt": "2026-08-13T01:20:00.000Z", "note": "Partial payment example" }
+  ],
+  "auditLog": [
+    { "id": "audit-demo-created", "timestamp": "2026-08-13T01:00:00.000Z", "action": "event.created", "summary": "Canonical demo event created", "entityType": "event", "entityId": "event-demo-nine-car", "details": { "fixture": true } },
+    { "id": "audit-results-entered", "timestamp": "2026-08-13T02:30:00.000Z", "action": "results.demo-entered", "summary": "Mixed demo heat results entered", "entityType": "event", "entityId": "event-demo-nine-car", "details": { "completedHeatCount": 6, "incompleteHeatCount": 6 } }
+  ]
+}
