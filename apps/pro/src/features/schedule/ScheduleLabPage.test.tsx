@@ -3,11 +3,11 @@ import "fake-indexeddb/auto";
 import { cleanup, render, screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
-import { validateEventState, type EventStateV1 } from "@rr3/domain";
+import { analyseSchedule, validateEventState, type EventStateV1, type Heat } from "@rr3/domain";
 import { createProDatabase, type ProDatabase } from "../../persistence/db";
 import { EventRepository } from "../../persistence/repository";
 import { EventProvider } from "../../state/EventProvider";
-import { ScheduleLabPage } from "./ScheduleLabPage";
+import { QualitySummary, ScheduleLabPage } from "./ScheduleLabPage";
 
 let database: ProDatabase;
 let repository: EventRepository;
@@ -218,9 +218,9 @@ describe("ScheduleLabPage", () => {
     renderPage();
     const candidate = await buildNineCarPreset(user);
 
-    expect(within(candidate).getByText("Certified optimal")).toBeTruthy();
-    expect(within(candidate).getByText(/Repeat excess 0 · lower bound 0 · gap 0/)).toBeTruthy();
-    expect(within(candidate).getByText(/Maximum pair frequency 1 · lower bound 1 · gap 0/)).toBeTruthy();
+    expect(within(candidate).getByRole("heading", { name: "Valid" })).toBeTruthy();
+    expect(within(candidate).getByText(/Repeat excess: Certified optimal · actual 0 · lower bound 0 · gap 0/)).toBeTruthy();
+    expect(within(candidate).getByText(/Maximum pair frequency: Certified optimal · actual 1 · lower bound 1 · gap 0/)).toBeTruthy();
     expect(within(candidate).getByText(/Appearance imbalance 0/)).toBeTruthy();
     expect(within(candidate).getByText(/Worst repeat burden 0/)).toBeTruthy();
     expect(within(candidate).getByText(/Bye assignments 0 · two-car participations 0/)).toBeTruthy();
@@ -236,6 +236,42 @@ describe("ScheduleLabPage", () => {
     const carOne = within(laneTable).getByRole("row", { name: /Car 1/ });
     expect(carOne.textContent).toMatch(/4.*0.*0.*4/);
     expect(within(candidate).getByText(/Maximum lane spread 4/)).toBeTruthy();
+  });
+
+  it("scopes optimality to each objective when only repeat excess reaches its lower bound", () => {
+    const groups = [
+      [["car-1", "car-2", "car-3"], ["car-4", "car-5", "car-6"]],
+      [["car-1", "car-2", "car-4"], ["car-3", "car-5", "car-6"]],
+      [["car-1", "car-2", "car-5"], ["car-3", "car-4", "car-6"]],
+      [["car-1", "car-2", "car-6"], ["car-3", "car-4", "car-5"]],
+    ] as const;
+    const heats: Heat[] = groups.flatMap((match, matchIndex) => match.map((lanes, heatIndex) => ({
+      id: `mixed-gap-m${matchIndex + 1}-h${heatIndex + 1}`,
+      phase: "preliminary" as const,
+      matchNumber: matchIndex + 1,
+      heatNumber: heatIndex + 1,
+      lanes: [...lanes],
+      status: "scheduled" as const,
+      winnerEntryId: null,
+      laneTimesMs: [null, null, null],
+      notes: "",
+    })));
+    const quality = analyseSchedule(heats, Array.from({ length: 6 }, (_, index) => `car-${index + 1}`));
+
+    expect(quality).toMatchObject({
+      status: "valid",
+      repeatExcessGap: 0,
+      maximumPairFrequency: 4,
+      maximumPairFrequencyLowerBound: 2,
+      maximumPairFrequencyGap: 2,
+    });
+    render(<QualitySummary quality={quality} />);
+
+    const certificate = screen.getByRole("region", { name: "Schedule quality certificate" });
+    expect(within(certificate).getByRole("heading", { name: "Valid" })).toBeTruthy();
+    expect(within(certificate).queryByRole("heading", { name: "Certified optimal" })).toBeNull();
+    expect(within(certificate).getByText("Repeat excess: Certified optimal · actual 9 · lower bound 9 · gap 0")).toBeTruthy();
+    expect(within(certificate).getByText("Maximum pair frequency: Best found · actual 4 · lower bound 2 · gap 2")).toBeTruthy();
   });
 
   it("labels a warning-bearing valid schedule as Valid with warnings", async () => {

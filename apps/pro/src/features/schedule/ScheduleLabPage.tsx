@@ -204,9 +204,14 @@ export function ScheduleLabPage() {
   );
 }
 
-function QualitySummary({ quality }: { quality: ScheduleQualityReport }) {
-  const status = quality.status === "invalid" ? "Invalid" : quality.status === "valid-with-warnings" ? "Valid with warnings" : quality.opponentQualityStatus === "certified-optimal" ? "Certified optimal" : "Valid best found";
-  return <section className="quality-summary" aria-label="Schedule quality certificate"><h4>{status}</h4><p>Repeat excess {quality.repeatedOpponentCount} · lower bound {quality.repeatExcessLowerBound} · gap {quality.repeatExcessGap}</p><p>Maximum pair frequency {quality.maximumPairFrequency} · lower bound {quality.maximumPairFrequencyLowerBound} · gap {quality.maximumPairFrequencyGap}</p><p>Appearance imbalance {quality.appearanceImbalance} · Worst repeat burden {quality.worstPerCarRepeatBurden}</p><p>Squared repeat burden {quality.squaredRepeatBurden} · squared pair frequency {quality.squaredPairFrequency}</p><p>Bye assignments {sum(quality.byeCounts)} · two-car participations {sum(quality.twoCarHeatCounts)}</p>{quality.warnings.map((warning) => <p className="warning-text" key={warning}>{warning}</p>)}{quality.errors.map((error) => <p className="inline-error" key={error}>{error}</p>)}</section>;
+export function QualitySummary({ quality }: { quality: ScheduleQualityReport }) {
+  const status = quality.status === "invalid" ? "Invalid" : quality.status === "valid-with-warnings" ? "Valid with warnings" : "Valid";
+  return <section className="quality-summary" aria-label="Schedule quality certificate"><h4>{status}</h4><p>Repeat excess: {objectiveCertificate(quality.repeatExcessGap, quality.status)} · actual {quality.repeatedOpponentCount} · lower bound {quality.repeatExcessLowerBound} · gap {quality.repeatExcessGap}</p><p>Maximum pair frequency: {objectiveCertificate(quality.maximumPairFrequencyGap, quality.status)} · actual {quality.maximumPairFrequency} · lower bound {quality.maximumPairFrequencyLowerBound} · gap {quality.maximumPairFrequencyGap}</p><p>Appearance imbalance {quality.appearanceImbalance} · Worst repeat burden {quality.worstPerCarRepeatBurden}</p><p>Squared repeat burden {quality.squaredRepeatBurden} · squared pair frequency {quality.squaredPairFrequency}</p><p>Bye assignments {sum(quality.byeCounts)} · two-car participations {sum(quality.twoCarHeatCounts)}</p>{quality.warnings.map((warning) => <p className="warning-text" key={warning}>{warning}</p>)}{quality.errors.map((error) => <p className="inline-error" key={error}>{error}</p>)}</section>;
+}
+
+function objectiveCertificate(gap: number, status: ScheduleQualityReport["status"]): string {
+  if (status === "invalid") return "Not certified";
+  return gap === 0 ? "Certified optimal" : "Best found";
 }
 
 function HeatPreview({ heats, carNames }: { heats: readonly Heat[]; carNames: ReadonlyMap<string, string> }) {
