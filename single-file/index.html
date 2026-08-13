@@ -526,7 +526,7 @@
         return label;
       }
       function selectField(labelText, id, options, value = '') {
-        const select = element('select', { attributes: { id, name: id, 'aria-label': labelText } });
+        const select = element('select', { attributes: { id, name: id, 'aria-label': labelText, 'aria-describedby': `${id}-error` } });
         options.forEach(([optionValue, text]) => {
           const option = element('option', { text, attributes: { value: optionValue } });
           if (optionValue === value) option.selected = true;
@@ -717,10 +717,10 @@
         announce('Saving locally…');
         saveTimer = setTimeout(() => saveNow(true), 180);
       }
-      function meaningfulChange(summary, entityType = 'event', entityId = null) {
+      function meaningfulChange(summary, entityType = 'event', entityId = null, details = {}) {
         if (!eventState) return;
         eventState.event.updatedAt = nowIso();
-        eventState.auditLog.push({ id: createStableId('audit'), timestamp: eventState.event.updatedAt, action: summary.toLowerCase().replace(/\s+/g, '.'), summary, entityType, entityId, details: {} });
+        eventState.auditLog.push({ id: createStableId('audit'), timestamp: eventState.event.updatedAt, action: summary.toLowerCase().replace(/\s+/g, '.'), summary, entityType, entityId, details });
         if (location.protocol === 'file:') meaningfulFileChange = true;
         scheduleSave();
       }
@@ -859,11 +859,11 @@
         appendWorkspaceHeader(container, 'Entrants and accounts', 'Registration & Fees', eventState ? 'One canonical register drives contact records, cars, fees, and payment balances.' : 'Create an event before registering participants.');
         if (!eventState) { container.append(element('div', { className: 'notice', text: 'Create a real event or load the separate demo first.' })); return; }
         appendStatus(container);
-        const participantPanel = element('section', { className: 'panel panel-section' }, [element('h3', { text: 'Add participant' }), element('div', { className: 'form-grid' }, [field('Participant name', 'participant-name', '', { maxlength: 200 }), field('Email', 'participant-email', '', { type: 'email', maxlength: 320 }), field('Phone', 'participant-phone', '', { maxlength: 64 }), field('Participant notes', 'participant-notes', '', { tag: 'textarea', maxlength: 2000 })]), element('p', { className: 'field-error', attributes: { id: 'participant-form-error', role: 'alert', 'aria-live': 'assertive' } }), element('div', { className: 'action-row' }, [button('Add participant', 'add-participant', 'primary-action')])]);
+        const participantPanel = element('section', { className: 'panel panel-section' }, [element('h3', { text: 'Add participant' }), element('div', { className: 'form-grid' }, [field('Participant name', 'participant-name', '', { maxlength: 200 }), field('Email', 'participant-email', '', { type: 'email', maxlength: 320 }), field('Phone', 'participant-phone', '', { maxlength: 64 }), field('Participant notes', 'participant-notes', '', { tag: 'textarea', maxlength: 2000 })]), element('p', { className: 'field-error', attributes: { id: 'participant-form-error' } }), element('div', { className: 'action-row' }, [button('Add participant', 'add-participant', 'primary-action')])]);
         const participantOptions = [['', 'Select participant'], ...eventState.participants.map((participant) => [participant.id, participant.name])];
         const categoryOptions = [['', 'Select category'], ...Object.keys(eventState.settings.prices).map((id) => [id, `${categoryLabel(id)} — ${money(eventState.settings.prices[id])}`])];
-        const carPanel = element('section', { className: 'panel panel-section' }, [element('h3', { text: 'Add car entry' }), element('div', { className: 'form-grid' }, [selectField('Participant for car', 'car-participant', participantOptions, lastCarParticipant), field('Car number', 'car-number', '', { type: 'number', min: 1, step: 1 }), field('Car name', 'car-name', '', { maxlength: 200 }), selectField('Category', 'car-category', categoryOptions, lastCarCategory), field('Entry quantity', 'car-quantity', '1', { type: 'number', min: 1, step: 1 })]), element('p', { className: 'field-error', attributes: { id: 'car-form-error', role: 'alert', 'aria-live': 'assertive' } }), element('div', { className: 'action-row' }, [button('Add car', 'add-car', 'primary-action')])]);
-        const paymentPanel = element('section', { className: 'panel panel-section' }, [element('h3', { text: 'Record payment or refund' }), element('div', { className: 'form-grid' }, [selectField('Payment participant', 'payment-participant', participantOptions, lastPaymentParticipant), selectField('Transaction type', 'payment-kind', [['payment', 'Payment'], ['refund', 'Refund']], lastPaymentKind), field('Amount in cents', 'payment-amount', '', { type: 'number', min: 0, step: 1 }), field('Payment reference', 'payment-reference', '', { maxlength: 500 })]), element('p', { className: 'field-error', attributes: { id: 'payment-form-error', role: 'alert', 'aria-live': 'assertive' } }), element('div', { className: 'action-row' }, [button('Record payment', 'add-payment', 'primary-action')])]);
+        const carPanel = element('section', { className: 'panel panel-section' }, [element('h3', { text: 'Add car entry' }), element('div', { className: 'form-grid' }, [selectField('Participant for car', 'car-participant', participantOptions, lastCarParticipant), field('Car number', 'car-number', '', { type: 'number', min: 1, step: 1 }), field('Car name', 'car-name', '', { maxlength: 200 }), selectField('Category', 'car-category', categoryOptions, lastCarCategory), field('Entry quantity', 'car-quantity', '1', { type: 'number', min: 1, step: 1 })]), element('p', { className: 'field-error', attributes: { id: 'car-form-error' } }), element('div', { className: 'action-row' }, [button('Add car', 'add-car', 'primary-action')])]);
+        const paymentPanel = element('section', { className: 'panel panel-section' }, [element('h3', { text: 'Record payment or refund' }), element('div', { className: 'form-grid' }, [selectField('Payment participant', 'payment-participant', participantOptions, lastPaymentParticipant), selectField('Transaction type', 'payment-kind', [['payment', 'Payment'], ['refund', 'Refund']], lastPaymentKind), field('Amount in cents', 'payment-amount', '', { type: 'number', min: 0, step: 1 }), field('Payment reference', 'payment-reference', '', { maxlength: 500 })]), element('p', { className: 'field-error', attributes: { id: 'payment-form-error' } }), element('div', { className: 'action-row' }, [button('Record payment', 'add-payment', 'primary-action')])]);
         container.append(participantPanel, renderParticipants(), carPanel, paymentPanel, renderPayments(), renderAccounts(), renderCars());
       }
       function renderParticipants() {
@@ -922,25 +922,51 @@
         input.setAttribute('aria-invalid', 'true'); input.setAttribute('aria-describedby', errorId);
         if (error) { error.textContent = message; error.setAttribute('role', 'alert'); error.setAttribute('aria-live', 'assertive'); }
       }
+      function clearValidation(inputIds, formErrorId = '') {
+        inputIds.forEach((inputId) => {
+          const input = document.getElementById(inputId); const error = document.getElementById(`${inputId}-error`);
+          if (input) { input.removeAttribute('aria-invalid'); input.setAttribute('aria-describedby', `${inputId}-error`); }
+          if (error) { error.textContent = ''; error.removeAttribute('role'); error.removeAttribute('aria-live'); }
+        });
+        const formError = formErrorId ? document.getElementById(formErrorId) : null;
+        if (formError) { formError.textContent = ''; formError.removeAttribute('role'); formError.removeAttribute('aria-live'); }
+      }
+      function setFormAlert(errorId, message) {
+        const error = document.getElementById(errorId); if (!error) return;
+        error.textContent = message; error.setAttribute('role', 'alert'); error.setAttribute('aria-live', 'assertive');
+      }
       function addParticipant() {
         const name = document.getElementById('participant-name').value.trim(); const email = document.getElementById('participant-email').value.trim(); const phone = document.getElementById('participant-phone').value.trim(); const notes = document.getElementById('participant-notes').value.trim();
-        let error = ''; if (!name) error = 'Participant name is required.'; else if (name.length > 200 || email.length > 320 || phone.length > 64 || notes.length > 2000) error = 'One or more participant fields are too long.';
-        if (error) { setFormError('participant-form-error', ['participant-name', 'participant-email', 'participant-phone', 'participant-notes'], error); return; }
+        clearValidation(['participant-name', 'participant-email', 'participant-phone', 'participant-notes'], 'participant-form-error'); let invalid = false;
+        if (!name || name.length > 200) { setFieldError('participant-name', !name ? 'Participant name is required.' : 'Participant name must be 200 characters or fewer.'); invalid = true; }
+        if (email.length > 320) { setFieldError('participant-email', 'Email must be 320 characters or fewer.'); invalid = true; }
+        if (phone.length > 64) { setFieldError('participant-phone', 'Phone must be 64 characters or fewer.'); invalid = true; }
+        if (notes.length > 2000) { setFieldError('participant-notes', 'Notes must be 2000 characters or fewer.'); invalid = true; }
+        if (invalid) return;
         const id = createStableId('participant'); eventState.participants.push({ id, name, email, phone, notes }); meaningfulChange('Participant added', 'participant', id); renderView('registration');
       }
       function addCar() {
-        const participantId = document.getElementById('car-participant').value; const carNumber = Number(document.getElementById('car-number').value); const name = document.getElementById('car-name').value.trim(); const categoryId = document.getElementById('car-category').value; const quantity = Number(document.getElementById('car-quantity').value); let error = '';
-        if (!participantId) error = 'Choose a participant.'; else if (!isSafeWhole(carNumber, 1)) error = 'Car number must be a positive whole number.'; else if (eventState.entries.some((entry) => entry.active && entry.carNumber === carNumber)) error = `Active car number ${carNumber} is already in use.`; else if (!name || name.length > 200) error = 'Car name is required and must be 200 characters or fewer.'; else if (!Object.hasOwn(eventState.settings.prices, categoryId)) error = 'Choose a category with a current price.'; else if (!isSafeWhole(quantity, 1)) error = 'Quantity must be a positive whole number.';
-        if (!error) { try { const candidate = cloneValue(eventState); candidate.entries.push({ id: 'candidate', participantId, carNumber, name, categoryId, quantity, active: true }); calculateAccountsForState(candidate); } catch (caught) { error = sanitizeError(caught); } }
-        if (error) { setFormError('car-form-error', ['car-participant', 'car-number', 'car-name', 'car-category', 'car-quantity'], error); return; }
+        const participantId = document.getElementById('car-participant').value; const carNumber = Number(document.getElementById('car-number').value); const name = document.getElementById('car-name').value.trim(); const categoryId = document.getElementById('car-category').value; const quantity = Number(document.getElementById('car-quantity').value); let invalid = false;
+        clearValidation(['car-participant', 'car-number', 'car-name', 'car-category', 'car-quantity'], 'car-form-error');
+        if (!eventState.participants.some((participant) => participant.id === participantId)) { setFieldError('car-participant', 'Choose a registered participant.'); invalid = true; }
+        if (!isSafeWhole(carNumber, 1) || eventState.entries.some((entry) => entry.active && entry.carNumber === carNumber)) { setFieldError('car-number', !isSafeWhole(carNumber, 1) ? 'Car number must be a positive whole number.' : `Active car number ${carNumber} is already in use.`); invalid = true; }
+        if (!name || name.length > 200) { setFieldError('car-name', 'Car name is required and must be 200 characters or fewer.'); invalid = true; }
+        if (!Object.hasOwn(eventState.settings.prices, categoryId)) { setFieldError('car-category', 'Choose a category with a current price.'); invalid = true; }
+        if (!isSafeWhole(quantity, 1)) { setFieldError('car-quantity', 'Quantity must be a positive whole number.'); invalid = true; }
+        if (invalid) return;
+        try { const candidate = cloneValue(eventState); candidate.entries.push({ id: 'candidate', participantId, carNumber, name, categoryId, quantity, active: true }); calculateAccountsForState(candidate); } catch (caught) { setFormAlert('car-form-error', sanitizeError(caught)); return; }
         lastCarParticipant = participantId; lastCarCategory = categoryId;
         const id = createStableId('car'); eventState.entries.push({ id, participantId, carNumber, name, categoryId, quantity, active: true }); meaningfulChange('Car entry added', 'entry', id); renderView('registration');
       }
       function addPayment() {
-        const participantId = document.getElementById('payment-participant').value; const kind = document.getElementById('payment-kind').value; const amountCents = Number(document.getElementById('payment-amount').value); const note = document.getElementById('payment-reference').value.trim(); let error = '';
-        if (!participantId) error = 'Choose a participant.'; else if (!isSafeWhole(amountCents)) error = 'Amount must be a non-negative whole number of cents.'; else if (!note) error = 'Payment reference is required.'; else if (note.length > 500) error = 'Payment reference must be 500 characters or fewer.';
-        if (!error) { try { const candidate = cloneValue(eventState); candidate.payments.push({ id: 'candidate', participantId, amountCents, kind, paidAt: nowIso(), note }); calculateAccountsForState(candidate); } catch (caught) { error = sanitizeError(caught); } }
-        if (error) { setFormError('payment-form-error', ['payment-participant', 'payment-kind', 'payment-amount', 'payment-reference'], error); return; }
+        const participantId = document.getElementById('payment-participant').value; const kind = document.getElementById('payment-kind').value; const amountCents = Number(document.getElementById('payment-amount').value); const note = document.getElementById('payment-reference').value.trim(); let invalid = false;
+        clearValidation(['payment-participant', 'payment-kind', 'payment-amount', 'payment-reference'], 'payment-form-error');
+        if (!eventState.participants.some((participant) => participant.id === participantId)) { setFieldError('payment-participant', 'Choose a registered participant.'); invalid = true; }
+        if (!['payment', 'refund'].includes(kind)) { setFieldError('payment-kind', 'Choose payment or refund.'); invalid = true; }
+        if (!isSafeWhole(amountCents)) { setFieldError('payment-amount', 'Amount must be a non-negative whole number of cents.'); invalid = true; }
+        if (!note || note.length > 500) { setFieldError('payment-reference', !note ? 'Payment reference is required.' : 'Payment reference must be 500 characters or fewer.'); invalid = true; }
+        if (invalid) return;
+        try { const candidate = cloneValue(eventState); candidate.payments.push({ id: 'candidate', participantId, amountCents, kind, paidAt: nowIso(), note }); calculateAccountsForState(candidate); } catch (caught) { setFormAlert('payment-form-error', sanitizeError(caught)); return; }
         lastPaymentParticipant = participantId; lastPaymentKind = kind;
         const id = createStableId(kind); eventState.payments.push({ id, participantId, amountCents, kind, paidAt: nowIso(), note }); meaningfulChange(kind === 'refund' ? 'Refund recorded' : 'Payment recorded', 'payment', id); renderView('registration');
       }
@@ -951,7 +977,8 @@
         const row = element('div', { className: 'action-row' }); actions.forEach((item) => row.append(button(item.text, item.action, item.primary ? 'primary-action' : 'secondary-action', item.attributes || {}))); row.append(button('Cancel', 'close-dialog')); inner.append(row); dialog.replaceChildren(inner); dialog.showModal();
       }
       function restoreDialogFocus() { if (dialogReturnFocus && dialogReturnFocus.isConnected) dialogReturnFocus.focus(); dialogReturnFocus = null; }
-      function closeDialog() { const dialog = document.getElementById('app-dialog'); if (dialog.open) dialog.close(); restoreDialogFocus(); }
+      function closeDialog() { pendingCarEdit = null; const dialog = document.getElementById('app-dialog'); if (dialog.open) dialog.close(); restoreDialogFocus(); }
+      function handleDialogClose() { pendingCarEdit = null; restoreDialogFocus(); }
       function editParticipant(id) {
         const participant = eventState.participants.find((item) => item.id === id); if (!participant) return;
         const dialog = document.getElementById('app-dialog'); dialogReturnFocus = document.activeElement;
@@ -960,6 +987,7 @@
       function saveParticipantEdit(id) {
         const participant = eventState.participants.find((item) => item.id === id); if (!participant) return;
         const name = document.getElementById('edit-participant-name').value.trim(); const email = document.getElementById('edit-participant-email').value.trim(); const phone = document.getElementById('edit-participant-phone').value.trim(); const notes = document.getElementById('edit-participant-notes').value.trim(); let invalid = false;
+        clearValidation(['edit-participant-name', 'edit-participant-email', 'edit-participant-phone', 'edit-participant-notes']);
         if (!name || name.length > 200) { setFieldError('edit-participant-name', 'Participant name is required and must be 200 characters or fewer.'); invalid = true; }
         if (email.length > 320) { setFieldError('edit-participant-email', 'Email must be 320 characters or fewer.'); invalid = true; }
         if (phone.length > 64) { setFieldError('edit-participant-phone', 'Phone must be 64 characters or fewer.'); invalid = true; }
@@ -969,44 +997,48 @@
       function editCar(id) {
         const entry = eventState.entries.find((item) => item.id === id); if (!entry) return;
         const heatCount = [...eventState.matches, ...eventState.finals].filter((heat) => heat.lanes.includes(id)).length;
-        const dialog = document.getElementById('app-dialog'); dialogReturnFocus = document.activeElement;
+        const dialog = document.getElementById('app-dialog'); dialogReturnFocus = document.activeElement; pendingCarEdit = null;
         const children = [element('h2', { text: `Edit ${entry.name}`, attributes: { id: 'dialog-title' } })];
         if (heatCount) children.push(element('p', { className: 'notice', text: `Scheduled-impact warning: this car appears in ${heatCount} heats. Stable ID and historical assignments will not change.` }));
-        children.push(field('Edit car number', 'edit-car-number', String(entry.carNumber), { type: 'number', min: 1, step: 1 }), field('Edit car name', 'edit-car-name', entry.name, { maxlength: 200 }), selectField('Edit car category', 'edit-car-category', Object.keys(eventState.settings.prices).map((categoryId) => [categoryId, `${categoryLabel(categoryId)} — ${money(eventState.settings.prices[categoryId])}`]), entry.categoryId), field('Edit entry quantity', 'edit-car-quantity', String(entry.quantity), { type: 'number', min: 1, step: 1 }), element('div', { className: 'action-row' }, [button('Save car', 'save-car-edit', 'primary-action', { 'data-entry-id': id }), button('Cancel', 'close-dialog')]));
+        children.push(selectField('Edit car participant', 'edit-car-participant', eventState.participants.map((participant) => [participant.id, participant.name]), entry.participantId), field('Edit car number', 'edit-car-number', String(entry.carNumber), { type: 'number', min: 1, step: 1 }), field('Edit car name', 'edit-car-name', entry.name, { maxlength: 200 }), selectField('Edit car category', 'edit-car-category', Object.keys(eventState.settings.prices).map((categoryId) => [categoryId, `${categoryLabel(categoryId)} — ${money(eventState.settings.prices[categoryId])}`]), entry.categoryId), field('Edit entry quantity', 'edit-car-quantity', String(entry.quantity), { type: 'number', min: 1, step: 1 }), element('p', { className: 'field-error', attributes: { id: 'edit-car-form-error' } }), element('div', { className: 'action-row' }, [button('Save car', 'save-car-edit', 'primary-action', { 'data-entry-id': id }), button('Cancel', 'close-dialog')]));
         const inner = element('div', { className: 'dialog-inner' }, children);
         dialog.replaceChildren(inner); dialog.showModal();
       }
       function saveCarEdit(id) {
         const entry = eventState.entries.find((item) => item.id === id); if (!entry) return;
-        const carNumber = Number(document.getElementById('edit-car-number').value); const name = document.getElementById('edit-car-name').value.trim(); const categoryId = document.getElementById('edit-car-category').value; const quantity = Number(document.getElementById('edit-car-quantity').value); let invalid = false;
+        const participantId = document.getElementById('edit-car-participant').value; const carNumber = Number(document.getElementById('edit-car-number').value); const name = document.getElementById('edit-car-name').value.trim(); const categoryId = document.getElementById('edit-car-category').value; const quantity = Number(document.getElementById('edit-car-quantity').value); let invalid = false;
+        clearValidation(['edit-car-participant', 'edit-car-number', 'edit-car-name', 'edit-car-category', 'edit-car-quantity'], 'edit-car-form-error');
+        if (!eventState.participants.some((participant) => participant.id === participantId)) { setFieldError('edit-car-participant', 'Choose a registered participant.'); invalid = true; }
         if (!isSafeWhole(carNumber, 1) || (entry.active && eventState.entries.some((item) => item.active && item.id !== id && item.carNumber === carNumber))) { setFieldError('edit-car-number', !isSafeWhole(carNumber, 1) ? 'Car number must be a positive whole number.' : `Active car number ${carNumber} is already in use.`); invalid = true; }
         if (!name || name.length > 200) { setFieldError('edit-car-name', 'Car name is required and must be 200 characters or fewer.'); invalid = true; }
         if (!Object.hasOwn(eventState.settings.prices, categoryId)) { setFieldError('edit-car-category', 'Choose a category with a current price.'); invalid = true; }
         if (!isSafeWhole(quantity, 1)) { setFieldError('edit-car-quantity', 'Quantity must be a positive whole number.'); invalid = true; }
-        if (!invalid) { try { const candidate = cloneValue(eventState); Object.assign(candidate.entries.find((item) => item.id === id), { carNumber, name, categoryId, quantity }); calculateAccountsForState(candidate); } catch (caught) { setFieldError('edit-car-quantity', sanitizeError(caught)); invalid = true; } }
+        if (!invalid) { try { const candidate = cloneValue(eventState); Object.assign(candidate.entries.find((item) => item.id === id), { participantId, carNumber, name, categoryId, quantity }); calculateAccountsForState(candidate); } catch (caught) { setFormAlert('edit-car-form-error', sanitizeError(caught)); invalid = true; } }
         if (invalid) return;
-        pendingCarEdit = { id, carNumber, name, categoryId, quantity };
+        pendingCarEdit = { id, participantId, carNumber, name, categoryId, quantity };
         const heatCount = [...eventState.matches, ...eventState.finals].filter((heat) => heat.lanes.includes(id)).length;
         if (!heatCount) { applyCarEdit(); return; }
         const dialog = document.getElementById('app-dialog'); dialog.replaceChildren(element('div', { className: 'dialog-inner' }, [element('h2', { text: 'Confirm scheduled car correction', attributes: { id: 'dialog-title' } }), element('p', { text: `Scheduled-impact confirmation: this stable-ID car appears in ${heatCount} heats. Existing assignments remain linked to it.` }), element('div', { className: 'action-row' }, [button('Confirm car changes', 'confirm-car-edit', 'primary-action'), button('Cancel', 'close-dialog')])]));
       }
-      function applyCarEdit() { if (!pendingCarEdit) return; const entry = eventState.entries.find((item) => item.id === pendingCarEdit.id); if (!entry) return; const id = entry.id; Object.assign(entry, pendingCarEdit); pendingCarEdit = null; closeDialog(); meaningfulChange('Car entry edited', 'entry', id); renderView('registration'); }
+      function applyCarEdit() { if (!pendingCarEdit) return; const edit = pendingCarEdit; const entry = eventState.entries.find((item) => item.id === edit.id); if (!entry) { pendingCarEdit = null; return; } const id = entry.id; const beforeParticipantId = entry.participantId; Object.assign(entry, edit); pendingCarEdit = null; closeDialog(); meaningfulChange('Car entry edited', 'entry', id, { beforeParticipantId, afterParticipantId: entry.participantId }); renderView('registration'); }
       function editPayment(id) {
         const payment = eventState.payments.find((item) => item.id === id); if (!payment) return;
         const dialog = document.getElementById('app-dialog'); dialogReturnFocus = document.activeElement;
-        dialog.replaceChildren(element('div', { className: 'dialog-inner' }, [element('h2', { text: 'Correct transaction', attributes: { id: 'dialog-title' } }), field('Edit amount in cents', 'edit-payment-amount', String(payment.amountCents), { type: 'number', min: 0, step: 1 }), selectField('Edit transaction type', 'edit-payment-kind', [['payment', 'Payment'], ['refund', 'Refund']], payment.kind), field('Edit payment reference', 'edit-payment-note', payment.note, { maxlength: 500 }), field('Edit paid at', 'edit-payment-paid-at', payment.paidAt, { maxlength: 64 }), field('Correction reason', 'edit-payment-reason', '', { maxlength: 500 }), element('div', { className: 'action-row' }, [button('Save payment correction', 'save-payment-edit', 'primary-action', { 'data-payment-id': id }), button('Cancel', 'close-dialog')])])); dialog.showModal();
+        dialog.replaceChildren(element('div', { className: 'dialog-inner' }, [element('h2', { text: 'Correct transaction', attributes: { id: 'dialog-title' } }), selectField('Edit payment participant', 'edit-payment-participant', eventState.participants.map((participant) => [participant.id, participant.name]), payment.participantId), field('Edit amount in cents', 'edit-payment-amount', String(payment.amountCents), { type: 'number', min: 0, step: 1 }), selectField('Edit transaction type', 'edit-payment-kind', [['payment', 'Payment'], ['refund', 'Refund']], payment.kind), field('Edit payment reference', 'edit-payment-note', payment.note, { maxlength: 500 }), field('Edit paid at', 'edit-payment-paid-at', payment.paidAt, { maxlength: 64 }), field('Correction reason', 'edit-payment-reason', '', { maxlength: 500 }), element('p', { className: 'field-error', attributes: { id: 'edit-payment-form-error' } }), element('div', { className: 'action-row' }, [button('Save payment correction', 'save-payment-edit', 'primary-action', { 'data-payment-id': id }), button('Cancel', 'close-dialog')])])); dialog.showModal();
       }
       function savePaymentEdit(id) {
         const payment = eventState.payments.find((item) => item.id === id); if (!payment) return;
-        const amountCents = Number(document.getElementById('edit-payment-amount').value); const kind = document.getElementById('edit-payment-kind').value; const note = document.getElementById('edit-payment-note').value.trim(); const paidAt = document.getElementById('edit-payment-paid-at').value.trim(); const reason = document.getElementById('edit-payment-reason').value.trim(); let invalid = false;
+        const participantId = document.getElementById('edit-payment-participant').value; const amountCents = Number(document.getElementById('edit-payment-amount').value); const kind = document.getElementById('edit-payment-kind').value; const note = document.getElementById('edit-payment-note').value.trim(); const paidAt = document.getElementById('edit-payment-paid-at').value.trim(); const reason = document.getElementById('edit-payment-reason').value.trim(); let invalid = false;
+        clearValidation(['edit-payment-participant', 'edit-payment-amount', 'edit-payment-kind', 'edit-payment-note', 'edit-payment-paid-at', 'edit-payment-reason'], 'edit-payment-form-error');
+        if (!eventState.participants.some((participant) => participant.id === participantId)) { setFieldError('edit-payment-participant', 'Choose a registered participant.'); invalid = true; }
         if (!isSafeWhole(amountCents)) { setFieldError('edit-payment-amount', 'Amount must be a non-negative whole number of cents.'); invalid = true; }
         if (!['payment', 'refund'].includes(kind)) { setFieldError('edit-payment-kind', 'Choose payment or refund.'); invalid = true; }
         if (note.length > 500) { setFieldError('edit-payment-note', 'Reference must be 500 characters or fewer.'); invalid = true; }
         if (!paidAt || paidAt.length > 64) { setFieldError('edit-payment-paid-at', 'Paid-at timestamp is required and must be 64 characters or fewer.'); invalid = true; }
         if (!reason || reason.length > 500) { setFieldError('edit-payment-reason', 'Correction reason is required and must be 500 characters or fewer.'); invalid = true; }
-        if (!invalid) { try { const candidate = cloneValue(eventState); Object.assign(candidate.payments.find((item) => item.id === id), { amountCents, kind, note, paidAt }); calculateAccountsForState(candidate); } catch (caught) { setFieldError('edit-payment-amount', sanitizeError(caught)); invalid = true; } }
+        if (!invalid) { try { const candidate = cloneValue(eventState); Object.assign(candidate.payments.find((item) => item.id === id), { participantId, amountCents, kind, note, paidAt }); calculateAccountsForState(candidate); } catch (caught) { setFormAlert('edit-payment-form-error', sanitizeError(caught)); invalid = true; } }
         if (invalid) return;
-        const before = cloneValue(payment); Object.assign(payment, { amountCents, kind, note, paidAt }); const timestamp = nowIso(); eventState.event.updatedAt = timestamp; eventState.auditLog.push({ id: createStableId('audit'), timestamp, action: 'payment.corrected', summary: `Payment ${id} corrected. Reason: ${reason}.`, entityType: 'payment', entityId: id, details: { before, after: cloneValue(payment), reason } }); closeDialog(); scheduleSave(); renderView('registration');
+        const before = cloneValue(payment); Object.assign(payment, { participantId, amountCents, kind, note, paidAt }); const timestamp = nowIso(); eventState.event.updatedAt = timestamp; eventState.auditLog.push({ id: createStableId('audit'), timestamp, action: 'payment.corrected', summary: `Payment ${id} corrected. Reason: ${reason}.`, entityType: 'payment', entityId: id, details: { before, after: cloneValue(payment), reason } }); closeDialog(); scheduleSave(); renderView('registration');
       }
       function withdrawCar(id) { const entry = eventState.entries.find((item) => item.id === id); if (!entry) return; const heatCount = [...eventState.matches, ...eventState.finals].filter((heat) => heat.lanes.includes(id)).length; openDialog(`Withdraw ${entry.name}?`, heatCount ? `This car appears in ${heatCount} scheduled or completed heats. Its history will be retained, but future scheduling must exclude it.` : 'The car will remain in history and can be restored.', [{ text: 'Confirm withdrawal', action: 'confirm-withdraw', primary: true, attributes: { 'data-entry-id': id } }]); }
       function confirmWithdraw(id) { const entry = eventState.entries.find((item) => item.id === id); if (!entry) return; entry.active = false; closeDialog(); meaningfulChange('Car withdrawn', 'entry', id); renderView('registration'); }
@@ -1105,7 +1137,7 @@
         else if (action === 'withdraw-car') withdrawCar(id);
         else if (action === 'confirm-withdraw') confirmWithdraw(id);
         else if (action === 'restore-car') restoreCar(id);
-        else if (action === 'save-event-details') { const name = document.getElementById('setup-event-name').value.trim(); const date = document.getElementById('setup-event-date').value; const venue = document.getElementById('setup-venue').value.trim(); const organizer = document.getElementById('setup-organizer').value.trim(); let invalid = false; if (!name || name.length > 200) { setFieldError('setup-event-name', !name ? 'Event name is required.' : 'Event name must be 200 characters or fewer.'); invalid = true; } if (!date || date.length > 32) { setFieldError('setup-event-date', 'Event date is required and must be 32 characters or fewer.'); invalid = true; } if (venue.length > 200) { setFieldError('setup-venue', 'Venue must be 200 characters or fewer.'); invalid = true; } if (organizer.length > 200) { setFieldError('setup-organizer', 'Organizer must be 200 characters or fewer.'); invalid = true; } if (invalid) return; Object.assign(eventState.event, { name, date, venue, organizer }); meaningfulChange('Event details updated', 'event', eventState.event.id); updateChrome(); renderView('setup'); }
+        else if (action === 'save-event-details') { const name = document.getElementById('setup-event-name').value.trim(); const date = document.getElementById('setup-event-date').value; const venue = document.getElementById('setup-venue').value.trim(); const organizer = document.getElementById('setup-organizer').value.trim(); let invalid = false; clearValidation(['setup-event-name', 'setup-event-date', 'setup-venue', 'setup-organizer']); if (!name || name.length > 200) { setFieldError('setup-event-name', !name ? 'Event name is required.' : 'Event name must be 200 characters or fewer.'); invalid = true; } if (!date || date.length > 32) { setFieldError('setup-event-date', 'Event date is required and must be 32 characters or fewer.'); invalid = true; } if (venue.length > 200) { setFieldError('setup-venue', 'Venue must be 200 characters or fewer.'); invalid = true; } if (organizer.length > 200) { setFieldError('setup-organizer', 'Organizer must be 200 characters or fewer.'); invalid = true; } if (invalid) return; Object.assign(eventState.event, { name, date, venue, organizer }); meaningfulChange('Event details updated', 'event', eventState.event.id); updateChrome(); renderView('setup'); }
         else if (action === 'focus-prices') document.getElementById('price-editor').scrollIntoView({ block: 'center' });
         else if (action === 'save-prices') { let valid = true; let validationMessage = ''; const prices = {}; document.querySelectorAll('[data-category-price]').forEach((input) => { const cents = Number(input.value); if (!isSafeWhole(cents)) valid = false; prices[input.dataset.categoryPrice] = cents; }); if (valid) { const candidate = cloneValue(eventState); candidate.settings.prices = prices; const result = validateEvent(candidate); if (!result.ok) { valid = false; validationMessage = result.issues[0]; } } if (!valid) { const error = document.getElementById('prices-error'); error.textContent = validationMessage || 'Every price must be a non-negative whole number of cents.'; error.setAttribute('role', 'alert'); error.setAttribute('aria-live', 'assertive'); return; } eventState.settings.prices = prices; meaningfulChange('Category prices updated', 'event', eventState.event.id); renderView('setup'); }
         else if (action === 'download-json') downloadText(`${eventState.event.name.replace(/[^a-z0-9]+/gi, '-').toLowerCase()}-event.json`, serializeEvent(eventState), 'application/json;charset=utf-8');
@@ -1133,7 +1165,7 @@
       window.addEventListener('beforeunload', () => { clearTimeout(saveTimer); if (eventState) saveNow(true); });
       document.addEventListener('click', handleClick);
       document.addEventListener('change', handleChange);
-      document.getElementById('app-dialog').addEventListener('close', restoreDialogFocus);
+      document.getElementById('app-dialog').addEventListener('close', handleDialogClose);
       matchMedia('(prefers-color-scheme: dark)').addEventListener('change', () => { if (theme === 'system') applyTheme('system'); });
 
       applyTheme(storageRead(THEME_KEY) || 'system'); loadStored(); updateChrome(); renderView('dashboard');

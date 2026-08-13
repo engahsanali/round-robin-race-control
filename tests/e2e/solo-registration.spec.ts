@@ -283,3 +283,95 @@ test('associates setup event validation only with affected fields', async ({ pag
   await expect(page.locator(`#${errorId}`)).toHaveText('Event name is required.');
   await expect(page.locator(`#${errorId}`)).toHaveAttribute('aria-live', 'assertive');
 });
+
+test('transfers a car charge to another participant without replacing the car ID', async ({ page }) => {
+  await page.goto(fileUrl);
+  await page.getByRole('button', { name: 'Load Demo Event' }).click();
+  await page.getByRole('button', { name: 'Load separate demo' }).click();
+  await page.getByRole('button', { name: 'Registration' }).click();
+  const before = await page.evaluate(() => (window as unknown as { RR3: { getState(): any } }).RR3.getState());
+  await page.getByRole('button', { name: 'Edit Sample Car 01' }).click();
+  await page.getByLabel('Edit car participant').evaluate((select) => select.append(new Option('Missing participant', 'participant-missing')));
+  await page.getByLabel('Edit car participant').selectOption('participant-missing');
+  await page.getByRole('button', { name: 'Save car' }).click();
+  await expect(page.getByLabel('Edit car participant')).toHaveAttribute('aria-invalid', 'true');
+  await expect(page.getByLabel('Edit car number')).not.toHaveAttribute('aria-invalid');
+  await page.getByLabel('Edit car participant').selectOption(before.participants[1].id);
+  await page.getByRole('button', { name: 'Save car' }).click();
+  await page.getByRole('button', { name: 'Confirm car changes' }).click();
+
+  const after = await page.evaluate(() => (window as unknown as { RR3: { getState(): any } }).RR3.getState());
+  expect(after.entries[0]).toMatchObject({ id: before.entries[0].id, participantId: before.participants[1].id });
+  expect(after.auditLog.at(-1)).toMatchObject({ entityId: before.entries[0].id, details: { beforeParticipantId: before.participants[0].id, afterParticipantId: before.participants[1].id } });
+  await expect(page.locator(`[data-account-row="${before.participants[0].id}"]`)).toContainText('$12.00 credit');
+  await expect(page.locator(`[data-account-row="${before.participants[1].id}"]`)).toContainText('$24.00');
+});
+
+test('transfers a payment to another participant without replacing the payment ID', async ({ page }) => {
+  await page.goto(fileUrl);
+  await page.getByRole('button', { name: 'Load Demo Event' }).click();
+  await page.getByRole('button', { name: 'Load separate demo' }).click();
+  await page.getByRole('button', { name: 'Registration' }).click();
+  const before = await page.evaluate(() => (window as unknown as { RR3: { getState(): any } }).RR3.getState());
+  await page.getByRole('button', { name: 'Edit payment Paid in full example' }).click();
+  await page.getByLabel('Edit payment participant').evaluate((select) => select.append(new Option('Missing participant', 'participant-missing')));
+  await page.getByLabel('Edit payment participant').selectOption('participant-missing');
+  await page.getByLabel('Correction reason').fill('Correct ownership');
+  await page.getByRole('button', { name: 'Save payment correction' }).click();
+  await expect(page.getByLabel('Edit payment participant')).toHaveAttribute('aria-invalid', 'true');
+  await expect(page.getByLabel('Edit amount in cents')).not.toHaveAttribute('aria-invalid');
+  await page.getByLabel('Edit payment participant').selectOption(before.participants[1].id);
+  await page.getByRole('button', { name: 'Save payment correction' }).click();
+
+  const after = await page.evaluate(() => (window as unknown as { RR3: { getState(): any } }).RR3.getState());
+  expect(after.payments[0]).toMatchObject({ id: before.payments[0].id, participantId: before.participants[1].id, amountCents: 1200 });
+  expect(after.auditLog.at(-1)).toMatchObject({ action: 'payment.corrected', entityId: before.payments[0].id, details: { before: { participantId: before.participants[0].id }, after: { participantId: before.participants[1].id } } });
+  await expect(page.locator(`[data-account-row="${before.participants[0].id}"]`)).toContainText('$12.00');
+  await expect(page.locator(`[data-account-row="${before.participants[1].id}"]`)).toContainText('Paid');
+});
+
+test('marks only invalid add-form controls and keeps form alerts for cross-field failures', async ({ page }) => {
+  await page.goto(fileUrl);
+  await page.getByRole('button', { name: 'Load Demo Event' }).click();
+  await page.getByRole('button', { name: 'Load separate demo' }).click();
+  await page.getByRole('button', { name: 'Registration' }).click();
+
+  await page.getByRole('button', { name: 'Add participant' }).click();
+  await expect(page.getByLabel('Participant name')).toHaveAttribute('aria-invalid', 'true');
+  await expect(page.getByLabel('Email')).not.toHaveAttribute('aria-invalid');
+  await expect(page.locator('#participant-form-error')).toBeEmpty();
+
+  await page.getByLabel('Car number').fill('1');
+  await page.getByLabel('Car name').fill('Duplicate');
+  await page.getByRole('button', { name: 'Add car' }).click();
+  await expect(page.getByLabel('Car number')).toHaveAttribute('aria-invalid', 'true');
+  await expect(page.getByLabel('Car name')).not.toHaveAttribute('aria-invalid');
+  await expect(page.locator('#car-form-error')).toBeEmpty();
+
+  await page.getByLabel('Amount in cents').fill('100');
+  await page.getByRole('button', { name: 'Record payment' }).click();
+  await expect(page.getByLabel('Payment reference')).toHaveAttribute('aria-invalid', 'true');
+  await expect(page.getByLabel('Amount in cents')).not.toHaveAttribute('aria-invalid');
+  await expect(page.locator('#payment-form-error')).toBeEmpty();
+});
+
+test('discards a pending scheduled car edit when Escape closes confirmation', async ({ page }) => {
+  await page.goto(fileUrl);
+  await page.getByRole('button', { name: 'Load Demo Event' }).click();
+  await page.getByRole('button', { name: 'Load separate demo' }).click();
+  await page.getByRole('button', { name: 'Registration' }).click();
+  const before = await page.evaluate(() => (window as unknown as { RR3: { getState(): any } }).RR3.getState());
+  await page.getByRole('button', { name: 'Edit Sample Car 01' }).click();
+  await page.getByLabel('Edit car number').fill('21');
+  await page.getByRole('button', { name: 'Save car' }).click();
+  await page.getByRole('dialog').press('Escape');
+  await page.evaluate(() => {
+    const button = document.createElement('button');
+    button.dataset.action = 'confirm-car-edit';
+    document.body.append(button);
+    button.click();
+    button.remove();
+  });
+  const after = await page.evaluate(() => (window as unknown as { RR3: { getState(): any } }).RR3.getState());
+  expect(after.entries[0]).toMatchObject({ id: before.entries[0].id, carNumber: before.entries[0].carNumber });
+});
