@@ -76,6 +76,14 @@ function sealedPublicationEvent() {
   };
 }
 
+function manuallySealedPublicationEvent(championshipStatus: 'scheduled' | 'completed' = 'completed') {
+  const event = sealedPublicationEvent() as any;
+  event.finals[0].status = championshipStatus;
+  event.finals[0].winnerEntryId = championshipStatus === 'completed' ? 'car-1' : null;
+  event.auditLog.splice(1, 0, { id: 'manual-champion-audit', timestamp: event.event.updatedAt, action: 'champion.manual-decided', summary: 'Manual champion selected', entityType: 'event', entityId: event.event.id, details: { championCarId: 'car-1', reason: 'Original publication decision' } });
+  return event;
+}
+
 async function openSealedLive(page: Page, phase: 'preliminary' | 'championship' = 'championship') {
   await importLiveEvent(page, sealedPublicationEvent());
   await page.getByLabel('Race phase').selectOption(phase);
@@ -156,6 +164,90 @@ test('invalidates an official championship seal when preliminary or qualificatio
   await page.getByLabel('Change reason').fill('Qualification eligibility correction');
   await page.getByRole('button', { name: 'Confirm winner change' }).click();
   await expectSealInvalidated(page, 'result.corrected', 'Qualification eligibility correction', 'qualification-heat');
+});
+
+test('drops a sealed manual champion after correction, cancellation, or rerun and permits only automatic or fresh resolution', async ({ page }) => {
+  await importLiveEvent(page, manuallySealedPublicationEvent());
+  await page.getByLabel('Race phase').selectOption('championship');
+  await page.locator('[data-lane-card][data-entry-id="car-2"]').click();
+  await page.getByRole('button', { name: 'Review winner change' }).click();
+  await page.getByLabel('Change reason').fill('Corrected after manual publication');
+  await page.getByRole('button', { name: 'Confirm winner change' }).click();
+  await page.getByRole('button', { name: 'Finals' }).click();
+  await expect(page.getByText(/Provisional champion:.*Car 2/)).toBeVisible();
+  await expect(page.getByText(/Provisional champion:.*Car 1/)).toHaveCount(0);
+  await expect(page.getByRole('button', { name: 'Seal official results' })).toBeEnabled();
+
+  for (const mutation of ['cancel', 'rerun'] as const) {
+    await importLiveEvent(page, manuallySealedPublicationEvent());
+    await page.getByLabel('Race phase').selectOption('championship');
+    if (mutation === 'cancel') {
+      await page.getByRole('button', { name: 'Cancel heat' }).click();
+      await page.getByLabel('Cancellation reason').fill('Cancelled after manual publication');
+      await page.getByRole('button', { name: 'Confirm cancellation' }).click();
+    } else {
+      await page.getByRole('button', { name: 'Mark for rerun' }).click();
+      await page.getByLabel('Rerun reason').fill('Rerun after manual publication');
+      await page.getByRole('button', { name: 'Confirm rerun' }).click();
+    }
+    await page.getByRole('button', { name: 'Finals' }).click();
+    await expect(page.getByText('Champion pending valid finals completion.', { exact: true })).toBeVisible();
+    await expect(page.getByRole('button', { name: 'Seal official results' })).toBeDisabled();
+  }
+
+  await page.getByRole('button', { name: 'Manual champion decision' }).click();
+  await page.getByLabel('Manual champion', { exact: true }).selectOption('car-2');
+  await page.getByLabel('Manual champion reason').fill('Fresh decision after rerun review');
+  await page.getByRole('button', { name: 'Confirm manual champion' }).click();
+  await expect(page.getByRole('button', { name: 'Seal official results' })).toBeEnabled();
+  await page.getByRole('button', { name: 'Seal official results' }).click();
+  await expect(page.locator('[data-official-champion]')).toContainText('Car 2');
+});
+
+test('drops sealed manual champion after preliminary and qualification evidence changes', async ({ page }) => {
+  await importLiveEvent(page, manuallySealedPublicationEvent('scheduled'));
+  await page.getByLabel('Race phase').selectOption('preliminary');
+  await page.locator('[data-lane-card][data-entry-id="car-2"]').click();
+  await page.getByRole('button', { name: 'Review winner change' }).click();
+  await page.getByLabel('Change reason').fill('Preliminary evidence changed after manual publication');
+  await page.getByRole('button', { name: 'Confirm winner change' }).click();
+  await page.getByRole('button', { name: 'Finals' }).click();
+  await expect(page.getByText('Champion pending valid finals completion.', { exact: true })).toBeVisible();
+  await expect(page.getByRole('button', { name: 'Seal official results' })).toBeDisabled();
+
+  const event = manuallySealedPublicationEvent('scheduled') as any;
+  event.finals.push({ id: 'qualification-heat', phase: 'final', matchNumber: 1, heatNumber: 2, lanes: ['car-2', 'car-3', null], status: 'completed', winnerEntryId: 'car-2', laneTimesMs: [null, null, null], notes: '' });
+  event.auditLog.splice(1, 0, { id: 'qualification-audit', timestamp: event.event.updatedAt, action: 'finals.playoff-generated', summary: 'Qualification playoff', entityType: 'event', entityId: event.event.id, details: { purpose: 'qualification-playoff', heatIds: ['qualification-heat'], tiedEntryIds: ['car-2', 'car-3'], needed: 1, baseQualifiedIds: ['car-1'] } });
+  await importLiveEvent(page, event);
+  await page.getByLabel('Race phase').selectOption('qualification');
+  await page.locator('[data-lane-card][data-entry-id="car-3"]').click();
+  await page.getByRole('button', { name: 'Review winner change' }).click();
+  await page.getByLabel('Change reason').fill('Qualification evidence changed after manual publication');
+  await page.getByRole('button', { name: 'Confirm winner change' }).click();
+  await page.getByRole('button', { name: 'Finals' }).click();
+  await expect(page.getByText('Champion pending valid finals completion.', { exact: true })).toBeVisible();
+  await expect(page.getByRole('button', { name: 'Seal official results' })).toBeDisabled();
+});
+
+test('undo invalidates a newer manual champion and requires another fresh decision', async ({ page }) => {
+  await importLiveEvent(page, manuallySealedPublicationEvent('scheduled'));
+  await page.getByLabel('Race phase').selectOption('preliminary');
+  await page.locator('[data-lane-card][data-entry-id="car-2"]').click();
+  await page.getByRole('button', { name: 'Review winner change' }).click();
+  await page.getByLabel('Change reason').fill('Temporary preliminary correction');
+  await page.getByRole('button', { name: 'Confirm winner change' }).click();
+  await page.getByRole('button', { name: 'Finals' }).click();
+  await page.getByRole('button', { name: 'Manual champion decision' }).click();
+  await page.getByLabel('Manual champion', { exact: true }).selectOption('car-2');
+  await page.getByLabel('Manual champion reason').fill('Fresh decision before undo');
+  await page.getByRole('button', { name: 'Confirm manual champion' }).click();
+  await page.getByRole('button', { name: 'Seal official results' }).click();
+  await page.getByRole('button', { name: 'Live Racing' }).click();
+  await page.getByLabel('Race phase').selectOption('preliminary');
+  await page.keyboard.press('Control+z');
+  await page.getByRole('button', { name: 'Finals' }).click();
+  await expect(page.getByText('Champion pending valid finals completion.', { exact: true })).toBeVisible();
+  await expect(page.getByRole('button', { name: 'Seal official results' })).toBeDisabled();
 });
 
 test('runs qualification playoff and championship finals through phase-aware live controls before sealing', async ({ page }) => {
