@@ -32,6 +32,26 @@ async function importLiveEvent(page: Page, value: unknown) {
   await page.getByRole('button', { name: 'Live Racing' }).click();
 }
 
+function collidingPresetEvent(name: string, firstStatus: 'scheduled' | 'completed' = 'scheduled') {
+  const timestamp = '2026-08-13T00:00:00.000Z';
+  return {
+    version: 1,
+    event: { id: `event-${name.toLowerCase().replaceAll(' ', '-')}`, name, date: '2026-08-14', venue: 'Imported venue', organizer: 'Imported crew', laneCount: 3, status: 'running', createdAt: timestamp, updatedAt: timestamp, resultSeal: 'draft' },
+    settings: { scheduleMode: 'template9', seed: `seed-${name}`, rankingMode: 'competition', allowSharedRanks: true, tieBreakOrder: ['totalWins'], finalistCount: 3, autoSave: true, confirmWinnerChanges: true, enableTiming: true, prices: { standard: 100 } },
+    participants: Array.from({ length: 9 }, (_, index) => ({ id: `participant-${String(index + 1).padStart(2, '0')}`, name: `${name} Driver ${index + 1}`, email: '', phone: '', notes: '' })),
+    entries: Array.from({ length: 9 }, (_, index) => ({ id: `car-${String(index + 1).padStart(2, '0')}`, participantId: `participant-${String(index + 1).padStart(2, '0')}`, carNumber: 100 + index, name: `${name} Car ${index + 1}`, categoryId: 'standard', quantity: 1, active: true })),
+    matches: [
+      { id: 'preset-template9-match-1-heat-1', phase: 'preliminary', matchNumber: 1, heatNumber: 1, lanes: ['car-01', 'car-02', 'car-03'], status: firstStatus, winnerEntryId: firstStatus === 'completed' ? 'car-03' : null, laneTimesMs: firstStatus === 'completed' ? [1500, 1400, 1300] : [null, null, null], notes: `${name} first heat` },
+      { id: 'preset-template9-match-1-heat-2', phase: 'preliminary', matchNumber: 1, heatNumber: 2, lanes: ['car-04', 'car-05', 'car-06'], status: 'scheduled', winnerEntryId: null, laneTimesMs: [null, null, null], notes: `${name} second heat` },
+    ],
+    finals: [], payments: [], auditLog: [],
+  };
+}
+
+async function uploadEvent(page: Page, value: unknown, name = 'context.json') {
+  await page.getByLabel('Import event JSON').setInputFiles({ name, mimeType: 'application/json', buffer: Buffer.from(JSON.stringify(value)) });
+}
+
 test('records a keyboard-selected winner with optional times, receipt, auto-advance, and undo', async ({ page }) => {
   await openLiveDemo(page);
 
@@ -171,4 +191,105 @@ test('offers timing only for assigned two-car lanes and preserves the empty lane
   await page.getByRole('button', { name: 'Confirm winner' }).click();
   const state = await page.evaluate(() => (window as unknown as { RR3: { getState(): any } }).RR3.getState());
   expect(state.matches[0].laneTimesMs).toEqual([1400, 1300, null]);
+});
+
+test('successful import clears every event-scoped live, schedule, undo, receipt, and staged-dialog transient', async ({ page }) => {
+  await openLiveDemo(page);
+  await page.getByRole('button', { name: 'Race Setup' }).click();
+  await page.getByLabel('Schedule type').selectOption('template9');
+  await page.getByRole('button', { name: 'Activate schedule' }).click();
+  await page.getByLabel('Schedule type').selectOption('custom');
+  await page.getByLabel('Schedule seed').fill('STALE-DRAFT-SEED');
+  await page.getByLabel('Number of matches').fill('4');
+  await page.getByRole('button', { name: 'Generate candidate' }).click();
+  await expect(page.getByText(/STALE-DRAFT-SEED/)).toBeVisible();
+
+  await page.getByRole('button', { name: 'Live Racing' }).click();
+  await page.keyboard.press('2');
+  await page.keyboard.press('Enter');
+  await page.getByRole('button', { name: 'Confirm winner' }).click();
+  await expect(page.getByRole('status', { name: 'Result receipt' })).toBeVisible();
+  await page.keyboard.press('1');
+  await page.keyboard.press('Enter');
+  await page.evaluate(() => {
+    const invalid = document.createElement('button');
+    invalid.dataset.action = 'select-winner';
+    invalid.dataset.entryId = 'not-in-this-event';
+    document.body.append(invalid);
+    invalid.click();
+    invalid.remove();
+  });
+  await expect(page.getByRole('region', { name: 'Pending result confirmation' })).toBeVisible();
+  await expect(page.locator('#view-content').getByText('Winner must be assigned to this heat.', { exact: true })).toBeVisible();
+  await page.getByRole('button', { name: 'Cancel heat' }).click();
+  await page.getByLabel('Cancellation reason').fill('STALE PENDING HEAT ACTION');
+
+  const imported = collidingPresetEvent('Imported Alpha', 'completed');
+  await uploadEvent(page, imported, 'imported-alpha.json');
+  await expect(page.getByRole('dialog')).not.toBeVisible();
+  await expect(page.getByText('Imported Alpha', { exact: true }).first()).toBeVisible();
+  await expect(page.getByRole('heading', { name: 'Match 1 · Heat 1' })).toBeVisible();
+  await expect(page.getByRole('status', { name: 'Result receipt' })).toHaveCount(0);
+  await expect(page.getByRole('region', { name: 'Pending result confirmation' })).toHaveCount(0);
+  await expect(page.locator('[data-lane-card][aria-pressed="true"]')).toHaveCount(0);
+  await expect(page.locator('#view-content').getByText('Winner must be assigned to this heat.', { exact: true })).toHaveCount(0);
+
+  const afterImport = await page.evaluate(() => (window as unknown as { RR3: { getState(): any } }).RR3.getState());
+  expect(afterImport.matches).toEqual(imported.matches);
+  await page.keyboard.press('u');
+  await page.keyboard.press('Control+z');
+  expect((await page.evaluate(() => (window as unknown as { RR3: { getState(): any } }).RR3.getState())).matches).toEqual(imported.matches);
+
+  await page.getByRole('button', { name: 'Race Setup' }).click();
+  await page.getByLabel('Schedule type').selectOption('custom');
+  await expect(page.getByLabel('Schedule seed')).toHaveValue(imported.settings.seed);
+  await expect(page.getByText(/STALE-DRAFT-SEED/)).toHaveCount(0);
+  await page.getByLabel('Schedule type').selectOption('template9');
+  await page.getByRole('button', { name: 'Activate schedule' }).click();
+  await expect(page.getByRole('dialog')).toContainText(/completed, cancelled, or rerun heat/);
+
+  const importedAgain = collidingPresetEvent('Imported Beta');
+  await uploadEvent(page, importedAgain, 'imported-beta.json');
+  await expect(page.getByRole('dialog')).not.toBeVisible();
+  await page.evaluate(() => {
+    const staleConfirm = document.createElement('button');
+    staleConfirm.dataset.action = 'confirm-schedule-replacement';
+    document.body.append(staleConfirm);
+    staleConfirm.click();
+    staleConfirm.remove();
+  });
+  expect((await page.evaluate(() => (window as unknown as { RR3: { getState(): any } }).RR3.getState())).matches).toEqual(importedAgain.matches);
+});
+
+test('failed import preserves the canonical event and usable schedule, receipt, undo, and staged live state', async ({ page }) => {
+  await importLiveEvent(page, collidingPresetEvent('Preserved Context'));
+  await page.getByRole('button', { name: 'Race Setup' }).click();
+  await page.getByLabel('Schedule type').selectOption('custom');
+  await page.getByLabel('Schedule seed').fill('PRESERVED-DRAFT-SEED');
+  await page.getByLabel('Number of matches').fill('3');
+  await page.getByRole('button', { name: 'Generate candidate' }).click();
+  await page.getByRole('button', { name: 'Live Racing' }).click();
+  await page.keyboard.press('1');
+  await page.keyboard.press('Enter');
+  await page.getByRole('button', { name: 'Confirm winner' }).click();
+  await page.keyboard.press('1');
+  await page.keyboard.press('Enter');
+  await page.getByRole('button', { name: 'Cancel heat' }).click();
+  await page.getByLabel('Cancellation reason').fill('PRESERVE THIS STAGED REASON');
+  const before = await page.evaluate(() => (window as unknown as { RR3: { getState(): any } }).RR3.getState());
+  const invalid = structuredClone(before);
+  invalid.matches[0].winnerEntryId = 'unknown-car';
+
+  await uploadEvent(page, invalid, 'invalid-context.json');
+  expect(await page.evaluate(() => (window as unknown as { RR3: { getState(): any } }).RR3.getState())).toEqual(before);
+  await expect(page.getByRole('dialog')).toBeVisible();
+  await expect(page.getByLabel('Cancellation reason')).toHaveValue('PRESERVE THIS STAGED REASON');
+  await page.getByRole('button', { name: 'Cancel', exact: true }).click();
+  await expect(page.getByRole('region', { name: 'Pending result confirmation' })).toBeVisible();
+  await expect(page.getByRole('status', { name: 'Result receipt' })).toBeVisible();
+  await page.keyboard.press('u');
+  const undone = await page.evaluate(() => (window as unknown as { RR3: { getState(): any } }).RR3.getState());
+  expect(undone.matches[0]).toMatchObject({ status: 'scheduled', winnerEntryId: null });
+  await page.getByRole('button', { name: 'Race Setup' }).click();
+  await expect(page.getByLabel('Schedule seed')).toHaveValue('PRESERVED-DRAFT-SEED');
 });

@@ -505,6 +505,35 @@
       let lastReceipt = null;
       let liveMessage = '';
 
+      function resetEventScopedTransients() {
+        clearTimeout(saveTimer);
+        saveTimer = 0;
+        const dialog = document.getElementById('app-dialog');
+        dialogReturnFocus = null;
+        pendingCarEdit = null;
+        pendingScheduleReplacement = null;
+        pendingHeatAction = null;
+        if (dialog?.open) dialog.close();
+        if (dialog) dialog.replaceChildren();
+        wizard = null;
+        scheduleDraft = null;
+        liveHeatIndex = 0;
+        selectedWinnerId = null;
+        pendingResult = null;
+        undoRecord = null;
+        lastReceipt = null;
+        liveMessage = '';
+        meaningfulFileChange = false;
+        lastSavedAt = null;
+        importError = '';
+        carSort = 'canonical';
+        accountFilter = 'all';
+        lastCarParticipant = '';
+        lastCarCategory = '';
+        lastPaymentParticipant = '';
+        lastPaymentKind = 'payment';
+      }
+
       const viewDetails = Object.freeze({
         dashboard: ['Control overview', 'Dashboard'], registration: ['Entrants and accounts', 'Registration & Fees'],
         setup: ['Race format', 'Race Setup'], live: ['Event-day cockpit', 'Live Racing'],
@@ -820,7 +849,7 @@
         try {
           const parsed = JSON.parse(raw);
           const result = validateEvent(parsed);
-          if (result.ok) { eventState = result.data; demoMode = wantsDemo; registerIds(eventState); lastSavedAt = new Date(); categoryNames = Object.fromEntries(Object.keys(eventState.settings.prices).map((id) => [id, titleCase(id)])); }
+          if (result.ok) { resetEventScopedTransients(); eventState = result.data; demoMode = wantsDemo; registerIds(eventState); lastSavedAt = new Date(); categoryNames = Object.fromEntries(Object.keys(eventState.settings.prices).map((id) => [id, titleCase(id)])); }
         } catch (_) { /* leave invalid storage isolated */ }
       }
 
@@ -1242,7 +1271,7 @@
       function downloadText(filename, text, type) { const blob = new Blob([text], { type }); const url = URL.createObjectURL(blob); const link = element('a', { attributes: { href: url, download: filename } }); document.body.append(link); link.click(); link.remove(); setTimeout(() => URL.revokeObjectURL(url), 0); }
       async function importFile(file) {
         importError = ''; if (!file) return;
-        try { const parsed = JSON.parse(await file.text()); const result = validateEvent(parsed); if (!result.ok) { importError = result.issues.join(' '); renderView(activeView); return; } eventState = result.data; demoMode = false; storageSet(WORKSPACE_KEY, 'official'); categoryNames = Object.fromEntries(Object.keys(eventState.settings.prices).map((id) => [id, titleCase(id)])); registerIds(eventState); scheduleSave(); updateChrome(); renderView(activeView); }
+        try { const parsed = JSON.parse(await file.text()); const result = validateEvent(parsed); if (!result.ok) { importError = result.issues.join(' '); renderView(activeView); return; } resetEventScopedTransients(); eventState = result.data; demoMode = false; storageSet(WORKSPACE_KEY, 'official'); categoryNames = Object.fromEntries(Object.keys(eventState.settings.prices).map((id) => [id, titleCase(id)])); registerIds(eventState); scheduleSave(); updateChrome(); renderView(activeView); }
         catch (_) { importError = 'The event file is not valid JSON. Current event was not changed.'; renderView(activeView); }
         finally { document.getElementById('import-input').value = ''; }
       }
@@ -1252,9 +1281,9 @@
         if (!eventState) { container.append(element('div', { className: 'notice', text: 'No event is loaded.' })); return; }
         appendStatus(container); const previousKey = demoMode ? DEMO_PREVIOUS_KEY : PREVIOUS_KEY; const actions = demoMode ? [...(storageRead(previousKey) ? [button('Restore previous save', 'restore-previous')] : []), button('Return to official event', 'return-official'), button('Reset event', 'reset-event')] : [button('Restore previous save', 'restore-previous'), button('Reset event', 'reset-event')]; container.append(element('section', { className: 'panel panel-section' }, [element('h3', { text: 'Recovery' }), element('p', { text: storageRead(previousKey) ? 'A previous valid save is available.' : (demoMode ? 'This separate demo never replaces official current or previous saves.' : 'No previous valid save is available yet.') }), element('div', { className: 'action-row' }, actions)]));
       }
-      function restorePrevious() { const previousKey = demoMode ? DEMO_PREVIOUS_KEY : PREVIOUS_KEY; const currentKey = demoMode ? DEMO_KEY : CURRENT_KEY; const raw = storageRead(previousKey); if (!raw) { announce('No previous valid save is available.'); return; } try { const result = validateEvent(JSON.parse(raw)); if (!result.ok) { announce('Previous save failed validation.'); return; } const displaced = storageRead(currentKey); eventState = result.data; storageSet(currentKey, serializeEvent(eventState)); if (displaced) storageSet(previousKey, displaced); storageSet(WORKSPACE_KEY, demoMode ? 'demo' : 'official'); lastSavedAt = new Date(); registerIds(eventState); closeDialog(); updateChrome(); renderView(activeView); announce('Previous valid save restored; restore again to undo.'); } catch (_) { announce('Previous save could not be restored.'); } }
-      function returnToOfficial() { clearTimeout(saveTimer); if (demoMode && eventState) saveNow(false); storageSet(WORKSPACE_KEY, 'official'); demoMode = false; eventState = null; lastSavedAt = null; loadStored(); meaningfulFileChange = false; updateChrome(); selectView('dashboard'); announce(eventState ? 'Official event restored.' : 'No official event is saved.'); }
-      function resetEvent() { clearTimeout(saveTimer); if (demoMode) { storageRemove(DEMO_KEY); storageRemove(DEMO_PREVIOUS_KEY); storageSet(WORKSPACE_KEY, 'official'); demoMode = false; eventState = null; loadStored(); } else { eventState = null; storageRemove(CURRENT_KEY); storageRemove(PREVIOUS_KEY); storageRemove(WORKSPACE_KEY); } meaningfulFileChange = false; importError = ''; categoryNames = eventState ? Object.fromEntries(Object.keys(eventState.settings.prices).map((id) => [id, titleCase(id)])) : {}; closeDialog(); updateChrome(); selectView('dashboard'); announce('Event reset.'); }
+      function restorePrevious() { const previousKey = demoMode ? DEMO_PREVIOUS_KEY : PREVIOUS_KEY; const currentKey = demoMode ? DEMO_KEY : CURRENT_KEY; const raw = storageRead(previousKey); if (!raw) { announce('No previous valid save is available.'); return; } try { const result = validateEvent(JSON.parse(raw)); if (!result.ok) { announce('Previous save failed validation.'); return; } const displaced = storageRead(currentKey); resetEventScopedTransients(); eventState = result.data; categoryNames = Object.fromEntries(Object.keys(eventState.settings.prices).map((id) => [id, titleCase(id)])); storageSet(currentKey, serializeEvent(eventState)); if (displaced) storageSet(previousKey, displaced); storageSet(WORKSPACE_KEY, demoMode ? 'demo' : 'official'); lastSavedAt = new Date(); registerIds(eventState); updateChrome(); renderView(activeView); announce('Previous valid save restored; restore again to undo.'); } catch (_) { announce('Previous save could not be restored.'); } }
+      function returnToOfficial() { clearTimeout(saveTimer); if (demoMode && eventState) saveNow(false); resetEventScopedTransients(); storageSet(WORKSPACE_KEY, 'official'); demoMode = false; eventState = null; loadStored(); updateChrome(); selectView('dashboard'); announce(eventState ? 'Official event restored.' : 'No official event is saved.'); }
+      function resetEvent() { resetEventScopedTransients(); if (demoMode) { storageRemove(DEMO_KEY); storageRemove(DEMO_PREVIOUS_KEY); storageSet(WORKSPACE_KEY, 'official'); demoMode = false; eventState = null; loadStored(); } else { eventState = null; storageRemove(CURRENT_KEY); storageRemove(PREVIOUS_KEY); storageRemove(WORKSPACE_KEY); } importError = ''; categoryNames = eventState ? Object.fromEntries(Object.keys(eventState.settings.prices).map((id) => [id, titleCase(id)])) : {}; updateChrome(); selectView('dashboard'); announce('Event reset.'); }
 
       function orderedLiveHeats() { return eventState ? eventState.matches.slice().sort((left, right) => left.matchNumber - right.matchNumber || left.heatNumber - right.heatNumber || compareCodeUnits(left.id, right.id)) : []; }
       function heatStatusLabel(status) { return status === 'rerun' ? 'Rerun pending' : titleCase(status); }
@@ -1325,7 +1354,7 @@
         const target = event.target.closest('[data-view], [data-action]'); if (!target) return; const view = target.getAttribute('data-view'); if (view) { selectView(view); return; } const action = target.getAttribute('data-action'); const id = target.getAttribute('data-entry-id'); const participantId = target.getAttribute('data-participant-id'); const paymentId = target.getAttribute('data-payment-id');
         if (action === 'start-wizard') startWizard();
         else if (action === 'confirm-demo') openDialog('Load Demo Event', 'This replaces the current workspace with a clearly marked, separate demonstration. It never merges into official event data.', [{ text: 'Load separate demo', action: 'load-demo', primary: true }]);
-        else if (action === 'load-demo') { eventState = buildDemo(); demoMode = true; categoryNames = { standard: 'Standard' }; registerIds(eventState); closeDialog(); meaningfulChange('Demo event loaded', 'event', eventState.event.id); saveNow(false); updateChrome(); selectView('dashboard'); }
+        else if (action === 'load-demo') { resetEventScopedTransients(); eventState = buildDemo(); demoMode = true; categoryNames = { standard: 'Standard' }; registerIds(eventState); meaningfulChange('Demo event loaded', 'event', eventState.event.id); saveNow(false); updateChrome(); selectView('dashboard'); }
         else if (action === 'return-official') returnToOfficial();
         else if (action === 'close-dialog') closeDialog();
         else if (action === 'wizard-next') wizardNext();
