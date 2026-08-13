@@ -1,0 +1,627 @@
+<!doctype html>
+<html lang="en" data-theme="dark">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="color-scheme" content="dark light">
+  <title>Round Robin Race Control — Solo</title>
+  <style>
+    :root {
+      color-scheme: dark;
+      --graphite-950: #090d10;
+      --graphite-900: #10161b;
+      --graphite-850: #151d23;
+      --graphite-800: #1c262e;
+      --graphite-700: #2a3944;
+      --surface: var(--graphite-950);
+      --surface-raised: var(--graphite-900);
+      --surface-panel: var(--graphite-850);
+      --line: #344550;
+      --text: #f6f9fb;
+      --text-muted: #aebbc3;
+      --cyan: #26d9ff;
+      --cyan-soft: #0b4655;
+      --lime: #b5f23d;
+      --warning: #ffbd45;
+      --error: #ff6b7a;
+      --success: #69e59c;
+      --focus: #7ce8ff;
+      --gold: #f4c95d;
+      --silver: #c8d1d8;
+      --bronze: #d68b59;
+      --space-1: .25rem;
+      --space-2: .5rem;
+      --space-3: .75rem;
+      --space-4: 1rem;
+      --space-5: 1.5rem;
+      --space-6: 2rem;
+      --radius-sm: .5rem;
+      --radius-md: .875rem;
+      --radius-lg: 1.25rem;
+      --shadow-sm: 0 4px 18px rgba(0, 0, 0, .18);
+      --shadow-lg: 0 18px 60px rgba(0, 0, 0, .32);
+      --max-width: 80rem;
+      --transition: 180ms ease;
+      font-family: Inter, ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+      background: var(--surface);
+      color: var(--text);
+    }
+
+    :root[data-theme="light"] {
+      color-scheme: light;
+      --surface: #edf2f4;
+      --surface-raised: #ffffff;
+      --surface-panel: #f7fafb;
+      --line: #bdcbd2;
+      --text: #101a20;
+      --text-muted: #50636e;
+      --cyan: #007d9a;
+      --cyan-soft: #d8f3f9;
+      --lime: #4f7900;
+      --warning: #8d5700;
+      --error: #ba2538;
+      --success: #147946;
+      --focus: #006d88;
+      --shadow-sm: 0 4px 18px rgba(25, 47, 58, .10);
+      --shadow-lg: 0 18px 60px rgba(25, 47, 58, .16);
+    }
+
+    * { box-sizing: border-box; }
+
+    html { min-width: 320px; background: var(--surface); }
+
+    body {
+      min-height: 100vh;
+      margin: 0;
+      background:
+        radial-gradient(circle at 12% -10%, color-mix(in srgb, var(--cyan) 14%, transparent), transparent 28rem),
+        var(--surface);
+      color: var(--text);
+      line-height: 1.5;
+    }
+
+    button, select, input { font: inherit; }
+
+    button, select {
+      min-block-size: 48px;
+      border: 1px solid var(--line);
+      border-radius: var(--radius-sm);
+      background: var(--surface-panel);
+      color: var(--text);
+      transition: border-color var(--transition), background-color var(--transition), color var(--transition), transform var(--transition);
+    }
+
+    button { cursor: pointer; }
+    button:hover { border-color: var(--cyan); }
+    button:active { transform: translateY(1px); }
+
+    a:focus, button:focus, select:focus, input:focus, dialog:focus {
+      outline: 3px solid var(--focus);
+      outline-offset: 3px;
+    }
+
+    .skip-link {
+      position: fixed;
+      inset: var(--space-3) auto auto var(--space-3);
+      z-index: 100;
+      padding: var(--space-3) var(--space-4);
+      border-radius: var(--radius-sm);
+      background: var(--cyan);
+      color: #061116;
+      font-weight: 800;
+      transform: translateY(-200%);
+    }
+
+    .skip-link:focus { transform: translateY(0); }
+
+    .shell-header {
+      border-bottom: 1px solid var(--line);
+      background: color-mix(in srgb, var(--surface-raised) 92%, transparent);
+    }
+
+    .masthead, .status-strip, .main-inner, .footer-inner {
+      width: min(100% - 2rem, var(--max-width));
+      margin-inline: auto;
+    }
+
+    .masthead {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: var(--space-4);
+      padding-block: var(--space-5) var(--space-4);
+    }
+
+    .brand-lockup { display: flex; align-items: center; gap: var(--space-4); min-width: 0; }
+
+    .mark {
+      display: grid;
+      min-width: 4.75rem;
+      min-height: 4.75rem;
+      place-items: center;
+      border: 1px solid color-mix(in srgb, var(--cyan) 65%, var(--line));
+      border-radius: 50%;
+      background: linear-gradient(145deg, var(--surface-panel), var(--surface-raised));
+      box-shadow: inset 0 0 0 5px var(--surface-raised), 0 0 30px color-mix(in srgb, var(--cyan) 17%, transparent);
+      color: var(--cyan);
+      font-size: 1.05rem;
+      font-weight: 900;
+      letter-spacing: .06em;
+    }
+
+    .eyebrow {
+      margin: 0 0 var(--space-1);
+      color: var(--lime);
+      font-size: .72rem;
+      font-weight: 850;
+      letter-spacing: .14em;
+      text-transform: uppercase;
+    }
+
+    h1 { margin: 0; font-size: clamp(1.15rem, 3vw, 1.75rem); line-height: 1.1; letter-spacing: -.025em; }
+
+    .edition {
+      display: inline-flex;
+      align-items: center;
+      min-block-size: 2rem;
+      padding-inline: var(--space-3);
+      border: 1px solid var(--line);
+      border-radius: 999px;
+      color: var(--text-muted);
+      font-size: .8rem;
+      font-weight: 800;
+      letter-spacing: .08em;
+      text-transform: uppercase;
+    }
+
+    .theme-control { display: grid; gap: var(--space-1); color: var(--text-muted); font-size: .78rem; font-weight: 700; }
+    .theme-control select { min-width: 7.5rem; padding-inline: var(--space-3) 2rem; }
+
+    .status-strip {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: var(--space-3);
+      padding-block: var(--space-3);
+    }
+
+    .event-state { display: flex; align-items: center; gap: var(--space-2); font-size: .9rem; font-weight: 760; }
+    .event-state::before { content: ""; width: .65rem; height: .65rem; border-radius: 50%; background: var(--warning); box-shadow: 0 0 0 4px color-mix(in srgb, var(--warning) 16%, transparent); }
+    .storage-note { color: var(--text-muted); font-size: .78rem; text-align: right; }
+
+    .view-nav {
+      width: 100%;
+      overflow-x: auto;
+      border-block: 1px solid var(--line);
+      scrollbar-color: var(--cyan) var(--surface-raised);
+      background: var(--surface-raised);
+    }
+
+    .nav-track {
+      display: flex;
+      width: min(var(--max-width), max-content);
+      min-width: max-content;
+      margin-inline: auto;
+      padding: var(--space-2) var(--space-4);
+      gap: var(--space-2);
+    }
+
+    .nav-button {
+      min-width: 7.25rem;
+      padding-inline: var(--space-3);
+      border-color: transparent;
+      background: transparent;
+      color: var(--text-muted);
+      font-size: .84rem;
+      font-weight: 750;
+      white-space: nowrap;
+    }
+
+    .nav-button[aria-current="page"] { border-color: var(--cyan); background: var(--cyan-soft); color: var(--text); }
+
+    main { min-height: 31rem; }
+    .main-inner { padding-block: clamp(2rem, 6vw, 4.75rem); }
+
+    .view-heading { max-width: 48rem; margin-bottom: var(--space-6); }
+    .view-heading h2 { margin: 0; font-size: clamp(1.8rem, 5vw, 3.4rem); line-height: 1.02; letter-spacing: -.055em; }
+    .view-kicker { margin: 0 0 var(--space-3); color: var(--cyan); font-size: .78rem; font-weight: 850; letter-spacing: .15em; text-transform: uppercase; }
+    .view-summary { max-width: 42rem; margin: var(--space-4) 0 0; color: var(--text-muted); font-size: 1.05rem; }
+
+    .empty-grid { display: grid; grid-template-columns: minmax(0, 1.35fr) minmax(16rem, .65fr); gap: var(--space-5); }
+
+    .panel {
+      border: 1px solid var(--line);
+      border-radius: var(--radius-lg);
+      background: linear-gradient(145deg, var(--surface-panel), var(--surface-raised));
+      box-shadow: var(--shadow-sm);
+    }
+
+    .empty-card { padding: clamp(1.5rem, 5vw, 3rem); }
+    .empty-card h3 { margin: 0; font-size: clamp(1.45rem, 4vw, 2.25rem); letter-spacing: -.035em; }
+    .empty-card p { max-width: 41rem; color: var(--text-muted); }
+
+    .action-row { display: flex; flex-wrap: wrap; gap: var(--space-3); margin-top: var(--space-5); }
+    .primary-action { padding-inline: var(--space-5); border-color: var(--cyan); background: var(--cyan); color: #061116; font-weight: 850; }
+    .secondary-action { padding-inline: var(--space-5); border-color: var(--line); background: transparent; color: var(--text); font-weight: 780; }
+
+    .trust-panel { padding: var(--space-5); }
+    .trust-panel h3 { margin: 0 0 var(--space-4); font-size: 1rem; }
+    .trust-list { display: grid; gap: var(--space-4); margin: 0; padding: 0; list-style: none; }
+    .trust-list li { display: grid; grid-template-columns: 1.75rem 1fr; gap: var(--space-3); color: var(--text-muted); font-size: .9rem; }
+    .trust-list strong { display: block; color: var(--text); }
+    .signal { display: grid; width: 1.75rem; height: 1.75rem; place-items: center; border-radius: 50%; background: var(--cyan-soft); color: var(--cyan); font-weight: 900; }
+
+    .view-placeholder { max-width: 46rem; padding: var(--space-5); }
+    .view-placeholder p { color: var(--text-muted); }
+
+    .live-dock { display: flex; align-items: center; justify-content: space-between; gap: var(--space-3); margin-top: var(--space-5); padding: var(--space-3) var(--space-4); }
+    .live-dock strong { font-size: .9rem; }
+    .live-dock span { color: var(--text-muted); font-size: .82rem; }
+
+    .shell-footer { border-top: 1px solid var(--line); background: var(--surface-raised); }
+    .footer-inner { display: flex; justify-content: space-between; gap: var(--space-4); padding-block: var(--space-5); color: var(--text-muted); font-size: .8rem; }
+    .credit { color: var(--text); font-weight: 720; }
+
+    .visually-hidden {
+      position: absolute !important;
+      width: 1px !important;
+      height: 1px !important;
+      padding: 0 !important;
+      margin: -1px !important;
+      overflow: hidden !important;
+      clip: rect(0, 0, 0, 0) !important;
+      white-space: nowrap !important;
+      border: 0 !important;
+    }
+
+    dialog { max-width: min(34rem, calc(100% - 2rem)); padding: 0; border: 1px solid var(--line); border-radius: var(--radius-lg); background: var(--surface-raised); color: var(--text); box-shadow: var(--shadow-lg); }
+    dialog::backdrop { background: rgba(2, 7, 10, .76); }
+    .dialog-inner { padding: var(--space-5); }
+
+    @media (max-width: 700px) {
+      .masthead { align-items: flex-start; }
+      .mark { min-width: 3.6rem; min-height: 3.6rem; }
+      .edition, .storage-note { display: none; }
+      .empty-grid { grid-template-columns: 1fr; }
+      .footer-inner { flex-direction: column; }
+    }
+
+    @media (max-width: 420px) {
+      .masthead, .status-strip, .main-inner, .footer-inner { width: min(100% - 1.25rem, var(--max-width)); }
+      .masthead { gap: var(--space-2); }
+      .brand-lockup { gap: var(--space-2); }
+      .mark { min-width: 3.1rem; min-height: 3.1rem; font-size: .78rem; }
+      h1 { font-size: 1rem; }
+      .theme-control select { min-width: 6.5rem; }
+      .nav-track { margin-inline: 0; padding-inline: .625rem; }
+      .nav-button { min-width: 7.5rem; }
+      .action-row > * { width: 100%; }
+      .live-dock { position: sticky; z-index: 10; bottom: 0; border-color: var(--cyan); box-shadow: 0 -10px 30px rgba(0, 0, 0, .3); }
+    }
+
+    @media (prefers-reduced-motion: reduce) {
+      *, *::before, *::after { scroll-behavior: auto !important; transition-duration: .01ms !important; animation-duration: .01ms !important; animation-iteration-count: 1 !important; }
+    }
+
+    @media print {
+      :root { color-scheme: light; --surface: #fff; --surface-raised: #fff; --surface-panel: #fff; --text: #000; --text-muted: #333; --line: #777; }
+      body { background: #fff; }
+      .skip-link, .theme-control, .view-nav, .action-row, .live-dock, dialog { display: none !important; }
+      .shell-header, .shell-footer, .panel { box-shadow: none; }
+      .main-inner { padding-block: 1rem; }
+      .credit { color: #000; }
+    }
+  </style>
+</head>
+<body>
+  <a class="skip-link" href="#main-content">Skip to main content</a>
+
+  <header class="shell-header">
+    <div class="masthead">
+      <div class="brand-lockup">
+        <div class="mark" aria-label="Round Robin three">RR · 3</div>
+        <div>
+          <p class="eyebrow">Race operations</p>
+          <h1>Round Robin Race Control</h1>
+        </div>
+        <span class="edition">Solo</span>
+      </div>
+      <label class="theme-control" for="theme-select">
+        Theme
+        <select id="theme-select" data-action="set-theme">
+          <option value="system">System</option>
+          <option value="light">Light</option>
+          <option value="dark">Dark</option>
+        </select>
+      </label>
+    </div>
+    <div class="status-strip" aria-label="Event status">
+      <span class="event-state">No event loaded</span>
+      <span class="storage-note">Local-first · offline-ready shell</span>
+    </div>
+  </header>
+
+  <nav class="view-nav" aria-label="Primary views">
+    <div class="nav-track">
+      <button class="nav-button" type="button" data-view="dashboard" aria-current="page">Dashboard</button>
+      <button class="nav-button" type="button" data-view="registration">Registration</button>
+      <button class="nav-button" type="button" data-view="setup">Race Setup</button>
+      <button class="nav-button" type="button" data-view="live">Live Racing</button>
+      <button class="nav-button" type="button" data-view="standings">Standings</button>
+      <button class="nav-button" type="button" data-view="finals">Finals</button>
+      <button class="nav-button" type="button" data-view="reports">Reports</button>
+      <button class="nav-button" type="button" data-view="settings">Settings</button>
+      <button class="nav-button" type="button" data-view="diagnostics">Diagnostics</button>
+    </div>
+  </nav>
+
+  <main id="main-content" data-active-view="dashboard" tabindex="-1">
+    <div class="main-inner" id="view-content"></div>
+  </main>
+
+  <footer class="shell-footer">
+    <div class="footer-inner">
+      <span class="credit">Made by Cesar Lacsamana and Ahsan Ali</span>
+      <span>Round Robin Race Control · Solo Edition</span>
+    </div>
+  </footer>
+
+  <div id="save-status" class="visually-hidden" role="status" aria-live="polite" aria-atomic="true"></div>
+  <div id="error-status" class="visually-hidden" role="alert" aria-live="assertive" aria-atomic="true"></div>
+  <input id="import-input" type="file" accept="application/json,.json" hidden>
+  <dialog id="app-dialog" aria-labelledby="dialog-title">
+    <div class="dialog-inner">
+      <h2 id="dialog-title">Round Robin Race Control</h2>
+      <p id="dialog-copy"></p>
+      <button type="button" data-action="close-dialog">Close</button>
+    </div>
+  </dialog>
+
+  <script type="application/json" id="preset-data">
+{
+  "template9": [
+    [[1, 2, 3], [4, 5, 6], [7, 8, 9]],
+    [[1, 4, 7], [2, 5, 8], [3, 6, 9]],
+    [[1, 8, 6], [4, 2, 9], [7, 5, 3]],
+    [[1, 5, 9], [4, 8, 3], [7, 2, 6]]
+  ],
+  "template12": [
+    [[1, 2, 3], [4, 5, 6], [7, 8, 9], [10, 11, 12]],
+    [[1, 6, 11], [5, 10, 4], [9, 3, 8], [2, 7, 12]],
+    [[1, 10, 8], [6, 4, 2], [11, 9, 7], [5, 3, 12]],
+    [[1, 4, 7], [10, 2, 5], [8, 11, 3], [6, 9, 12]],
+    [[1, 5, 9], [2, 6, 10], [3, 7, 11], [4, 8, 12]]
+  ],
+  "template15": [
+    [[1, 2, 3], [4, 5, 6], [7, 8, 9], [10, 11, 12], [13, 14, 15]],
+    [[1, 12, 9], [6, 3, 14], [11, 8, 5], [2, 13, 10], [7, 4, 15]],
+    [[1, 14, 13], [12, 11, 10], [9, 8, 7], [6, 5, 4], [3, 2, 15]],
+    [[1, 10, 5], [14, 9, 4], [13, 8, 3], [12, 7, 2], [11, 6, 15]],
+    [[1, 4, 7], [10, 13, 2], [5, 8, 11], [14, 3, 6], [9, 12, 15]],
+    [[1, 6, 11], [2, 7, 12], [3, 8, 13], [4, 9, 14], [5, 10, 15]]
+  ],
+  "finals15": [
+    [[15, 1, 14], [11, 9, 7], [13, 8, 10], [5, 12, 2], [4, 6, 3]],
+    [[12, 10, 4], [1, 3, 13], [6, 7, 5], [9, 2, 15], [8, 14, 11]],
+    [[7, 13, 1], [2, 4, 8], [10, 11, 6], [3, 15, 12], [14, 5, 9]],
+    [[5, 1, 10], [15, 8, 7], [11, 6, 3], [13, 9, 14], [4, 12, 2]],
+    [[7, 3, 13], [6, 2, 15], [8, 9, 5], [12, 14, 11], [1, 10, 4]]
+  ]
+}
+  </script>
+  <script>
+    (() => {
+      'use strict';
+
+      const VERSION = '1.0.0';
+      const THEME_KEY = 'rr3:theme';
+      const allowedThemes = new Set(['system', 'light', 'dark']);
+      const usedIds = new Set();
+      let fallbackSequence = 0;
+      let state = createDefaultState();
+      const diagnosticErrors = [];
+
+      const viewDetails = Object.freeze({
+        dashboard: ['Control overview', 'Dashboard', 'Start with a real event or intentionally load a separate demonstration event.'],
+        registration: ['Entrants and accounts', 'Registration & Fees', 'Participant, car, and fee records will appear here after an event is created.'],
+        setup: ['Race format', 'Race Setup', 'Choose and validate a race format after registering active cars.'],
+        live: ['Event-day cockpit', 'Live Racing', 'Race controls stay inactive until a valid schedule is armed.'],
+        standings: ['Official projection', 'Standings', 'Standings remain empty until completed official heat results exist.'],
+        finals: ['Qualification and podium', 'Finals', 'Finals remain separate from preliminary racing and begin without a champion.'],
+        reports: ['Portable records', 'Reports', 'Printable and portable event records are organized here.'],
+        settings: ['Event preferences', 'Settings', 'Theme and event preferences are managed without sending event data away.'],
+        diagnostics: ['Local confidence', 'Diagnostics', 'Environment checks and sanitized application notices are available here.']
+      });
+
+      function createDefaultState() {
+        return {
+          schemaVersion: 1,
+          event: null,
+          participants: [],
+          heats: [],
+          results: [],
+          activeView: 'dashboard',
+          theme: 'system'
+        };
+      }
+
+      function cloneValue(value) {
+        return JSON.parse(JSON.stringify(value));
+      }
+
+      function createStableId(prefix = 'item') {
+        let candidate = '';
+        do {
+          if (globalThis.crypto && typeof globalThis.crypto.randomUUID === 'function') {
+            candidate = `${prefix}-${globalThis.crypto.randomUUID()}`;
+          } else {
+            fallbackSequence += 1;
+            candidate = `${prefix}-local-${fallbackSequence.toString(36).padStart(4, '0')}`;
+          }
+        } while (usedIds.has(candidate));
+        usedIds.add(candidate);
+        return candidate;
+      }
+
+      function element(tagName, options = {}, children = []) {
+        const node = document.createElement(tagName);
+        if (options.className) node.className = options.className;
+        if (options.text !== undefined) node.textContent = String(options.text);
+        if (options.attributes) {
+          Object.entries(options.attributes).forEach(([name, value]) => node.setAttribute(name, String(value)));
+        }
+        children.forEach((child) => node.append(child));
+        return node;
+      }
+
+      function storageRead(key) {
+        try { return localStorage.getItem(key); } catch (_) { return null; }
+      }
+
+      function storageWrite(key, value) {
+        try { localStorage.setItem(key, value); } catch (_) { announce('Theme applies for this session.'); }
+      }
+
+      function normalizeTheme(value) {
+        return allowedThemes.has(value) ? value : 'system';
+      }
+
+      function resolvedTheme(preference) {
+        if (preference !== 'system') return preference;
+        return matchMedia('(prefers-color-scheme: dark)').matches ? 'dark' : 'light';
+      }
+
+      function applyTheme(preference, persist = false) {
+        const normalized = normalizeTheme(preference);
+        state = { ...state, theme: normalized };
+        document.documentElement.dataset.theme = resolvedTheme(normalized);
+        const select = document.getElementById('theme-select');
+        if (select) select.value = normalized;
+        if (persist) storageWrite(THEME_KEY, normalized);
+      }
+
+      function announce(message) {
+        const region = document.getElementById('save-status');
+        if (region) region.textContent = String(message);
+      }
+
+      function sanitizeError(value) {
+        const raw = value instanceof Error ? value.message : String(value || 'Unexpected application error');
+        return raw.replace(/[\r\n\t]+/g, ' ').replace(/(?:file|https?):\/\/\S+/gi, '[location]').slice(0, 180);
+      }
+
+      function captureError(value) {
+        const message = sanitizeError(value);
+        diagnosticErrors.push({ id: createStableId('error'), message });
+        const region = document.getElementById('error-status');
+        if (region) region.textContent = `Application notice: ${message}`;
+      }
+
+      function renderDashboard(container) {
+        const heading = element('div', { className: 'view-heading' }, [
+          element('p', { className: 'view-kicker', text: 'Ready when race control is' }),
+          element('h2', { text: 'Your next race starts clean.' }),
+          element('p', { className: 'view-summary', text: 'Create an empty real event for official work, or deliberately choose the separate demo action for exploration.' })
+        ]);
+        const createButton = element('button', { className: 'primary-action', text: 'Create Real Event', attributes: { type: 'button', 'data-action': 'open-create-info' } });
+        const demoButton = element('button', { className: 'secondary-action', text: 'Load Demo Event', attributes: { type: 'button', 'data-action': 'open-demo-info' } });
+        const emptyCard = element('section', { className: 'panel empty-card', attributes: { 'aria-labelledby': 'empty-title' } }, [
+          element('h3', { text: 'Start a real event', attributes: { id: 'empty-title' } }),
+          element('p', { text: 'Nothing is pre-populated: no entrants, heats, results, winners, or podium.' }),
+          element('div', { className: 'action-row' }, [createButton, demoButton])
+        ]);
+        const trustPanel = element('aside', { className: 'panel trust-panel', attributes: { 'aria-labelledby': 'storage-title' } }, [
+          element('h3', { text: 'Local by design', attributes: { id: 'storage-title' } }),
+          element('ul', { className: 'trust-list' }, [
+            element('li', {}, [element('span', { className: 'signal', text: '1', attributes: { 'aria-hidden': 'true' } }), element('span', {}, [element('strong', { text: 'Data stays in this browser' }), document.createTextNode('This shell makes no network request.')])]),
+            element('li', {}, [element('span', { className: 'signal', text: '2', attributes: { 'aria-hidden': 'true' } }), element('span', {}, [element('strong', { text: 'Local-file storage is best effort' }), document.createTextNode('Browser privacy settings can clear or isolate file data.')])]),
+            element('li', {}, [element('span', { className: 'signal', text: '3', attributes: { 'aria-hidden': 'true' } }), element('span', {}, [element('strong', { text: 'Durable backup arrives later' }), document.createTextNode('No portable backup capability is claimed on this first-load shell.')])])
+          ])
+        ]);
+        container.append(heading, element('div', { className: 'empty-grid' }, [emptyCard, trustPanel]));
+      }
+
+      function renderView(view) {
+        const container = document.getElementById('view-content');
+        if (!container) return;
+        container.replaceChildren();
+        if (view === 'dashboard') {
+          renderDashboard(container);
+          return;
+        }
+        const detail = viewDetails[view];
+        const section = element('section', { className: 'panel view-placeholder' }, [
+          element('p', { className: 'view-kicker', text: detail[0] }),
+          element('h2', { text: detail[1] }),
+          element('p', { text: detail[2] })
+        ]);
+        container.append(section);
+        if (view === 'live') {
+          container.append(element('aside', { className: 'panel live-dock', attributes: { 'data-live-dock': '', 'aria-label': 'Live control dock' } }, [
+            element('strong', { text: 'Live control dock' }),
+            element('span', { text: 'Waiting for an armed event' })
+          ]));
+        }
+      }
+
+      function selectView(view) {
+        if (!Object.hasOwn(viewDetails, view)) return;
+        state = { ...state, activeView: view };
+        const main = document.getElementById('main-content');
+        if (main) main.dataset.activeView = view;
+        document.querySelectorAll('[data-view]').forEach((button) => {
+          if (button.getAttribute('data-view') === view) button.setAttribute('aria-current', 'page');
+          else button.removeAttribute('aria-current');
+        });
+        renderView(view);
+      }
+
+      function openInformation(title, copy) {
+        const dialog = document.getElementById('app-dialog');
+        document.getElementById('dialog-title').textContent = title;
+        document.getElementById('dialog-copy').textContent = copy;
+        if (dialog && typeof dialog.showModal === 'function') dialog.showModal();
+      }
+
+      function handleClick(event) {
+        const target = event.target.closest('[data-view], [data-action]');
+        if (!target) return;
+        const view = target.getAttribute('data-view');
+        if (view) {
+          selectView(view);
+          return;
+        }
+        const action = target.getAttribute('data-action');
+        if (action === 'close-dialog') document.getElementById('app-dialog').close();
+        if (action === 'open-create-info') openInformation('Create a real event', 'A real event begins empty and keeps official work separate from demonstration data.');
+        if (action === 'open-demo-info') openInformation('Load Demo Event', 'The demonstration path is clearly separate and never changes a real event.');
+      }
+
+      function handleChange(event) {
+        const target = event.target.closest('[data-action="set-theme"]');
+        if (!target) return;
+        applyTheme(target.value, true);
+        announce(`Theme set to ${target.value}.`);
+      }
+
+      window.addEventListener('error', (event) => captureError(event.error || event.message));
+      window.addEventListener('unhandledrejection', (event) => captureError(event.reason));
+      document.addEventListener('click', handleClick);
+      document.addEventListener('change', handleChange);
+      matchMedia('(prefers-color-scheme: dark)').addEventListener('change', () => {
+        if (state.theme === 'system') applyTheme('system');
+      });
+
+      applyTheme(storageRead(THEME_KEY) || 'system');
+      renderView('dashboard');
+
+      const api = Object.freeze({
+        version: VERSION,
+        getState: () => cloneValue(state),
+        runAllTests: () => ({ passed: 0, failed: 0, total: 0, groups: [] })
+      });
+      Object.defineProperty(window, 'RR3', { value: api, writable: false, configurable: false, enumerable: true });
+    })();
+  </script>
+</body>
+</html>
