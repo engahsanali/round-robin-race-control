@@ -155,6 +155,19 @@ test('uses audit heat IDs for phase identity and treats an unaudited legacy fina
   await expect(page.getByLabel('Race phase')).toHaveValue('championship');
 });
 
+test('bounds a legacy playoff fallback when a later finals invalidator creates championship heats', async ({ page }) => {
+  const event = finalsEvent(4, 3) as any;
+  event.finals = [{ id: 'later-championship', phase: 'final', matchNumber: 1, heatNumber: 1, lanes: ['car-2', 'car-3', null], status: 'completed', winnerEntryId: 'car-2', laneTimesMs: [900, 1000, null], notes: 'Qualification playoff' }];
+  event.auditLog = [
+    { id: 'legacy-playoff', timestamp: '2026-08-13T00:00:00.000Z', action: 'finals.playoff-generated', summary: 'Legacy playoff', entityType: 'event', entityId: event.event.id, details: { purpose: 'qualification-playoff', tiedCarIds: ['car-2', 'car-3'] } },
+    { id: 'later-finals', timestamp: '2026-08-14T00:00:00.000Z', action: 'finals.schedule-generated', summary: 'Later championship', entityType: 'event', entityId: event.event.id, details: { purpose: 'championship-finals', heatIds: ['later-championship'], finalistCarIds: ['car-2', 'car-3'] } },
+  ];
+  await openFinals(page, event);
+  await expect(page.getByText('Championship finals have not been generated.', { exact: true })).toHaveCount(0);
+  await page.getByRole('button', { name: 'Live Racing' }).click();
+  await expect(page.getByLabel('Race phase').locator('option')).toHaveText(['Preliminary', 'Championship Finals']);
+});
+
 test('manual cutoff resolution requires the exact number of distinct eligible tied entrants plus a reason', async ({ page }) => {
   await openFinals(page, cutoffTieEvent(4, 3));
   await page.getByRole('button', { name: 'Manual selection with reason' }).click();

@@ -58,6 +58,106 @@ async function recordVisibleWinner(page: Page, entryId: string) {
   await page.getByRole('button', { name: 'Confirm winner' }).click();
 }
 
+function sealedPublicationEvent() {
+  const timestamp = '2026-08-13T00:00:00.000Z';
+  return {
+    version: 1,
+    event: { id: 'sealed-publication', name: 'Sealed Publication', date: '2026-08-14', venue: '', organizer: '', laneCount: 3, status: 'running', createdAt: timestamp, updatedAt: timestamp, resultSeal: 'official' },
+    settings: { scheduleMode: 'custom', seed: 'sealed', rankingMode: 'competition', allowSharedRanks: true, tieBreakOrder: ['totalWins'], finalistCount: 2, autoSave: true, confirmWinnerChanges: true, enableTiming: false, prices: { standard: 100 } },
+    participants: Array.from({ length: 3 }, (_, index) => ({ id: `person-${index + 1}`, name: `Driver ${index + 1}`, email: '', phone: '', notes: '' })),
+    entries: Array.from({ length: 3 }, (_, index) => ({ id: `car-${index + 1}`, participantId: `person-${index + 1}`, carNumber: index + 1, name: `Car ${index + 1}`, categoryId: 'standard', quantity: 1, active: true })),
+    matches: [{ id: 'preliminary-heat', phase: 'preliminary', matchNumber: 1, heatNumber: 1, lanes: ['car-1', 'car-2', 'car-3'], status: 'completed', winnerEntryId: 'car-1', laneTimesMs: [null, null, null], notes: '' }],
+    finals: [{ id: 'championship-heat', phase: 'final', matchNumber: 1, heatNumber: 1, lanes: ['car-1', 'car-2', null], status: 'completed', winnerEntryId: 'car-1', laneTimesMs: [null, null, null], notes: 'Championship finals' }],
+    payments: [],
+    auditLog: [
+      { id: 'championship-generated', timestamp, action: 'finals.schedule-generated', summary: 'Championship generated', entityType: 'event', entityId: 'sealed-publication', details: { purpose: 'championship-finals', heatIds: ['championship-heat'], finalistCarIds: ['car-1', 'car-2'] } },
+      { id: 'official-seal-audit', timestamp, action: 'results.sealed', summary: 'Official results sealed', entityType: 'event', entityId: 'sealed-publication', details: { championCarId: 'car-1' } },
+    ],
+  };
+}
+
+async function openSealedLive(page: Page, phase: 'preliminary' | 'championship' = 'championship') {
+  await importLiveEvent(page, sealedPublicationEvent());
+  await page.getByLabel('Race phase').selectOption(phase);
+}
+
+async function expectSealInvalidated(page: Page, sourceAction: string, reason: string, sourceHeatId: string) {
+  const state = await page.evaluate(() => (window as any).RR3.getState());
+  expect(state.event.resultSeal).toBe('provisional');
+  expect(state.auditLog.at(-1)).toMatchObject({
+    action: 'results.seal-invalidated',
+    details: { sourceAction, reason, sourceHeatId, priorSealAuditId: 'official-seal-audit', championCarId: 'car-1', priorSeal: 'official' },
+  });
+  await page.getByRole('button', { name: 'Finals' }).click();
+  await expect(page.getByText('Official seal', { exact: true })).toHaveCount(0);
+}
+
+test('invalidates an official seal for championship correction, cancellation, and rerun with operator reasons', async ({ page }) => {
+  await openSealedLive(page);
+  await page.locator('[data-lane-card][data-entry-id="car-2"]').click();
+  await page.getByRole('button', { name: 'Review winner change' }).click();
+  await page.getByLabel('Change reason').fill('Finish judge corrected championship winner');
+  await page.getByRole('button', { name: 'Confirm winner change' }).click();
+  await expectSealInvalidated(page, 'result.corrected', 'Finish judge corrected championship winner', 'championship-heat');
+  await expect(page.getByRole('button', { name: 'Seal official results' })).toBeEnabled();
+
+  await openSealedLive(page);
+  await page.getByRole('button', { name: 'Cancel heat' }).click();
+  await page.getByLabel('Cancellation reason').fill('Championship track obstruction');
+  await page.getByRole('button', { name: 'Confirm cancellation' }).click();
+  await expectSealInvalidated(page, 'heat.cancelled', 'Championship track obstruction', 'championship-heat');
+  await expect(page.getByRole('button', { name: 'Seal official results' })).toBeDisabled();
+
+  await openSealedLive(page);
+  await page.getByRole('button', { name: 'Mark for rerun' }).click();
+  await page.getByLabel('Rerun reason').fill('Championship false start');
+  await page.getByRole('button', { name: 'Confirm rerun' }).click();
+  await expectSealInvalidated(page, 'heat.rerun-marked', 'Championship false start', 'championship-heat');
+  await expect(page.getByRole('button', { name: 'Seal official results' })).toBeDisabled();
+});
+
+test('invalidates an official seal when undo restores a prior championship result', async ({ page }) => {
+  const event = sealedPublicationEvent() as any;
+  event.event.resultSeal = 'provisional';
+  event.auditLog = event.auditLog.slice(0, 1);
+  await importLiveEvent(page, event);
+  await page.getByLabel('Race phase').selectOption('championship');
+  await page.locator('[data-lane-card][data-entry-id="car-2"]').click();
+  await page.getByRole('button', { name: 'Review winner change' }).click();
+  await page.getByLabel('Change reason').fill('Temporary corrected result');
+  await page.getByRole('button', { name: 'Confirm winner change' }).click();
+  await page.getByRole('button', { name: 'Finals' }).click();
+  await page.getByRole('button', { name: 'Seal official results' }).click();
+  const sealAuditId = await page.evaluate(() => (window as any).RR3.getState().auditLog.at(-1).id);
+  await page.getByRole('button', { name: 'Live Racing' }).click();
+  await page.getByLabel('Race phase').selectOption('championship');
+  await page.keyboard.press('Control+z');
+  const state = await page.evaluate(() => (window as any).RR3.getState());
+  expect(state.event.resultSeal).toBe('provisional');
+  expect(state.finals[0].winnerEntryId).toBe('car-1');
+  expect(state.auditLog.at(-1)).toMatchObject({ action: 'results.seal-invalidated', details: { sourceAction: 'result.undone', reason: 'Undo of result.corrected', sourceHeatId: 'championship-heat', priorSealAuditId: sealAuditId, championCarId: 'car-2' } });
+});
+
+test('invalidates an official championship seal when preliminary or qualification evidence changes', async ({ page }) => {
+  await openSealedLive(page, 'preliminary');
+  await page.locator('[data-lane-card][data-entry-id="car-2"]').click();
+  await page.getByRole('button', { name: 'Review winner change' }).click();
+  await page.getByLabel('Change reason').fill('Preliminary eligibility correction');
+  await page.getByRole('button', { name: 'Confirm winner change' }).click();
+  await expectSealInvalidated(page, 'result.corrected', 'Preliminary eligibility correction', 'preliminary-heat');
+
+  const qualificationEvent = sealedPublicationEvent() as any;
+  qualificationEvent.finals.push({ id: 'qualification-heat', phase: 'final', matchNumber: 1, heatNumber: 2, lanes: ['car-2', 'car-3', null], status: 'completed', winnerEntryId: 'car-2', laneTimesMs: [null, null, null], notes: '' });
+  qualificationEvent.auditLog.splice(1, 0, { id: 'qualification-audit', timestamp: qualificationEvent.event.updatedAt, action: 'finals.playoff-generated', summary: 'Qualification playoff', entityType: 'event', entityId: qualificationEvent.event.id, details: { purpose: 'qualification-playoff', heatIds: ['qualification-heat'], tiedEntryIds: ['car-2', 'car-3'], needed: 1, baseQualifiedIds: ['car-1'] } });
+  await importLiveEvent(page, qualificationEvent);
+  await page.getByLabel('Race phase').selectOption('qualification');
+  await page.locator('[data-lane-card][data-entry-id="car-3"]').click();
+  await page.getByRole('button', { name: 'Review winner change' }).click();
+  await page.getByLabel('Change reason').fill('Qualification eligibility correction');
+  await page.getByRole('button', { name: 'Confirm winner change' }).click();
+  await expectSealInvalidated(page, 'result.corrected', 'Qualification eligibility correction', 'qualification-heat');
+});
+
 test('runs qualification playoff and championship finals through phase-aware live controls before sealing', async ({ page }) => {
   const timestamp = '2026-08-13T00:00:00.000Z';
   const event = {
