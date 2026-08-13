@@ -34,6 +34,52 @@ async function createEvent(page: Parameters<typeof test>[0]['page']) {
   await expect(page.getByText('Community Derby', { exact: true }).first()).toBeVisible();
 }
 
+test('registers a participant and car inside the Participants wizard step before arming', async ({ page }) => {
+  await page.goto(fileUrl);
+  await page.getByRole('button', { name: 'Create Real Event' }).click();
+  await page.getByLabel('Event name').fill('Wizard Derby');
+  await page.getByLabel('Event date').fill('2026-09-02');
+  await page.getByRole('button', { name: 'Next step' }).click();
+  await page.getByLabel('Category ID').fill('junior');
+  await page.getByLabel('Category name').fill('Junior');
+  await page.getByLabel('Price in cents').fill('900');
+  await page.getByRole('button', { name: 'Add category' }).click();
+  await page.getByRole('button', { name: 'Next step' }).click();
+
+  await page.getByLabel('Wizard participant name').fill('Kai Racer');
+  await page.getByLabel('Wizard participant email').fill('kai@example.test');
+  await page.getByRole('button', { name: 'Add wizard participant' }).click();
+  await page.getByLabel('Wizard participant for car').selectOption({ label: 'Kai Racer' });
+  await page.getByLabel('Wizard car number').fill('22');
+  await page.getByLabel('Wizard car name').fill('Lightning');
+  await page.getByLabel('Wizard car category').selectOption('junior');
+  await page.getByLabel('Wizard entry quantity').fill('1');
+  await page.getByRole('button', { name: 'Add wizard car' }).click();
+  await expect(page.getByText('Kai Racer — #22 Lightning', { exact: true })).toBeVisible();
+
+  await page.getByRole('button', { name: 'Next step' }).click();
+  await page.getByRole('button', { name: 'Next step' }).click();
+  await expect(page.getByText('1 participant · 1 car', { exact: true })).toBeVisible();
+  await page.getByRole('button', { name: 'Arm registration' }).click();
+  const state = await page.evaluate(() => (window as unknown as { RR3: { getState(): { participants: unknown[]; entries: unknown[] } } }).RR3.getState());
+  expect(state.participants).toHaveLength(1);
+  expect(state.entries).toHaveLength(1);
+});
+
+test('associates precise submission errors with invalid fields and announces them', async ({ page }) => {
+  await page.goto(fileUrl);
+  await page.getByRole('button', { name: 'Create Real Event' }).click();
+  await page.getByRole('button', { name: 'Next step' }).click();
+
+  const name = page.getByLabel('Event name');
+  await expect(name).toHaveAttribute('aria-invalid', 'true');
+  const describedBy = await name.getAttribute('aria-describedby');
+  expect(describedBy).toBeTruthy();
+  await expect(page.locator(`#${describedBy}`)).toHaveText('Event name is required.');
+  await expect(page.locator(`#${describedBy}`)).toHaveAttribute('role', 'alert');
+  await expect(page.locator(`#${describedBy}`)).toHaveAttribute('aria-live', 'assertive');
+});
+
 test('guides event setup and manages stable participant and car records', async ({ page }) => {
   await createEvent(page);
   await page.getByRole('button', { name: 'Registration' }).click();

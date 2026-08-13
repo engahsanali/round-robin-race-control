@@ -451,6 +451,11 @@
       const THEME_KEY = 'rr3:theme';
       const CURRENT_KEY = 'rr3:solo:event:current';
       const PREVIOUS_KEY = 'rr3:solo:event:previous';
+      const DEMO_KEY = 'rr3:solo:demo:current';
+      const WORKSPACE_KEY = 'rr3:solo:workspace';
+      const MAX_COLLECTION_SIZE = 10000;
+      const MAX_JSON_DEPTH = 128;
+      const MAX_JSON_OBJECT_NODES = 100000;
       const allowedThemes = new Set(['system', 'light', 'dark']);
       const dangerousKeys = new Set(['__proto__', 'constructor', 'prototype']);
       const usedIds = new Set();
@@ -514,7 +519,9 @@
         const errorId = `${id}-error`;
         input.setAttribute('aria-describedby', errorId);
         if (error) input.setAttribute('aria-invalid', 'true');
-        label.append(input, element('p', { className: 'field-error', text: error, attributes: { id: errorId } }));
+        const errorAttributes = { id: errorId };
+        if (error) { errorAttributes.role = 'alert'; errorAttributes['aria-live'] = 'assertive'; }
+        label.append(input, element('p', { className: 'field-error', text: error, attributes: errorAttributes }));
         return label;
       }
       function selectField(labelText, id, options, value = '') {
@@ -567,74 +574,112 @@
       function validateEvent(value) {
         const issues = [];
         const pending = [{ value, path: [], depth: 0 }];
+        const discovered = new WeakSet();
+        let objectNodes = 0;
+        if (value !== null && typeof value === 'object') { discovered.add(value); objectNodes = 1; }
         while (pending.length) {
           const current = pending.pop();
-          if (!current.value || typeof current.value !== 'object') continue;
-          if (current.depth > 128) { issues.push('JSON structure is too deeply nested.'); break; }
-          Object.keys(current.value).forEach((key) => {
+          if (current.value === null || typeof current.value !== 'object') continue;
+          for (const key of Object.keys(current.value)) {
             if (dangerousKeys.has(key)) issues.push(`Unsafe object key is not allowed: ${key}`);
             const child = current.value[key];
-            if (child && typeof child === 'object') pending.push({ value: child, path: [...current.path, key], depth: current.depth + 1 });
-          });
+            if (child !== null && typeof child === 'object' && !discovered.has(child)) {
+              const depth = current.depth + 1;
+              if (depth > MAX_JSON_DEPTH) { issues.push(`JSON structure exceeds the maximum depth of ${MAX_JSON_DEPTH}.`); return { ok: false, issues }; }
+              objectNodes += 1;
+              if (objectNodes > MAX_JSON_OBJECT_NODES) { issues.push(`JSON structure exceeds the ${MAX_JSON_OBJECT_NODES}-object safety limit.`); return { ok: false, issues }; }
+              discovered.add(child); pending.push({ value: child, path: [...current.path, key], depth });
+            }
+          }
         }
         if (issues.length) return { ok: false, issues };
-        if (!value || typeof value !== 'object' || Array.isArray(value) || value.version !== 1) return { ok: false, issues: ['Unsupported or missing event schema version.'] };
-        const requiredArrays = ['participants', 'entries', 'matches', 'finals', 'payments', 'auditLog'];
-        if (!value.event || !value.settings || requiredArrays.some((key) => !Array.isArray(value[key]))) return { ok: false, issues: ['Required event collections are missing.'] };
-        if (!value.event.id || !String(value.event.name || '').trim() || String(value.event.name).length > 200) issues.push('Event identity or name is invalid.');
-        if (value.event.laneCount !== 3 || !['setup', 'running', 'completed'].includes(value.event.status)) issues.push('Event lane count or status is invalid.');
-        const ids = new Set();
-        const addId = (item, label) => {
-          if (!item || typeof item.id !== 'string' || !item.id.trim() || item.id.length > 128) issues.push(`${label} requires a stable ID.`);
-          else if (ids.has(item.id)) issues.push(`Duplicate ID: ${item.id}`);
-          else ids.add(item.id);
+        if (!isRecord(value) || value.version !== 1) return { ok: false, issues: ['Unsupported or missing event schema version.'] };
+        const normalized = cloneValue(value);
+        const strict = (record, keys, path) => {
+          if (!isRecord(record)) { issues.push(`${path} must be an object.`); return false; }
+          Object.keys(record).forEach((key) => { if (!keys.includes(key)) issues.push(`${path}.${key} is not allowed.`); });
+          return true;
         };
-        addId(value.event, 'Event');
-        requiredArrays.forEach((key) => value[key].forEach((item) => addId(item, key)));
-        const participantIds = new Set(value.participants.map((item) => item.id));
-        value.participants.forEach((participant) => {
-          if (!String(participant.name || '').trim() || String(participant.name).length > 200 || String(participant.email || '').length > 320 || String(participant.phone || '').length > 64 || String(participant.notes || '').length > 2000) issues.push('Participant fields are missing or too long.');
-        });
-        const activeNumbers = new Set();
-        const entryIds = new Set(value.entries.map((item) => item.id));
-        value.entries.forEach((entry) => {
-          if (!participantIds.has(entry.participantId)) issues.push('Car entry references an unknown participant.');
-          if (!isSafeWhole(entry.carNumber, 1) || !isSafeWhole(entry.quantity, 1)) issues.push('Car number and quantity must be positive whole numbers.');
-          if (!String(entry.name || '').trim() || String(entry.name).length > 200 || !String(entry.categoryId || '').trim()) issues.push('Car name or category is invalid.');
-          if (entry.active && activeNumbers.has(entry.carNumber)) issues.push(`Active car number ${entry.carNumber} is duplicated.`);
-          if (entry.active) activeNumbers.add(entry.carNumber);
-          if (!Object.hasOwn(value.settings.prices, entry.categoryId)) issues.push(`Missing category price for ${entry.categoryId}.`);
-        });
-        Object.entries(value.settings.prices || {}).forEach(([id, cents]) => { if (!id || !isSafeWhole(cents)) issues.push(`Category ${id} has invalid integer cents.`); });
-        value.payments.forEach((payment) => {
-          if (!participantIds.has(payment.participantId)) issues.push('Payment references an unknown participant.');
-          if (!isSafeWhole(payment.amountCents) || !['payment', 'refund'].includes(payment.kind) || !String(payment.note || '').trim() || String(payment.note).length > 500) issues.push('Payment amount, kind, or reference is invalid.');
-        });
-        [...value.matches, ...value.finals].forEach((heat) => {
-          const assigned = Array.isArray(heat.lanes) ? heat.lanes.filter(Boolean) : [];
-          if (!Array.isArray(heat.lanes) || heat.lanes.length !== 3 || assigned.some((id) => !entryIds.has(id)) || new Set(assigned).size !== assigned.length) issues.push('Heat lane references are invalid.');
-          if (heat.winnerEntryId !== null && !assigned.includes(heat.winnerEntryId)) issues.push('Winner must be assigned to the heat.');
-        });
-        return issues.length ? { ok: false, issues } : { ok: true, data: cloneValue(value) };
+        const text = (record, key, maximum, path, required = false) => {
+          if (typeof record?.[key] !== 'string') { issues.push(`${path}.${key} must be text.`); return ''; }
+          const next = record[key].trim(); record[key] = next;
+          if (required && !next) issues.push(`${path}.${key} is required.`);
+          if (next.length > maximum) issues.push(`${path}.${key} must be at most ${maximum} characters.`);
+          return next;
+        };
+        const stableId = (record, key, path) => text(record, key, 128, path, true);
+        const integer = (number, path, minimum = 0, maximum = Number.MAX_SAFE_INTEGER) => {
+          if (!Number.isFinite(number) || !Number.isSafeInteger(number) || number < minimum || number > maximum) { issues.push(`${path} must be a safe whole number from ${minimum} to ${maximum}.`); return false; }
+          return true;
+        };
+        const bool = (record, key, path) => { if (typeof record?.[key] !== 'boolean') issues.push(`${path}.${key} must be true or false.`); };
+        const enumeration = (record, key, allowed, path) => { if (!allowed.includes(record?.[key])) issues.push(`${path}.${key} has an unsupported value.`); };
+        const collection = (key) => {
+          const array = normalized[key];
+          if (!Array.isArray(array)) { issues.push(`${key} must be an array.`); return []; }
+          if (array.length > MAX_COLLECTION_SIZE) issues.push(`${key} exceeds ${MAX_COLLECTION_SIZE} records.`);
+          return array;
+        };
+        strict(normalized, ['version', 'event', 'settings', 'participants', 'entries', 'matches', 'finals', 'payments', 'auditLog'], 'eventState');
+        if (strict(normalized.event, ['id', 'name', 'date', 'venue', 'organizer', 'laneCount', 'status', 'createdAt', 'updatedAt', 'resultSeal'], 'event')) {
+          stableId(normalized.event, 'id', 'event'); text(normalized.event, 'name', 200, 'event', true); text(normalized.event, 'date', 32, 'event', true); text(normalized.event, 'venue', 200, 'event'); text(normalized.event, 'organizer', 200, 'event');
+          if (normalized.event.laneCount !== 3) issues.push('event.laneCount must be 3.');
+          enumeration(normalized.event, 'status', ['setup', 'running', 'completed'], 'event'); text(normalized.event, 'createdAt', 64, 'event', true); text(normalized.event, 'updatedAt', 64, 'event', true); enumeration(normalized.event, 'resultSeal', ['draft', 'provisional', 'official'], 'event');
+        }
+        if (strict(normalized.settings, ['scheduleMode', 'seed', 'rankingMode', 'allowSharedRanks', 'tieBreakOrder', 'finalistCount', 'autoSave', 'confirmWinnerChanges', 'enableTiming', 'prices'], 'settings')) {
+          enumeration(normalized.settings, 'scheduleMode', ['template9', 'template12', 'template15', 'custom'], 'settings'); text(normalized.settings, 'seed', 256, 'settings'); enumeration(normalized.settings, 'rankingMode', ['competition', 'dense', 'ordinal'], 'settings'); bool(normalized.settings, 'allowSharedRanks', 'settings');
+          const tieBreaks = normalized.settings.tieBreakOrder;
+          if (!Array.isArray(tieBreaks) || tieBreaks.length > 8) issues.push('settings.tieBreakOrder must contain at most 8 items.');
+          else tieBreaks.forEach((key, index) => { if (!['totalWins', 'headToHead', 'matchesWon', 'averageTime', 'bestTime', 'laneBalance', 'playoff', 'carNumber'].includes(key)) issues.push(`settings.tieBreakOrder.${index} has an unsupported value.`); });
+          integer(normalized.settings.finalistCount, 'settings.finalistCount', 0, 10000); bool(normalized.settings, 'autoSave', 'settings'); bool(normalized.settings, 'confirmWinnerChanges', 'settings'); bool(normalized.settings, 'enableTiming', 'settings');
+          if (!isRecord(normalized.settings.prices)) issues.push('settings.prices must be an object.'); else Object.entries(normalized.settings.prices).forEach(([id, cents]) => integer(cents, `settings.prices.${id}`));
+        }
+        const participants = collection('participants'); const entries = collection('entries'); const matches = collection('matches'); const finals = collection('finals'); const payments = collection('payments'); const auditLog = collection('auditLog');
+        participants.forEach((participant, index) => { const path = `participants.${index}`; if (!strict(participant, ['id', 'name', 'email', 'phone', 'notes'], path)) return; stableId(participant, 'id', path); text(participant, 'name', 200, path, true); text(participant, 'email', 320, path); text(participant, 'phone', 64, path); text(participant, 'notes', 2000, path); });
+        entries.forEach((entry, index) => { const path = `entries.${index}`; if (!strict(entry, ['id', 'participantId', 'carNumber', 'name', 'categoryId', 'quantity', 'active'], path)) return; stableId(entry, 'id', path); stableId(entry, 'participantId', path); integer(entry.carNumber, `${path}.carNumber`, 1); text(entry, 'name', 200, path, true); stableId(entry, 'categoryId', path); integer(entry.quantity, `${path}.quantity`, 1); bool(entry, 'active', path); });
+        const validateHeat = (heat, index, collectionName, expectedPhase) => { const path = `${collectionName}.${index}`; if (!strict(heat, ['id', 'phase', 'matchNumber', 'heatNumber', 'lanes', 'status', 'winnerEntryId', 'laneTimesMs', 'notes'], path)) return; stableId(heat, 'id', path); enumeration(heat, 'phase', ['preliminary', 'final'], path); if (heat.phase !== expectedPhase) issues.push(`${path}.phase must be ${expectedPhase}.`); integer(heat.matchNumber, `${path}.matchNumber`, 1); integer(heat.heatNumber, `${path}.heatNumber`, 1); enumeration(heat, 'status', ['scheduled', 'completed', 'cancelled', 'rerun'], path); text(heat, 'notes', 2000, path);
+          if (!Array.isArray(heat.lanes) || heat.lanes.length !== 3) issues.push(`${path}.lanes must contain exactly three slots.`); else heat.lanes.forEach((id, lane) => { if (id !== null) { if (typeof id !== 'string') issues.push(`${path}.lanes.${lane} must be a stable ID or null.`); else { heat.lanes[lane] = id.trim(); if (!heat.lanes[lane] || heat.lanes[lane].length > 128) issues.push(`${path}.lanes.${lane} is invalid.`); } } });
+          if (!Array.isArray(heat.laneTimesMs) || heat.laneTimesMs.length !== 3) issues.push(`${path}.laneTimesMs must contain exactly three slots.`); else heat.laneTimesMs.forEach((time, lane) => { if (time !== null) integer(time, `${path}.laneTimesMs.${lane}`); });
+          if (heat.winnerEntryId !== null) stableId(heat, 'winnerEntryId', path);
+          const assigned = Array.isArray(heat.lanes) ? heat.lanes.filter((id) => id !== null) : [];
+          if (new Set(assigned).size !== assigned.length) issues.push(`${path}.lanes contains a duplicate car entry.`);
+          if (heat.winnerEntryId !== null && !assigned.includes(heat.winnerEntryId)) issues.push(`${path}.winnerEntryId must be assigned to this heat.`);
+          if (heat.status === 'completed' && heat.winnerEntryId === null) issues.push(`${path}.winnerEntryId is required for a completed heat.`);
+          if (heat.status !== 'completed' && heat.winnerEntryId !== null) issues.push(`${path}.winnerEntryId is allowed only for a completed heat.`);
+        };
+        matches.forEach((heat, index) => validateHeat(heat, index, 'matches', 'preliminary')); finals.forEach((heat, index) => validateHeat(heat, index, 'finals', 'final'));
+        payments.forEach((payment, index) => { const path = `payments.${index}`; if (!strict(payment, ['id', 'participantId', 'amountCents', 'kind', 'paidAt', 'note'], path)) return; stableId(payment, 'id', path); stableId(payment, 'participantId', path); integer(payment.amountCents, `${path}.amountCents`); enumeration(payment, 'kind', ['payment', 'refund'], path); text(payment, 'paidAt', 64, path, true); text(payment, 'note', 500, path); });
+        auditLog.forEach((audit, index) => { const path = `auditLog.${index}`; if (!strict(audit, ['id', 'timestamp', 'action', 'summary', 'entityType', 'entityId', 'details'], path)) return; stableId(audit, 'id', path); text(audit, 'timestamp', 64, path, true); text(audit, 'action', 128, path, true); text(audit, 'summary', 1000, path, true); text(audit, 'entityType', 128, path, true); if (audit.entityId !== null) stableId(audit, 'entityId', path); if (!isRecord(audit.details)) issues.push(`${path}.details must be an object.`); else validateJsonValues(audit.details, `${path}.details`, issues); });
+        const duplicateIds = (items, collectionName, seen = new Set()) => items.forEach((item, index) => { if (typeof item?.id !== 'string') return; if (seen.has(item.id)) issues.push(`${collectionName}.${index}.id duplicates ${item.id}.`); seen.add(item.id); });
+        duplicateIds(participants, 'participants'); duplicateIds(entries, 'entries'); const heatIds = new Set(); duplicateIds(matches, 'matches', heatIds); duplicateIds(finals, 'finals', heatIds); duplicateIds(payments, 'payments'); duplicateIds(auditLog, 'auditLog');
+        const participantIds = new Set(participants.map((item) => item.id)); const entryIds = new Set(entries.map((item) => item.id)); const activeNumbers = new Map();
+        entries.forEach((entry, index) => { if (!participantIds.has(entry.participantId)) issues.push(`entries.${index}.participantId references an unknown participant.`); if (entry.active) { if (activeNumbers.has(entry.carNumber)) issues.push(`entries.${index}.carNumber duplicates active car number ${entry.carNumber}.`); activeNumbers.set(entry.carNumber, index); } if (isRecord(normalized.settings?.prices) && !Object.hasOwn(normalized.settings.prices, entry.categoryId)) issues.push(`entries.${index}.categoryId has no current price.`); });
+        payments.forEach((payment, index) => { if (!participantIds.has(payment.participantId)) issues.push(`payments.${index}.participantId references an unknown participant.`); });
+        [...matches.map((heat, index) => [heat, `matches.${index}`]), ...finals.map((heat, index) => [heat, `finals.${index}`])].forEach(([heat, path]) => { if (Array.isArray(heat?.lanes)) heat.lanes.forEach((id, lane) => { if (id !== null && !entryIds.has(id)) issues.push(`${path}.lanes.${lane} references an unknown car entry.`); }); });
+        if (issues.length) return { ok: false, issues };
+        try { calculateAccountsForState(normalized); } catch (error) { return { ok: false, issues: [sanitizeError(error)] }; }
+        return { ok: true, data: normalized };
       }
 
-      function calculateAccounts() {
-        const accounts = new Map();
-        if (!eventState) return accounts;
-        eventState.participants.forEach(({ id }) => accounts.set(id, { charge: 0, collected: 0, balance: 0 }));
-        eventState.entries.forEach((entry) => {
-          const price = eventState.settings.prices[entry.categoryId];
-          if (price === undefined || !isSafeWhole(price) || !isSafeWhole(entry.quantity, 1)) return;
-          const account = accounts.get(entry.participantId);
-          account.charge += price * entry.quantity;
-        });
-        eventState.payments.forEach((payment) => {
-          const account = accounts.get(payment.participantId);
-          account.collected += payment.kind === 'refund' ? -payment.amountCents : payment.amountCents;
-        });
-        accounts.forEach((account) => { account.balance = account.charge - account.collected; });
-        return accounts;
+      function isRecord(value) { return value !== null && typeof value === 'object' && !Array.isArray(value); }
+      function validateJsonValues(value, path, issues) {
+        if (value === null || typeof value === 'string' || typeof value === 'boolean') return;
+        if (typeof value === 'number') { if (!Number.isFinite(value)) issues.push(`${path} must contain only finite numbers.`); return; }
+        if (Array.isArray(value)) { if (value.length > MAX_COLLECTION_SIZE) issues.push(`${path} exceeds ${MAX_COLLECTION_SIZE} values.`); value.forEach((item, index) => validateJsonValues(item, `${path}.${index}`, issues)); return; }
+        if (isRecord(value)) { Object.entries(value).forEach(([key, item]) => validateJsonValues(item, `${path}.${key}`, issues)); return; }
+        issues.push(`${path} contains an unsupported JSON value.`);
       }
+      function safeAdd(left, right, label) { const result = left + right; if (!Number.isSafeInteger(result)) throw new Error(`${label} exceeds the safe integer range.`); return result; }
+      function safeMultiply(left, right, label) { const result = left * right; if (!Number.isSafeInteger(result)) throw new Error(`${label} exceeds the safe integer range.`); return result; }
+      function calculateAccountsForState(value) {
+        const accounts = new Map(); let totalCharge = 0; let totalCollected = 0; let totalBalance = 0;
+        value.participants.forEach(({ id }) => accounts.set(id, { charge: 0, collected: 0, balance: 0 }));
+        value.entries.forEach((entry) => { const account = accounts.get(entry.participantId); const charge = safeMultiply(entry.quantity, value.settings.prices[entry.categoryId], `Charge for entry ${entry.id}`); account.charge = safeAdd(account.charge, charge, `Charge for participant ${entry.participantId}`); });
+        value.payments.forEach((payment) => { const account = accounts.get(payment.participantId); account.collected = safeAdd(account.collected, payment.kind === 'refund' ? -payment.amountCents : payment.amountCents, `Collected amount for participant ${payment.participantId}`); });
+        accounts.forEach((account) => { account.balance = safeAdd(account.charge, -account.collected, 'Participant balance'); totalCharge = safeAdd(totalCharge, account.charge, 'Event charge'); totalCollected = safeAdd(totalCollected, account.collected, 'Event collected amount'); totalBalance = safeAdd(totalBalance, account.balance, 'Event balance'); });
+        return { accounts, totalCharge, totalCollected, totalBalance };
+      }
+      function calculateAccounts() { return eventState ? calculateAccountsForState(eventState).accounts : new Map(); }
       function accountStatus(account) {
         if (account.balance < 0) return ['Credit', `${money(-account.balance)} credit`, 'credit'];
         if (account.balance === 0) return ['Paid', money(0), 'good'];
@@ -647,9 +692,18 @@
         const validated = validateEvent(eventState);
         if (!validated.ok) { announce('Not saved: event validation failed.'); return false; }
         const serialized = serializeEvent(validated.data);
+        if (demoMode) {
+          if (!storageSet(DEMO_KEY, serialized) || !storageSet(WORKSPACE_KEY, 'demo')) { announce('Demo save unavailable; reload the separate demo if needed.'); return false; }
+          lastSavedAt = new Date();
+          announce('Demo workspace saved separately; official saves are untouched.');
+          const demoConfidence = document.querySelector('[data-testid="save-confidence"]');
+          if (demoConfidence) demoConfidence.textContent = `Demo workspace · official saves untouched · ${lastSavedAt.toLocaleTimeString()}`;
+          return true;
+        }
         const existing = storageRead(CURRENT_KEY);
         if (rotate && existing && existing !== serialized) storageSet(PREVIOUS_KEY, existing);
         if (!storageSet(CURRENT_KEY, serialized)) { announce('Save unavailable; download a JSON backup.'); return false; }
+        storageSet(WORKSPACE_KEY, 'official');
         lastSavedAt = new Date();
         announce('Saved locally. Download JSON for a durable portable backup.');
         const confidence = document.querySelector('[data-testid="save-confidence"]');
@@ -670,12 +724,13 @@
         scheduleSave();
       }
       function loadStored() {
-        const raw = storageRead(CURRENT_KEY);
+        const wantsDemo = storageRead(WORKSPACE_KEY) === 'demo';
+        const raw = wantsDemo ? storageRead(DEMO_KEY) : storageRead(CURRENT_KEY);
         if (!raw) return;
         try {
           const parsed = JSON.parse(raw);
           const result = validateEvent(parsed);
-          if (result.ok) { eventState = result.data; registerIds(eventState); lastSavedAt = new Date(); categoryNames = Object.fromEntries(Object.keys(eventState.settings.prices).map((id) => [id, titleCase(id)])); }
+          if (result.ok) { eventState = result.data; demoMode = wantsDemo; registerIds(eventState); lastSavedAt = new Date(); categoryNames = Object.fromEntries(Object.keys(eventState.settings.prices).map((id) => [id, titleCase(id)])); }
         } catch (_) { /* leave invalid storage isolated */ }
       }
 
@@ -698,7 +753,7 @@
       }
       function appendStatus(container) {
         if (demoMode) container.append(element('p', { className: 'badge warn', text: 'Demo event' }));
-        container.append(element('p', { className: 'save-confidence', text: lastSavedAt ? `Saved locally · ${lastSavedAt.toLocaleTimeString()}` : 'Not yet saved', attributes: { 'data-testid': 'save-confidence', role: 'status' } }));
+        container.append(element('p', { className: 'save-confidence', text: demoMode ? `Demo workspace · official saves untouched${lastSavedAt ? ` · ${lastSavedAt.toLocaleTimeString()}` : ''}` : (lastSavedAt ? `Saved locally · ${lastSavedAt.toLocaleTimeString()}` : 'Not yet saved'), attributes: { 'data-testid': 'save-confidence', role: 'status' } }));
         if (meaningfulFileChange) container.append(element('div', { className: 'notice', text: 'Download an event JSON backup; file storage is best effort and is not guaranteed.', attributes: { role: 'alert' } }));
       }
 
@@ -706,11 +761,12 @@
         if (eventState) {
           appendWorkspaceHeader(container, demoMode ? 'Demonstration workspace' : 'Official event workspace', eventState.event.name, `${eventState.participants.length} participants · ${eventState.entries.filter((entry) => entry.active).length} active cars`);
           appendStatus(container);
+          const accounts = calculateAccountsForState(eventState);
           container.append(element('div', { className: 'summary-grid' }, [
             element('div', { className: 'summary-card' }, [element('strong', { text: eventState.participants.length }), element('span', { text: 'Participants' })]),
             element('div', { className: 'summary-card' }, [element('strong', { text: eventState.entries.filter((entry) => entry.active).length }), element('span', { text: 'Active cars' })]),
-            element('div', { className: 'summary-card' }, [element('strong', { text: money(Array.from(calculateAccounts().values()).reduce((sum, account) => sum + account.balance, 0)) }), element('span', { text: 'Outstanding' })])
-          ]));
+            element('div', { className: 'summary-card' }, [element('strong', { text: money(accounts.totalBalance) }), element('span', { text: 'Outstanding' })])
+          ]), element('div', { className: 'action-row' }, demoMode ? [button('Return to official event', 'return-official')] : [button('Load Demo Event', 'confirm-demo')]));
           return;
         }
         appendWorkspaceHeader(container, 'Ready when race control is', 'Your next race starts clean.', 'Create an empty real event for official work, or deliberately choose the separate demo action for exploration.');
@@ -720,7 +776,7 @@
       }
 
       function startWizard() {
-        wizard = { step: 0, errors: {}, event: { name: '', date: '', venue: '', organizer: '' }, categories: [], scheduleMode: 'custom' };
+        wizard = { step: 0, errors: {}, event: { name: '', date: '', venue: '', organizer: '' }, categories: [], participants: [], entries: [], scheduleMode: 'custom' };
         selectView('setup');
       }
       function renderWizard(container) {
@@ -734,9 +790,14 @@
           panel.append(element('h3', { text: 'Categories & Prices' }), element('div', { className: 'form-grid' }, [field('Category ID', 'wizard-category-id', '', { maxlength: 128 }, wizard.errors.category), field('Category name', 'wizard-category-name', '', { maxlength: 200 }, wizard.errors.category), field('Price in cents', 'wizard-category-price', '', { type: 'number', min: 0, step: 1 }, wizard.errors.price)]), element('div', { className: 'action-row' }, [button('Add category', 'wizard-add-category', 'primary-action')]));
           const list = element('ul'); wizard.categories.forEach((category) => list.append(element('li', { text: `${category.name} — ${money(category.priceCents)}` }))); panel.append(list);
         }
-        if (wizard.step === 2) panel.append(element('h3', { text: 'Participants' }), element('p', { text: 'The event will open Registration & Fees after review, ready for participant contact details and multiple stable-ID cars.' }));
+        if (wizard.step === 2) {
+          const participantOptions = [['', 'Select participant'], ...wizard.participants.map((participant) => [participant.id, participant.name])];
+          const categoryOptions = [['', 'Select category'], ...wizard.categories.map((category) => [category.id, `${category.name} — ${money(category.priceCents)}`])];
+          panel.append(element('h3', { text: 'Participants' }), element('div', { className: 'form-grid' }, [field('Wizard participant name', 'wizard-participant-name', '', { maxlength: 200 }), field('Wizard participant email', 'wizard-participant-email', '', { type: 'email', maxlength: 320 }), field('Wizard participant phone', 'wizard-participant-phone', '', { maxlength: 64 }), field('Wizard participant notes', 'wizard-participant-notes', '', { tag: 'textarea', maxlength: 2000 })]), element('p', { className: 'field-error', attributes: { id: 'wizard-participant-error', role: 'alert', 'aria-live': 'assertive' } }), element('div', { className: 'action-row' }, [button('Add wizard participant', 'wizard-add-participant', 'primary-action')]), element('div', { className: 'form-grid' }, [selectField('Wizard participant for car', 'wizard-car-participant', participantOptions), field('Wizard car number', 'wizard-car-number', '', { type: 'number', min: 1, step: 1 }), field('Wizard car name', 'wizard-car-name', '', { maxlength: 200 }), selectField('Wizard car category', 'wizard-car-category', categoryOptions), field('Wizard entry quantity', 'wizard-car-quantity', '1', { type: 'number', min: 1, step: 1 })]), element('p', { className: 'field-error', attributes: { id: 'wizard-car-error', role: 'alert', 'aria-live': 'assertive' } }), element('div', { className: 'action-row' }, [button('Add wizard car', 'wizard-add-car', 'primary-action')]));
+          const list = element('ul'); wizard.entries.forEach((entry) => { const participant = wizard.participants.find((item) => item.id === entry.participantId); list.append(element('li', { text: `${participant?.name || ''} — #${entry.carNumber} ${entry.name}` })); }); panel.append(list);
+        }
         if (wizard.step === 3) panel.append(element('h3', { text: 'Race Format' }), selectField('Schedule mode', 'wizard-schedule-mode', [['custom', 'Custom balanced schedule'], ['template9', '9-car preset'], ['template12', '12-car preset'], ['template15', '15-car preset']], wizard.scheduleMode));
-        if (wizard.step === 4) panel.append(element('h3', { text: 'Review & Arm' }), element('div', { className: 'summary-grid' }, [element('div', { className: 'summary-card' }, [element('strong', { text: wizard.event.name }), element('span', { text: `${wizard.event.date} · ${wizard.event.venue || 'Venue not set'}` })]), element('div', { className: 'summary-card' }, [element('strong', { text: `${wizard.categories.length} ${wizard.categories.length === 1 ? 'category' : 'categories'}` }), element('span', { text: wizard.categories.map((item) => `${item.name} ${money(item.priceCents)}`).join(', ') })]), element('div', { className: 'summary-card' }, [element('strong', { text: titleCase(wizard.scheduleMode) }), element('span', { text: 'Schedule mode' })])]));
+        if (wizard.step === 4) panel.append(element('h3', { text: 'Review & Arm' }), element('div', { className: 'summary-grid' }, [element('div', { className: 'summary-card' }, [element('strong', { text: wizard.event.name }), element('span', { text: `${wizard.event.date} · ${wizard.event.venue || 'Venue not set'}` })]), element('div', { className: 'summary-card' }, [element('strong', { text: `${wizard.categories.length} ${wizard.categories.length === 1 ? 'category' : 'categories'}` }), element('span', { text: wizard.categories.map((item) => `${item.name} ${money(item.priceCents)}`).join(', ') })]), element('div', { className: 'summary-card' }, [element('strong', { text: `${wizard.participants.length} participant · ${wizard.entries.length} car` }), element('span', { text: 'Registered during setup' })]), element('div', { className: 'summary-card' }, [element('strong', { text: titleCase(wizard.scheduleMode) }), element('span', { text: 'Schedule mode' })])]));
         const actions = element('div', { className: 'action-row' });
         if (wizard.step > 0) actions.append(button('Previous step', 'wizard-previous'));
         actions.append(wizard.step < 4 ? button('Next step', 'wizard-next', 'primary-action') : button('Arm registration', 'wizard-arm', 'primary-action'));
@@ -763,10 +824,21 @@
         if (Object.keys(wizard.errors).length) { renderView('setup'); return; }
         wizard.categories.push({ id, name, priceCents: cents }); renderView('setup');
       }
+      function wizardAddParticipant() {
+        const name = document.getElementById('wizard-participant-name').value.trim(); const email = document.getElementById('wizard-participant-email').value.trim(); const phone = document.getElementById('wizard-participant-phone').value.trim(); const notes = document.getElementById('wizard-participant-notes').value.trim();
+        if (!name || name.length > 200 || email.length > 320 || phone.length > 64 || notes.length > 2000) { setFormError('wizard-participant-error', ['wizard-participant-name', 'wizard-participant-email', 'wizard-participant-phone', 'wizard-participant-notes'], 'Participant name is required and all fields must stay within their limits.'); return; }
+        wizard.participants.push({ id: createStableId('participant'), name, email, phone, notes }); renderView('setup');
+      }
+      function wizardAddCar() {
+        const participantId = document.getElementById('wizard-car-participant').value; const carNumber = Number(document.getElementById('wizard-car-number').value); const name = document.getElementById('wizard-car-name').value.trim(); const categoryId = document.getElementById('wizard-car-category').value; const quantity = Number(document.getElementById('wizard-car-quantity').value); let error = '';
+        if (!wizard.participants.some((item) => item.id === participantId)) error = 'Choose a registered participant.'; else if (!isSafeWhole(carNumber, 1)) error = 'Car number must be a positive whole number.'; else if (wizard.entries.some((entry) => entry.active && entry.carNumber === carNumber)) error = `Active car number ${carNumber} is already in use.`; else if (!name || name.length > 200) error = 'Car name is required and must be 200 characters or fewer.'; else if (!wizard.categories.some((category) => category.id === categoryId)) error = 'Choose a priced category.'; else if (!isSafeWhole(quantity, 1)) error = 'Quantity must be a positive whole number.'; else { try { safeMultiply(quantity, wizard.categories.find((category) => category.id === categoryId).priceCents, 'Entry charge'); } catch (caught) { error = sanitizeError(caught); } }
+        if (error) { setFormError('wizard-car-error', ['wizard-car-participant', 'wizard-car-number', 'wizard-car-name', 'wizard-car-category', 'wizard-car-quantity'], error); return; }
+        wizard.entries.push({ id: createStableId('car'), participantId, carNumber, name, categoryId, quantity, active: true }); renderView('setup');
+      }
       function wizardArm() {
         const timestamp = nowIso();
         categoryNames = Object.fromEntries(wizard.categories.map((category) => [category.id, category.name]));
-        eventState = { version: 1, event: { id: createStableId('event'), name: wizard.event.name, date: wizard.event.date, venue: wizard.event.venue, organizer: wizard.event.organizer, laneCount: 3, status: 'setup', createdAt: timestamp, updatedAt: timestamp, resultSeal: 'draft' }, settings: { scheduleMode: wizard.scheduleMode, seed: createStableId('seed'), rankingMode: 'competition', allowSharedRanks: true, tieBreakOrder: ['totalWins', 'headToHead', 'playoff'], finalistCount: 3, autoSave: true, confirmWinnerChanges: true, enableTiming: false, prices: Object.fromEntries(wizard.categories.map((category) => [category.id, category.priceCents])) }, participants: [], entries: [], matches: [], finals: [], payments: [], auditLog: [{ id: createStableId('audit'), timestamp, action: 'event.created', summary: 'Event created and registration armed', entityType: 'event', entityId: null, details: {} }] };
+        eventState = { version: 1, event: { id: createStableId('event'), name: wizard.event.name, date: wizard.event.date, venue: wizard.event.venue, organizer: wizard.event.organizer, laneCount: 3, status: 'setup', createdAt: timestamp, updatedAt: timestamp, resultSeal: 'draft' }, settings: { scheduleMode: wizard.scheduleMode, seed: createStableId('seed'), rankingMode: 'competition', allowSharedRanks: true, tieBreakOrder: ['totalWins', 'headToHead', 'playoff'], finalistCount: 3, autoSave: true, confirmWinnerChanges: true, enableTiming: false, prices: Object.fromEntries(wizard.categories.map((category) => [category.id, category.priceCents])) }, participants: cloneValue(wizard.participants), entries: cloneValue(wizard.entries), matches: [], finals: [], payments: [], auditLog: [{ id: createStableId('audit'), timestamp, action: 'event.created', summary: 'Event created and registration armed', entityType: 'event', entityId: null, details: {} }] };
         demoMode = false; wizard = null; meaningfulChange('Registration armed', 'event', eventState.event.id); selectView('dashboard');
       }
 
@@ -786,11 +858,11 @@
         appendWorkspaceHeader(container, 'Entrants and accounts', 'Registration & Fees', eventState ? 'One canonical register drives contact records, cars, fees, and payment balances.' : 'Create an event before registering participants.');
         if (!eventState) { container.append(element('div', { className: 'notice', text: 'Create a real event or load the separate demo first.' })); return; }
         appendStatus(container);
-        const participantPanel = element('section', { className: 'panel panel-section' }, [element('h3', { text: 'Add participant' }), element('div', { className: 'form-grid' }, [field('Participant name', 'participant-name', '', { maxlength: 200 }), field('Email', 'participant-email', '', { type: 'email', maxlength: 320 }), field('Phone', 'participant-phone', '', { maxlength: 64 }), field('Participant notes', 'participant-notes', '', { tag: 'textarea', maxlength: 2000 })]), element('p', { className: 'field-error', attributes: { id: 'participant-form-error' } }), element('div', { className: 'action-row' }, [button('Add participant', 'add-participant', 'primary-action')])]);
+        const participantPanel = element('section', { className: 'panel panel-section' }, [element('h3', { text: 'Add participant' }), element('div', { className: 'form-grid' }, [field('Participant name', 'participant-name', '', { maxlength: 200 }), field('Email', 'participant-email', '', { type: 'email', maxlength: 320 }), field('Phone', 'participant-phone', '', { maxlength: 64 }), field('Participant notes', 'participant-notes', '', { tag: 'textarea', maxlength: 2000 })]), element('p', { className: 'field-error', attributes: { id: 'participant-form-error', role: 'alert', 'aria-live': 'assertive' } }), element('div', { className: 'action-row' }, [button('Add participant', 'add-participant', 'primary-action')])]);
         const participantOptions = [['', 'Select participant'], ...eventState.participants.map((participant) => [participant.id, participant.name])];
         const categoryOptions = [['', 'Select category'], ...Object.keys(eventState.settings.prices).map((id) => [id, `${categoryLabel(id)} — ${money(eventState.settings.prices[id])}`])];
-        const carPanel = element('section', { className: 'panel panel-section' }, [element('h3', { text: 'Add car entry' }), element('div', { className: 'form-grid' }, [selectField('Participant for car', 'car-participant', participantOptions, lastCarParticipant), field('Car number', 'car-number', '', { type: 'number', min: 1, step: 1 }), field('Car name', 'car-name', '', { maxlength: 200 }), selectField('Category', 'car-category', categoryOptions, lastCarCategory), field('Entry quantity', 'car-quantity', '1', { type: 'number', min: 1, step: 1 })]), element('p', { className: 'field-error', attributes: { id: 'car-form-error' } }), element('div', { className: 'action-row' }, [button('Add car', 'add-car', 'primary-action')])]);
-        const paymentPanel = element('section', { className: 'panel panel-section' }, [element('h3', { text: 'Record payment or refund' }), element('div', { className: 'form-grid' }, [selectField('Payment participant', 'payment-participant', participantOptions, lastPaymentParticipant), selectField('Transaction type', 'payment-kind', [['payment', 'Payment'], ['refund', 'Refund']], lastPaymentKind), field('Amount in cents', 'payment-amount', '', { type: 'number', min: 0, step: 1 }), field('Payment reference', 'payment-reference', '', { maxlength: 500 })]), element('p', { className: 'field-error', attributes: { id: 'payment-form-error' } }), element('div', { className: 'action-row' }, [button('Record payment', 'add-payment', 'primary-action')])]);
+        const carPanel = element('section', { className: 'panel panel-section' }, [element('h3', { text: 'Add car entry' }), element('div', { className: 'form-grid' }, [selectField('Participant for car', 'car-participant', participantOptions, lastCarParticipant), field('Car number', 'car-number', '', { type: 'number', min: 1, step: 1 }), field('Car name', 'car-name', '', { maxlength: 200 }), selectField('Category', 'car-category', categoryOptions, lastCarCategory), field('Entry quantity', 'car-quantity', '1', { type: 'number', min: 1, step: 1 })]), element('p', { className: 'field-error', attributes: { id: 'car-form-error', role: 'alert', 'aria-live': 'assertive' } }), element('div', { className: 'action-row' }, [button('Add car', 'add-car', 'primary-action')])]);
+        const paymentPanel = element('section', { className: 'panel panel-section' }, [element('h3', { text: 'Record payment or refund' }), element('div', { className: 'form-grid' }, [selectField('Payment participant', 'payment-participant', participantOptions, lastPaymentParticipant), selectField('Transaction type', 'payment-kind', [['payment', 'Payment'], ['refund', 'Refund']], lastPaymentKind), field('Amount in cents', 'payment-amount', '', { type: 'number', min: 0, step: 1 }), field('Payment reference', 'payment-reference', '', { maxlength: 500 })]), element('p', { className: 'field-error', attributes: { id: 'payment-form-error', role: 'alert', 'aria-live': 'assertive' } }), element('div', { className: 'action-row' }, [button('Record payment', 'add-payment', 'primary-action')])]);
         container.append(participantPanel, carPanel, paymentPanel, renderAccounts(), renderCars());
       }
       function renderAccounts() {
@@ -822,23 +894,29 @@
         panel.append(element('div', { className: 'data-table-wrap' }, [table])); return panel;
       }
 
+      function setFormError(errorId, inputIds, message) {
+        const error = document.getElementById(errorId); error.textContent = message; error.setAttribute('role', 'alert'); error.setAttribute('aria-live', 'assertive');
+        inputIds.forEach((id) => { const input = document.getElementById(id); if (!input) return; input.setAttribute('aria-invalid', 'true'); input.setAttribute('aria-describedby', errorId); });
+      }
       function addParticipant() {
         const name = document.getElementById('participant-name').value.trim(); const email = document.getElementById('participant-email').value.trim(); const phone = document.getElementById('participant-phone').value.trim(); const notes = document.getElementById('participant-notes').value.trim();
         let error = ''; if (!name) error = 'Participant name is required.'; else if (name.length > 200 || email.length > 320 || phone.length > 64 || notes.length > 2000) error = 'One or more participant fields are too long.';
-        if (error) { document.getElementById('participant-form-error').textContent = error; return; }
+        if (error) { setFormError('participant-form-error', ['participant-name', 'participant-email', 'participant-phone', 'participant-notes'], error); return; }
         const id = createStableId('participant'); eventState.participants.push({ id, name, email, phone, notes }); meaningfulChange('Participant added', 'participant', id); renderView('registration');
       }
       function addCar() {
         const participantId = document.getElementById('car-participant').value; const carNumber = Number(document.getElementById('car-number').value); const name = document.getElementById('car-name').value.trim(); const categoryId = document.getElementById('car-category').value; const quantity = Number(document.getElementById('car-quantity').value); let error = '';
         if (!participantId) error = 'Choose a participant.'; else if (!isSafeWhole(carNumber, 1)) error = 'Car number must be a positive whole number.'; else if (eventState.entries.some((entry) => entry.active && entry.carNumber === carNumber)) error = `Active car number ${carNumber} is already in use.`; else if (!name || name.length > 200) error = 'Car name is required and must be 200 characters or fewer.'; else if (!Object.hasOwn(eventState.settings.prices, categoryId)) error = 'Choose a category with a current price.'; else if (!isSafeWhole(quantity, 1)) error = 'Quantity must be a positive whole number.';
-        if (error) { document.getElementById('car-form-error').textContent = error; return; }
+        if (!error) { try { const candidate = cloneValue(eventState); candidate.entries.push({ id: 'candidate', participantId, carNumber, name, categoryId, quantity, active: true }); calculateAccountsForState(candidate); } catch (caught) { error = sanitizeError(caught); } }
+        if (error) { setFormError('car-form-error', ['car-participant', 'car-number', 'car-name', 'car-category', 'car-quantity'], error); return; }
         lastCarParticipant = participantId; lastCarCategory = categoryId;
         const id = createStableId('car'); eventState.entries.push({ id, participantId, carNumber, name, categoryId, quantity, active: true }); meaningfulChange('Car entry added', 'entry', id); renderView('registration');
       }
       function addPayment() {
         const participantId = document.getElementById('payment-participant').value; const kind = document.getElementById('payment-kind').value; const amountCents = Number(document.getElementById('payment-amount').value); const note = document.getElementById('payment-reference').value.trim(); let error = '';
         if (!participantId) error = 'Choose a participant.'; else if (!isSafeWhole(amountCents)) error = 'Amount must be a non-negative whole number of cents.'; else if (!note) error = 'Payment reference is required.'; else if (note.length > 500) error = 'Payment reference must be 500 characters or fewer.';
-        if (error) { document.getElementById('payment-form-error').textContent = error; return; }
+        if (!error) { try { const candidate = cloneValue(eventState); candidate.payments.push({ id: 'candidate', participantId, amountCents, kind, paidAt: nowIso(), note }); calculateAccountsForState(candidate); } catch (caught) { error = sanitizeError(caught); } }
+        if (error) { setFormError('payment-form-error', ['payment-participant', 'payment-kind', 'payment-amount', 'payment-reference'], error); return; }
         lastPaymentParticipant = participantId; lastPaymentKind = kind;
         const id = createStableId(kind); eventState.payments.push({ id, participantId, amountCents, kind, paidAt: nowIso(), note }); meaningfulChange(kind === 'refund' ? 'Refund recorded' : 'Payment recorded', 'payment', id); renderView('registration');
       }
@@ -848,7 +926,8 @@
         const inner = element('div', { className: 'dialog-inner' }, [element('h2', { text: title, attributes: { id: 'dialog-title' } }), element('p', { text: copy, attributes: { id: 'dialog-copy' } })]);
         const row = element('div', { className: 'action-row' }); actions.forEach((item) => row.append(button(item.text, item.action, item.primary ? 'primary-action' : 'secondary-action', item.attributes || {}))); row.append(button('Cancel', 'close-dialog')); inner.append(row); dialog.replaceChildren(inner); dialog.showModal();
       }
-      function closeDialog() { const dialog = document.getElementById('app-dialog'); if (dialog.open) dialog.close(); if (dialogReturnFocus && dialogReturnFocus.isConnected) dialogReturnFocus.focus(); }
+      function restoreDialogFocus() { if (dialogReturnFocus && dialogReturnFocus.isConnected) dialogReturnFocus.focus(); dialogReturnFocus = null; }
+      function closeDialog() { const dialog = document.getElementById('app-dialog'); if (dialog.open) dialog.close(); restoreDialogFocus(); }
       function editCar(id) {
         const entry = eventState.entries.find((item) => item.id === id); if (!entry) return;
         const heatCount = [...eventState.matches, ...eventState.finals].filter((heat) => heat.lanes.includes(id)).length;
@@ -874,16 +953,37 @@
       function toCsv(rows) { return rows.map((row) => row.map(csvCell).join(',')).join('\r\n'); }
       function csvRows(kind) {
         const participants = new Map(eventState.participants.map((item) => [item.id, item])); const accounts = calculateAccounts();
-        if (kind === 0) return [['Participant ID', 'Participant', 'Email', 'Phone', 'Notes', 'Car entry ID', 'Car number', 'Car', 'Category', 'Quantity', 'Active'], ...eventState.participants.flatMap((participant) => { const entries = eventState.entries.filter((entry) => entry.participantId === participant.id); return entries.length ? entries.map((entry) => [participant.id, participant.name, participant.email, participant.phone, participant.notes, entry.id, entry.carNumber, entry.name, entry.categoryId, entry.quantity, entry.active]) : [[participant.id, participant.name, participant.email, participant.phone, participant.notes, '', '', '', '', '', '']]; })];
+        if (kind === 0) { const rows = [['Participant ID', 'Participant', 'Email', 'Phone', 'Car entry ID', 'Car number', 'Car', 'Category', 'Quantity', 'Active']]; eventState.entries.slice().sort((left, right) => left.carNumber - right.carNumber || compareCodeUnits(left.id, right.id)).forEach((entry) => { const participant = participants.get(entry.participantId); rows.push([entry.participantId, participant?.name || '', participant?.email || '', participant?.phone || '', entry.id, entry.carNumber, entry.name, entry.categoryId, entry.quantity, entry.active]); }); return rows; }
         if (kind === 1) return [['Participant ID', 'Participant', 'Charge cents', 'Collected cents', 'Balance cents'], ...eventState.participants.map((participant) => { const account = accounts.get(participant.id); return [participant.id, participant.name, account.charge, account.collected, account.balance]; })];
-        if (kind === 2) return [['Heat ID', 'Phase', 'Match', 'Heat', 'Lane 1', 'Lane 2', 'Lane 3', 'Status', 'Winner entry ID', 'Notes'], ...[...eventState.matches, ...eventState.finals].map((heat) => [heat.id, heat.phase, heat.matchNumber, heat.heatNumber, ...heat.lanes, heat.status, heat.winnerEntryId, heat.notes])];
-        if (kind === 3) return [['Rank', 'Car entry ID', 'Car number', 'Car', 'Participant'], ...eventState.entries.map((entry) => ['', entry.id, entry.carNumber, entry.name, participants.get(entry.participantId)?.name || ''])];
-        return [['Audit ID', 'Timestamp', 'Action', 'Summary', 'Entity type', 'Entity ID', 'Details JSON'], ...eventState.auditLog.map((entry) => [entry.id, entry.timestamp, entry.action, entry.summary, entry.entityType, entry.entityId, JSON.stringify(sortKeys(entry.details))])];
+        if (kind === 2) { const heats = [...eventState.matches, ...eventState.finals].sort((left, right) => (left.phase === 'preliminary' ? 0 : 1) - (right.phase === 'preliminary' ? 0 : 1) || left.matchNumber - right.matchNumber || left.heatNumber - right.heatNumber || compareCodeUnits(left.id, right.id)); return [['Heat ID', 'Phase', 'Match', 'Heat', 'Lane 1', 'Lane 2', 'Lane 3', 'Status', 'Winner entry ID', 'Lane 1 time ms', 'Lane 2 time ms', 'Lane 3 time ms', 'Notes'], ...heats.map((heat) => [heat.id, heat.phase, heat.matchNumber, heat.heatNumber, ...heat.lanes, heat.status, heat.winnerEntryId, ...heat.laneTimesMs, heat.notes])]; }
+        if (kind === 3) return [['Rank', 'Tied', 'Car entry ID', 'Car number', 'Car', 'Participant ID', 'Participant', 'Category', 'Total wins', 'Matches won', 'Completed heats', 'Average time ms', 'Best time ms'], ...calculateRankings(calculateStandings('preliminary')).map((standing) => [standing.rank, standing.isTied, standing.carId, standing.carNumber, standing.carName, standing.participantId, standing.participantName, standing.categoryId, standing.totalWins, standing.matchesWon, standing.completedHeats, standing.averageTimeMs, standing.bestTimeMs])];
+        return [['Audit ID', 'Timestamp', 'Action', 'Summary', 'Entity type', 'Entity ID', 'Details JSON'], ...eventState.auditLog.slice().sort((left, right) => compareCodeUnits(left.timestamp, right.timestamp) || compareCodeUnits(left.id, right.id)).map((entry) => [entry.id, entry.timestamp, entry.action, entry.summary, entry.entityType, entry.entityId, JSON.stringify(sortKeys(entry.details))])];
+      }
+      function calculateStandings(phase) {
+        const heats = (phase === 'preliminary' ? eventState.matches : eventState.finals).filter((heat) => heat.phase === phase).slice().sort((left, right) => left.matchNumber - right.matchNumber || left.heatNumber - right.heatNumber || compareCodeUnits(left.id, right.id));
+        const participantById = new Map(eventState.participants.map((participant) => [participant.id, participant]));
+        return eventState.entries.filter((entry) => entry.active).map((entry) => {
+          const participant = participantById.get(entry.participantId); const matchWins = {}; const headToHeadWins = {}; const laneCounts = [0, 0, 0]; const times = []; let completedHeats = 0;
+          for (const heat of heats) { if (heat.status !== 'completed' || heat.winnerEntryId === null) continue; const laneIndex = heat.lanes.indexOf(entry.id); if (laneIndex < 0) continue; const matchKey = String(heat.matchNumber); matchWins[matchKey] ??= 0; completedHeats += 1; laneCounts[laneIndex] += 1; const time = heat.laneTimesMs[laneIndex]; if (time !== null) times.push(time); if (heat.winnerEntryId === entry.id) { matchWins[matchKey] += 1; for (const opponentId of heat.lanes) if (opponentId !== null && opponentId !== entry.id) headToHeadWins[opponentId] = (headToHeadWins[opponentId] || 0) + 1; } }
+          return { carId: entry.id, participantId: participant.id, participantName: participant.name, carNumber: entry.carNumber, carName: entry.name, categoryId: entry.categoryId, active: entry.active, totalWins: Object.values(matchWins).reduce((total, wins) => total + wins, 0), matchesWon: Object.values(matchWins).filter((wins) => wins > 0).length, completedHeats, averageTimeMs: times.length ? times.reduce((total, time) => total + time, 0) / times.length : null, bestTimeMs: times.length ? Math.min(...times) : null, laneBalanceScore: Math.max(...laneCounts) - Math.min(...laneCounts), headToHeadWins };
+        });
+      }
+      function rankingMetric(key, standing, group) {
+        if (key === 'totalWins') return standing.totalWins; if (key === 'headToHead') return group.reduce((total, opponent) => total + (standing.headToHeadWins[opponent.carId] || 0), 0); if (key === 'matchesWon') return standing.matchesWon; if (key === 'averageTime') return standing.averageTimeMs; if (key === 'bestTime') return standing.bestTimeMs; if (key === 'laneBalance') return standing.laneBalanceScore; if (key === 'carNumber') return standing.carNumber; return null;
+      }
+      function compareRankingMetric(key, left, right) { if (left === null && right === null) return 0; if (left === null) return 1; if (right === null) return -1; if (left === right) return 0; return ['averageTime', 'bestTime', 'laneBalance', 'carNumber'].includes(key) ? left - right : right - left; }
+      function calculateRankings(standings) {
+        const active = standings.filter((row) => row.active).slice().sort((left, right) => compareCodeUnits(left.carId, right.carId));
+        if (!active.some((row) => row.completedHeats > 0)) return active.map((row) => ({ ...row, rank: null, isTied: active.length > 1 }));
+        let groups = [active];
+        for (const key of eventState.settings.tieBreakOrder) { const next = []; for (const group of groups) { const sorted = group.slice().sort((left, right) => compareRankingMetric(key, rankingMetric(key, left, group), rankingMetric(key, right, group))); const partitions = []; for (const row of sorted) { const previous = partitions.at(-1)?.[0]; if (!previous || compareRankingMetric(key, rankingMetric(key, previous, group), rankingMetric(key, row, group)) !== 0) partitions.push([row]); else partitions.at(-1).push(row); } next.push(...partitions); } groups = next; }
+        if (eventState.settings.rankingMode === 'ordinal' && groups.some((group) => group.length > 1)) throw new Error('Ordinal ranking requires configured tie breaks to resolve every tie.');
+        const ranked = []; let competitionPosition = 1; groups.forEach((group, index) => { const rank = eventState.settings.rankingMode === 'dense' ? index + 1 : competitionPosition; group.forEach((row) => ranked.push({ ...row, rank, isTied: group.length > 1 })); competitionPosition += group.length; }); return ranked;
       }
       function downloadText(filename, text, type) { const blob = new Blob([text], { type }); const url = URL.createObjectURL(blob); const link = element('a', { attributes: { href: url, download: filename } }); document.body.append(link); link.click(); link.remove(); setTimeout(() => URL.revokeObjectURL(url), 0); }
       async function importFile(file) {
         importError = ''; if (!file) return;
-        try { const parsed = JSON.parse(await file.text()); const result = validateEvent(parsed); if (!result.ok) { importError = result.issues.join(' '); renderView(activeView); return; } eventState = result.data; demoMode = false; categoryNames = Object.fromEntries(Object.keys(eventState.settings.prices).map((id) => [id, titleCase(id)])); registerIds(eventState); meaningfulChange('Event imported', 'event', eventState.event.id); updateChrome(); renderView(activeView); }
+        try { const parsed = JSON.parse(await file.text()); const result = validateEvent(parsed); if (!result.ok) { importError = result.issues.join(' '); renderView(activeView); return; } eventState = result.data; demoMode = false; storageSet(WORKSPACE_KEY, 'official'); categoryNames = Object.fromEntries(Object.keys(eventState.settings.prices).map((id) => [id, titleCase(id)])); registerIds(eventState); scheduleSave(); updateChrome(); renderView(activeView); }
         catch (_) { importError = 'The event file is not valid JSON. Current event was not changed.'; renderView(activeView); }
         finally { document.getElementById('import-input').value = ''; }
       }
@@ -891,10 +991,11 @@
       function renderSettings(container) {
         appendWorkspaceHeader(container, 'Recovery controls', 'Settings', 'Autosave keeps current and previous valid browser snapshots; downloaded JSON is the durable portable backup.');
         if (!eventState) { container.append(element('div', { className: 'notice', text: 'No event is loaded.' })); return; }
-        appendStatus(container); container.append(element('section', { className: 'panel panel-section' }, [element('h3', { text: 'Recovery' }), element('p', { text: storageRead(PREVIOUS_KEY) ? 'A previous valid save is available.' : 'No previous valid save is available yet.' }), element('div', { className: 'action-row' }, [button('Restore previous save', 'restore-previous'), button('Reset event', 'reset-event')])]));
+        appendStatus(container); const actions = demoMode ? [button('Return to official event', 'return-official'), button('Reset event', 'reset-event')] : [button('Restore previous save', 'restore-previous'), button('Reset event', 'reset-event')]; container.append(element('section', { className: 'panel panel-section' }, [element('h3', { text: 'Recovery' }), element('p', { text: demoMode ? 'This separate demo never replaces official current or previous saves.' : (storageRead(PREVIOUS_KEY) ? 'A previous valid save is available.' : 'No previous valid save is available yet.') }), element('div', { className: 'action-row' }, actions)]));
       }
-      function restorePrevious() { const raw = storageRead(PREVIOUS_KEY); if (!raw) { announce('No previous valid save is available.'); return; } try { const result = validateEvent(JSON.parse(raw)); if (!result.ok) { announce('Previous save failed validation.'); return; } eventState = result.data; storageSet(CURRENT_KEY, serializeEvent(eventState)); lastSavedAt = new Date(); demoMode = false; registerIds(eventState); closeDialog(); updateChrome(); renderView(activeView); announce('Previous valid save restored.'); } catch (_) { announce('Previous save could not be restored.'); } }
-      function resetEvent() { eventState = null; demoMode = false; meaningfulFileChange = false; importError = ''; categoryNames = {}; storageRemove(CURRENT_KEY); storageRemove(PREVIOUS_KEY); closeDialog(); updateChrome(); selectView('dashboard'); announce('Event reset.'); }
+      function restorePrevious() { const raw = storageRead(PREVIOUS_KEY); if (!raw) { announce('No previous valid save is available.'); return; } try { const result = validateEvent(JSON.parse(raw)); if (!result.ok) { announce('Previous save failed validation.'); return; } const displaced = storageRead(CURRENT_KEY); eventState = result.data; storageSet(CURRENT_KEY, serializeEvent(eventState)); if (displaced) storageSet(PREVIOUS_KEY, displaced); storageSet(WORKSPACE_KEY, 'official'); lastSavedAt = new Date(); demoMode = false; registerIds(eventState); closeDialog(); updateChrome(); renderView(activeView); announce('Previous valid save restored; restore again to undo.'); } catch (_) { announce('Previous save could not be restored.'); } }
+      function returnToOfficial() { clearTimeout(saveTimer); if (demoMode && eventState) saveNow(false); storageSet(WORKSPACE_KEY, 'official'); demoMode = false; eventState = null; lastSavedAt = null; loadStored(); meaningfulFileChange = false; updateChrome(); selectView('dashboard'); announce(eventState ? 'Official event restored.' : 'No official event is saved.'); }
+      function resetEvent() { clearTimeout(saveTimer); if (demoMode) { storageRemove(DEMO_KEY); storageSet(WORKSPACE_KEY, 'official'); demoMode = false; eventState = null; loadStored(); } else { eventState = null; storageRemove(CURRENT_KEY); storageRemove(PREVIOUS_KEY); storageRemove(WORKSPACE_KEY); } meaningfulFileChange = false; importError = ''; categoryNames = eventState ? Object.fromEntries(Object.keys(eventState.settings.prices).map((id) => [id, titleCase(id)])) : {}; closeDialog(); updateChrome(); selectView('dashboard'); announce('Event reset.'); }
 
       function renderPlaceholder(container, view) {
         const detail = viewDetails[view]; appendWorkspaceHeader(container, detail[0], detail[1], view === 'live' ? 'Race controls stay inactive until a valid schedule is armed.' : 'This view will project official event data without duplicating canonical state.');
@@ -913,11 +1014,14 @@
         const target = event.target.closest('[data-view], [data-action]'); if (!target) return; const view = target.getAttribute('data-view'); if (view) { selectView(view); return; } const action = target.getAttribute('data-action'); const id = target.getAttribute('data-entry-id');
         if (action === 'start-wizard') startWizard();
         else if (action === 'confirm-demo') openDialog('Load Demo Event', 'This replaces the current workspace with a clearly marked, separate demonstration. It never merges into official event data.', [{ text: 'Load separate demo', action: 'load-demo', primary: true }]);
-        else if (action === 'load-demo') { eventState = buildDemo(); demoMode = true; categoryNames = { standard: 'Standard' }; registerIds(eventState); closeDialog(); meaningfulChange('Demo event loaded', 'event', eventState.event.id); updateChrome(); selectView('dashboard'); }
+        else if (action === 'load-demo') { eventState = buildDemo(); demoMode = true; categoryNames = { standard: 'Standard' }; registerIds(eventState); closeDialog(); meaningfulChange('Demo event loaded', 'event', eventState.event.id); saveNow(false); updateChrome(); selectView('dashboard'); }
+        else if (action === 'return-official') returnToOfficial();
         else if (action === 'close-dialog') closeDialog();
         else if (action === 'wizard-next') wizardNext();
         else if (action === 'wizard-previous') { wizardCapture(); wizard.step -= 1; wizard.errors = {}; renderView('setup'); }
         else if (action === 'wizard-add-category') wizardAddCategory();
+        else if (action === 'wizard-add-participant') wizardAddParticipant();
+        else if (action === 'wizard-add-car') wizardAddCar();
         else if (action === 'wizard-arm') wizardArm();
         else if (action === 'add-participant') addParticipant();
         else if (action === 'add-car') addCar();
@@ -929,13 +1033,13 @@
         else if (action === 'restore-car') restoreCar(id);
         else if (action === 'save-event-details') { const name = document.getElementById('setup-event-name').value.trim(); const date = document.getElementById('setup-event-date').value; if (!name || name.length > 200 || !date) { announce('Event name and date are required.'); return; } eventState.event.name = name; eventState.event.date = date; eventState.event.venue = document.getElementById('setup-venue').value.trim(); eventState.event.organizer = document.getElementById('setup-organizer').value.trim(); meaningfulChange('Event details updated', 'event', eventState.event.id); updateChrome(); renderView('setup'); }
         else if (action === 'focus-prices') document.getElementById('price-editor').scrollIntoView({ block: 'center' });
-        else if (action === 'save-prices') { let valid = true; const prices = {}; document.querySelectorAll('[data-category-price]').forEach((input) => { const cents = Number(input.value); if (!isSafeWhole(cents)) valid = false; prices[input.dataset.categoryPrice] = cents; }); if (!valid) { document.getElementById('prices-error').textContent = 'Every price must be a non-negative whole number of cents.'; return; } eventState.settings.prices = prices; meaningfulChange('Category prices updated', 'event', eventState.event.id); renderView('setup'); }
+        else if (action === 'save-prices') { let valid = true; let validationMessage = ''; const prices = {}; document.querySelectorAll('[data-category-price]').forEach((input) => { const cents = Number(input.value); if (!isSafeWhole(cents)) valid = false; prices[input.dataset.categoryPrice] = cents; }); if (valid) { const candidate = cloneValue(eventState); candidate.settings.prices = prices; const result = validateEvent(candidate); if (!result.ok) { valid = false; validationMessage = result.issues[0]; } } if (!valid) { const error = document.getElementById('prices-error'); error.textContent = validationMessage || 'Every price must be a non-negative whole number of cents.'; error.setAttribute('role', 'alert'); error.setAttribute('aria-live', 'assertive'); return; } eventState.settings.prices = prices; meaningfulChange('Category prices updated', 'event', eventState.event.id); renderView('setup'); }
         else if (action === 'download-json') downloadText(`${eventState.event.name.replace(/[^a-z0-9]+/gi, '-').toLowerCase()}-event.json`, serializeEvent(eventState), 'application/json;charset=utf-8');
         else if (action === 'choose-import') document.getElementById('import-input').click();
         else if (action?.startsWith('download-csv-')) { const kind = Number(action.at(-1)); downloadText(`round-robin-${kind}.csv`, toCsv(csvRows(kind)), 'text/csv;charset=utf-8'); }
         else if (action === 'restore-previous') openDialog('Restore previous save?', 'The current event will be replaced by the previous valid local snapshot.', [{ text: 'Confirm restore', action: 'confirm-restore', primary: true }]);
         else if (action === 'confirm-restore') restorePrevious();
-        else if (action === 'reset-event') openDialog('Reset this event?', 'This clears current and previous browser saves and cannot be undone without a downloaded backup.', [{ text: 'Confirm reset', action: 'confirm-reset', primary: true }]);
+        else if (action === 'reset-event') openDialog('Reset this event?', demoMode ? 'This clears only the separate demo workspace; official saves remain untouched.' : 'This clears current and previous browser saves and cannot be undone without a downloaded backup.', [{ text: 'Confirm reset', action: 'confirm-reset', primary: true }]);
         else if (action === 'confirm-reset') resetEvent();
       }
       function handleChange(event) {
@@ -955,6 +1059,7 @@
       window.addEventListener('beforeunload', () => { clearTimeout(saveTimer); if (eventState) saveNow(true); });
       document.addEventListener('click', handleClick);
       document.addEventListener('change', handleChange);
+      document.getElementById('app-dialog').addEventListener('close', restoreDialogFocus);
       matchMedia('(prefers-color-scheme: dark)').addEventListener('change', () => { if (theme === 'system') applyTheme('system'); });
 
       applyTheme(storageRead(THEME_KEY) || 'system'); loadStored(); updateChrome(); renderView('dashboard');
