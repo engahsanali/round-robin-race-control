@@ -53,7 +53,7 @@ test('runs every embedded group in isolation and preserves the live workspace', 
   const names = suite.groups.flatMap((group: any) => group.tests.map((item: any) => item.name));
   expect(names).toEqual(expect.arrayContaining([
     'All four workbook preset arrays stay exact',
-    'Failed import preserves event and browser storage',
+    'Real failed import transaction preserves event, storage, and transients',
     'Cancelled and rerun heats never double-count',
     'Ranking proof names every configured comparison',
     'Unsafe accounting overflow is rejected',
@@ -63,6 +63,26 @@ test('runs every embedded group in isolation and preserves the live workspace', 
     'Repeat certificate reports its lower-bound gap truthfully',
   ]));
   expect(pageErrors).toEqual([]);
+});
+
+test('exposes the real synchronous import transaction and leaves invalid input byte-exact', async ({ page }) => {
+  await loadDemo(page);
+  const result = await page.evaluate(() => {
+    const api = (window as any).RR3;
+    const beforeEvent = JSON.stringify(api.getState());
+    const beforeStorage = JSON.stringify(Object.fromEntries(Object.keys(localStorage).sort().map((key) => [key, localStorage.getItem(key)])));
+    const applied = api.applyImportedEventText('{"version":1,"event":');
+    return {
+      applied,
+      beforeEvent,
+      afterEvent: JSON.stringify(api.getState()),
+      beforeStorage,
+      afterStorage: JSON.stringify(Object.fromEntries(Object.keys(localStorage).sort().map((key) => [key, localStorage.getItem(key)]))),
+    };
+  });
+  expect(result.applied).toMatchObject({ ok: false });
+  expect(result.afterEvent).toBe(result.beforeEvent);
+  expect(result.afterStorage).toBe(result.beforeStorage);
 });
 
 test('renders grouped results, local facts, sanitized errors, integrity, and a copyable report', async ({ page }) => {

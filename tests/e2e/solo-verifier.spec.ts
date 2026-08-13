@@ -66,6 +66,32 @@ test.describe('rejects companion-runtime references parsed from real tag attribu
   });
 });
 
+test.describe('rejects static anchor navigation outside this standalone document', () => {
+  for (const [name, href] of [
+    ['remote HTTPS', 'https://example.test/results'],
+    ['protocol relative', '//example.test/results'],
+    ['JavaScript navigation', 'javascript:alert(1)'],
+    ['data navigation', 'data:text/html,external'],
+    ['local companion file', 'results.html'],
+  ]) test(name, async () => {
+    const { root, directory } = await fixture();
+    try {
+      await writeFile(join(directory, 'index.html'), sourceHtml.replace('</body>', `<a href="${href}">unsafe</a></body>`));
+      const result = await verify(directory);
+      expect(result.code).toBe(1);
+      expect(result.output).toMatch(/anchor|navigation|runtime reference/i);
+    } finally { await rm(root, { recursive: true, force: true }); }
+  });
+
+  test('allows empty and same-document fragment anchors', async () => {
+    const { root, directory } = await fixture();
+    try {
+      await writeFile(join(directory, 'index.html'), sourceHtml.replace('</body>', '<a href="">same document</a><a href="#main-content">skip</a></body>'));
+      expect(await verify(directory)).toMatchObject({ code: 0 });
+    } finally { await rm(root, { recursive: true, force: true }); }
+  });
+});
+
 test('rejects a literal missing selector without accepting an unrelated object id', async () => {
   const { root, directory } = await fixture();
   try {
@@ -78,3 +104,19 @@ test('rejects a literal missing selector without accepting an unrelated object i
   } finally { await rm(root, { recursive: true, force: true }); }
 });
 
+test.describe('validates literal selector structure rather than independent tokens', () => {
+  for (const [name, mutation, selector] of [
+    ['compound classes on separate elements', '<div class="shape-one"></div><div class="shape-two"></div>', '.shape-one.shape-two'],
+    ['descendant classes on siblings', '<div id="shape-parent"></div><div class="shape-child"></div>', '#shape-parent .shape-child'],
+    ['tag and class on different elements', '<section></section><div class="shape-card"></div>', 'section.shape-card'],
+  ]) test(name, async () => {
+    const { root, directory } = await fixture();
+    try {
+      const injected = `${mutation}<script>document.querySelector(${JSON.stringify(selector)});</script>`;
+      await writeFile(join(directory, 'index.html'), sourceHtml.replace('</body>', `${injected}</body>`));
+      const result = await verify(directory);
+      expect(result.code).toBe(1);
+      expect(result.output).toContain(selector);
+    } finally { await rm(root, { recursive: true, force: true }); }
+  });
+});

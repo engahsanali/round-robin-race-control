@@ -1536,10 +1536,29 @@
         container.append(element('section', { className: 'panel panel-section' }, [element('h3', { text: 'Preliminary standings' }), element('div', { className: 'data-table-wrap' }, [basicStandingsTable(rankings, 'preliminary', 'Preliminary standings', true)]), ...(rankProofCarId ? [renderRankProof(rankings.find((row) => row.carId === rankProofCarId) || rankings[0])] : [])]), standingsAnalytics(rankings));
       }
       function downloadText(filename, text, type) { const blob = new Blob([text], { type }); const url = URL.createObjectURL(blob); const link = element('a', { attributes: { href: url, download: filename } }); document.body.append(link); link.click(); link.remove(); setTimeout(() => URL.revokeObjectURL(url), 0); }
+      function parseImportedEventText(text) {
+        let parsed;
+        try { parsed = JSON.parse(text); }
+        catch (_) { return { ok: false, error: 'The event file is not valid JSON. Current event was not changed.' }; }
+        const result = validateEvent(parsed);
+        return result.ok ? { ok: true, data: result.data } : { ok: false, error: result.issues.join(' ') };
+      }
+      function applyImportedEventText(text) {
+        const parsed = parseImportedEventText(text);
+        if (!parsed.ok) return parsed;
+        resetEventScopedTransients();
+        eventState = parsed.data;
+        demoMode = false;
+        categoryNames = Object.fromEntries(Object.keys(eventState.settings.prices).map((id) => [id, titleCase(id)]));
+        registerIds(eventState);
+        saveNow(true);
+        updateChrome();
+        return { ok: true };
+      }
       async function importFile(file) {
         importError = ''; if (!file) return;
-        try { const parsed = JSON.parse(await file.text()); const result = validateEvent(parsed); if (!result.ok) { importError = result.issues.join(' '); renderView(activeView); return; } resetEventScopedTransients(); eventState = result.data; demoMode = false; storageSet(WORKSPACE_KEY, 'official'); categoryNames = Object.fromEntries(Object.keys(eventState.settings.prices).map((id) => [id, titleCase(id)])); registerIds(eventState); scheduleSave(); updateChrome(); renderView(activeView); }
-        catch (_) { importError = 'The event file is not valid JSON. Current event was not changed.'; renderView(activeView); }
+        try { const result = applyImportedEventText(await file.text()); importError = result.ok ? '' : result.error; renderView(activeView); }
+        catch (_) { importError = 'The event file could not be read. Current event was not changed.'; renderView(activeView); }
         finally { document.getElementById('import-input').value = ''; }
       }
 
@@ -1601,7 +1620,10 @@
           group('Persistence / import');
           check('Serialized schema-v1 event validates on round trip', true, () => validateEvent(JSON.parse(serializeEvent(diagnosticFixture()))).ok);
           check('Invalid completed heat is rejected atomically', false, () => { const fixture = diagnosticFixture(); fixture.matches[0].status = 'completed'; fixture.matches[0].winnerEntryId = null; return validateEvent(fixture).ok; });
-          check('Failed import preserves event and browser storage', true, () => { const beforeEvent = serializeEvent(eventState); const beforeStorage = Object.fromEntries(Object.keys(localStorage).sort().map((key) => [key, localStorage.getItem(key)])); const invalid = diagnosticFixture(); invalid.matches[0].status = 'completed'; invalid.matches[0].winnerEntryId = null; const result = validateEvent(invalid); if (result.ok) eventState = result.data; const afterStorage = Object.fromEntries(Object.keys(localStorage).sort().map((key) => [key, localStorage.getItem(key)])); return !result.ok && serializeEvent(eventState) === beforeEvent && sameValue(afterStorage, beforeStorage); });
+          check('Real failed import transaction preserves event, storage, and transients', true, () => {
+            const snapshot = () => JSON.stringify({ eventState, demoMode, categoryNames, scheduleDraft, liveHeatIndex, livePhase, selectedWinnerId, pendingResult, pendingHeatAction, undoRecord, lastReceipt, liveMessage, storage: Object.fromEntries(Object.keys(localStorage).sort().map((key) => [key, localStorage.getItem(key)])) });
+            const before = snapshot(); const result = applyImportedEventText('{"version":1,"event":'); return !result.ok && snapshot() === before;
+          });
           check('Prototype-pollution keys are rejected', false, () => { const fixture = diagnosticFixture(); fixture.auditLog[0].details = JSON.parse('{"__proto__":{"polluted":true}}'); return validateEvent(fixture).ok; });
 
           group('CSV');
@@ -1837,7 +1859,7 @@
       matchMedia('(prefers-color-scheme: dark)').addEventListener('change', () => { if (theme === 'system') applyTheme('system'); });
 
       applyTheme(storageRead(THEME_KEY) || 'system'); loadStored(); updateChrome(); renderView('dashboard');
-      const api = Object.freeze({ version: VERSION, getState: () => publicState(), runAllTests });
+      const api = Object.freeze({ version: VERSION, getState: () => publicState(), runAllTests, applyImportedEventText });
       Object.defineProperty(window, 'RR3', { value: api, writable: false, configurable: false, enumerable: true });
     })();
   </script>

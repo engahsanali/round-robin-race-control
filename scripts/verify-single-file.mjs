@@ -24,12 +24,20 @@ async function inventory(directory, prefix = '') {
 // is intentionally an HTML-aware scanner rather than a source-line regex.
 function tokenizeStartTags(source) {
   const tags = [];
+  const parents = [];
+  const voidTags = new Set(['area', 'base', 'br', 'col', 'embed', 'hr', 'img', 'input', 'link', 'meta', 'param', 'source', 'track', 'wbr']);
   let index = 0;
   while (index < source.length) {
     const open = source.indexOf('<', index);
     if (open < 0) break;
     if (source.startsWith('<!--', open)) { const close = source.indexOf('-->', open + 4); index = close < 0 ? source.length : close + 3; continue; }
-    if (/^<[/!?]/.test(source.slice(open, open + 2))) { const close = source.indexOf('>', open + 2); index = close < 0 ? source.length : close + 1; continue; }
+    if (source[open + 1] === '/') {
+      const close = source.indexOf('>', open + 2); const closingName = source.slice(open + 2, close < 0 ? source.length : close).trim().split(/\s/, 1)[0].toLowerCase();
+      while (parents.length && tags[parents.at(-1)].name !== closingName) parents.pop();
+      if (parents.length) parents.pop();
+      index = close < 0 ? source.length : close + 1; continue;
+    }
+    if (/^<[!?]/.test(source.slice(open, open + 2))) { const close = source.indexOf('>', open + 2); index = close < 0 ? source.length : close + 1; continue; }
     let cursor = open + 1; while (/\s/.test(source[cursor] || '')) cursor += 1;
     const nameMatch = source.slice(cursor).match(/^[A-Za-z][\w:-]*/); if (!nameMatch) { index = open + 1; continue; }
     const name = nameMatch[0].toLowerCase(); cursor += nameMatch[0].length; const attributes = new Map();
@@ -46,14 +54,40 @@ function tokenizeStartTags(source) {
       }
       attributes.set(attributeName, value);
     }
-    tags.push({ name, attributes, start: open, end: cursor }); index = cursor;
+    const tagIndex = tags.length;
+    tags.push({ name, attributes, start: open, end: cursor, parent: parents.at(-1) ?? null });
+    if (!voidTags.has(name) && source[cursor - 2] !== '/') parents.push(tagIndex);
+    index = cursor;
+    if (name === 'script' || name === 'style') {
+      const close = source.toLowerCase().indexOf(`</${name}`, index);
+      if (close >= 0) index = close;
+    }
   }
   return tags;
 }
 
 function isInlineReference(value) { const normalized = value.trim().toLowerCase(); return !normalized || normalized.startsWith('data:') || normalized.startsWith('#'); }
-function selectorTokens(selector) {
-  return [...selector.matchAll(/#([\w-]+)|\.([\w-]+)|\[([\w-]+)/g)].map((match) => ({ type: match[1] ? 'id' : match[2] ? 'class' : 'attribute', value: match[1] || match[2] || match[3] }));
+function simpleSelectorMatches(selector, shape) {
+  const withoutPseudos = selector.replace(/:{1,2}[\w-]+(?:\([^)]*\))?/g, '');
+  const tag = withoutPseudos.match(/^[A-Za-z][\w-]*/)?.[0]?.toLowerCase();
+  if (tag && shape.name !== tag) return false;
+  const ids = [...withoutPseudos.matchAll(/#([\w-]+)/g)].map((match) => match[1]);
+  const classes = [...withoutPseudos.matchAll(/\.([\w-]+)/g)].map((match) => match[1]);
+  const attributes = [...withoutPseudos.matchAll(/\[\s*([\w:-]+)/g)].map((match) => match[1].toLowerCase());
+  return ids.every((id) => shape.id === id) && classes.every((name) => shape.classes.has(name)) && attributes.every((name) => shape.attributes.has(name));
+}
+function staticSelectorExists(selector, shapes) {
+  if (/[>+~]/.test(selector)) return false;
+  const parts = selector.trim().split(/\s+/).filter(Boolean);
+  if (!parts.length) return false;
+  const matchesChain = (shapeIndex, partIndex) => {
+    if (!simpleSelectorMatches(parts[partIndex], shapes[shapeIndex])) return false;
+    if (partIndex === 0) return true;
+    let parent = shapes[shapeIndex].parent;
+    while (parent !== null) { if (matchesChain(parent, partIndex - 1)) return true; parent = shapes[parent].parent; }
+    return false;
+  };
+  return shapes.some((_, index) => matchesChain(index, parts.length - 1));
 }
 
 const contents = await inventory(runtimeDirectory);
@@ -94,6 +128,10 @@ for (const tag of tags) {
     if (tag.attributes.has(attribute) && !isInlineReference(tag.attributes.get(attribute))) failures.push(`Runtime reference is forbidden: <${tag.name} ${attribute}="${tag.attributes.get(attribute)}">.`);
   }
   if (tag.name === 'link' && tag.attributes.has('href')) failures.push(`Runtime link reference is forbidden: rel="${tag.attributes.get('rel') || ''}" href="${tag.attributes.get('href')}".`);
+  if (tag.name === 'a' && tag.attributes.has('href')) {
+    const href = tag.attributes.get('href').trim().toLowerCase();
+    if (href && !href.startsWith('#') && !href.startsWith('blob:')) failures.push(`Anchor navigation runtime reference is forbidden: href="${tag.attributes.get('href')}".`);
+  }
   for (const [name] of tag.attributes) if (/^on[a-z]+$/.test(name)) failures.push(`Inline event handler ${name} is forbidden.`);
   const inlineStyle = tag.attributes.get('style'); if (inlineStyle && (/url\(\s*(?!["']?data:)/i.test(inlineStyle) || /@import\b/i.test(inlineStyle))) failures.push('CSS runtime reference is forbidden in a style attribute.');
 }
@@ -114,16 +152,21 @@ for (const [pattern, message] of forbiddenSource) failUnless(!pattern.test(html)
 const ids = new Set(tags.map(({ attributes }) => attributes.get('id')).filter(Boolean));
 const classes = new Set(tags.flatMap(({ attributes }) => (attributes.get('class') || '').split(/\s+/).filter(Boolean)));
 const attributes = new Set(tags.flatMap((tag) => [...tag.attributes.keys()]));
+const shapes = tags.map((tag) => ({ name: tag.name, id: tag.attributes.get('id') || null, classes: new Set((tag.attributes.get('class') || '').split(/\s+/).filter(Boolean)), attributes: new Set(tag.attributes.keys()), parent: tag.parent }));
 for (const match of html.matchAll(/\belement\([^,]+,\s*\{[\s\S]{0,300}?attributes\s*:\s*\{[\s\S]{0,250}?\bid\s*:\s*["']([^"']+)["']/g)) ids.add(match[1]);
 for (const match of html.matchAll(/\b(?:field|selectField)\([^,]+,\s*["']([^"']+)["']/g)) ids.add(match[1]);
-for (const match of html.matchAll(/\bclassName\s*:\s*["'`]([^"'`$]+)["'`]/g)) match[1].split(/\s+/).filter(Boolean).forEach((name) => classes.add(name));
+for (const match of html.matchAll(/\bclassName\s*:\s*["'`]([^"'`$]+)["'`]/g)) {
+  const names = match[1].split(/\s+/).filter(Boolean); names.forEach((name) => classes.add(name));
+  shapes.push({ name: null, id: null, classes: new Set(names), attributes: new Set(), parent: null });
+}
 for (const match of html.matchAll(/["']([\w-]*data-[\w-]+)["']\s*:/g)) attributes.add(match[1]);
+ids.forEach((id) => shapes.push({ name: null, id, classes: new Set(), attributes: new Set(), parent: null }));
+attributes.forEach((name) => shapes.push({ name: null, id: null, classes: new Set(), attributes: new Set([name]), parent: null }));
 for (const match of html.matchAll(/getElementById\(\s*["']([^"']+)["']\s*\)/g)) failUnless(ids.has(match[1]), `getElementById references undeclared selector #${match[1]}.`);
 for (const match of html.matchAll(/querySelector(?:All)?\(\s*["']([^"']+)["']\s*\)/g)) {
-  for (const token of selectorTokens(match[1])) {
-    const collection = token.type === 'id' ? ids : token.type === 'class' ? classes : attributes;
-    failUnless(collection.has(token.value), `querySelector references undeclared ${token.type} selector ${token.type === 'id' ? '#' : token.type === 'class' ? '.' : '['}${token.value}${token.type === 'attribute' ? ']' : ''}.`);
-  }
+  const selector = match[1];
+  const alternatives = selector.split(',').map((value) => value.trim()).filter(Boolean);
+  failUnless(alternatives.some((value) => staticSelectorExists(value, shapes)), `querySelector references unresolved structural selector ${selector}.`);
 }
 
 if (failures.length) {
