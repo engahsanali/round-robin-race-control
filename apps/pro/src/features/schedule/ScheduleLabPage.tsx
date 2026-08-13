@@ -30,6 +30,9 @@ const presetOptions: Array<{ key: PresetKey; label: string }> = [
 export function ScheduleLabPage() {
   const eventState = useOptionalEventState();
   const headingRef = useRef<HTMLHeadingElement>(null);
+  const activationTriggerRef = useRef<HTMLButtonElement>(null);
+  const activationConfirmRef = useRef<HTMLButtonElement>(null);
+  const activationStatusRef = useRef<HTMLParagraphElement>(null);
   const [mode, setMode] = useState<CandidateMode>("preset");
   const [presetKey, setPresetKey] = useState<PresetKey>("template9");
   const [seedDraft, setSeedDraft] = useState("community-night");
@@ -57,12 +60,32 @@ export function ScheduleLabPage() {
   const presetGate = activeIds.length === preset.entrantCount
     ? null
     : `${presetOptions.find(({ key }) => key === presetKey)?.label ?? presetKey} requires exactly ${preset.entrantCount} active cars; ${activeIds.length} available.`;
+  const customGate = activeIds.length < 3 || activeIds.length > 24
+    ? `Custom schedules support 3–24 active cars; ${activeIds.length} available.`
+    : null;
   const selected = candidates.find(({ id }) => id === selectedId) ?? null;
   const pairs = useMemo(() => selected ? pairData(selected.quality, carNames) : [], [carNames, selected]);
+
+  useEffect(() => {
+    if (!activationOpen) return undefined;
+    activationConfirmRef.current?.focus();
+    const handleEscape = (event: KeyboardEvent) => {
+      if (event.key !== "Escape") return;
+      event.preventDefault();
+      cancelActivation();
+    };
+    document.addEventListener("keydown", handleEscape);
+    return () => document.removeEventListener("keydown", handleEscape);
+  }, [activationOpen]);
 
   if (!eventState) return <ScheduleUnavailable />;
   if (eventState.loading) return <p role="status">Loading Schedule Lab…</p>;
   if (!state) return <ScheduleUnavailable />;
+
+  function cancelActivation() {
+    setActivationOpen(false);
+    window.setTimeout(() => activationTriggerRef.current?.focus(), 0);
+  }
 
   function swapSlot(slotIndex: number, carId: string) {
     setSlotOrder((current) => {
@@ -87,8 +110,12 @@ export function ScheduleLabPage() {
   function generateCandidates() {
     const matches = Number(matchesDraft);
     const seed = seedDraft.trim();
-    if (!seed || !Number.isSafeInteger(matches) || matches < 1 || matches > 10 || activeIds.length < 3) {
-      setStatus("A seed, 1–10 matches, and at least 3 active cars are required.");
+    if (customGate) {
+      setStatus(customGate);
+      return;
+    }
+    if (!seed || !Number.isSafeInteger(matches) || matches < 1 || matches > 10) {
+      setStatus("A seed and 1–10 matches are required.");
       return;
     }
     const generated = [seed, `${seed}-2`, `${seed}-3`].map((candidateSeed, index) => {
@@ -120,10 +147,12 @@ export function ScheduleLabPage() {
     });
     setActivationOpen(false);
     setStatus(`Activated ${selected.heats.length} heats. The previous live event remains in local recovery history.`);
+    window.setTimeout(() => activationStatusRef.current?.focus(), 0);
   }
 
   return (
-    <section className="page-frame schedule-lab-page" aria-labelledby="page-title">
+    <>
+    <section className="page-frame schedule-lab-page" aria-labelledby="page-title" inert={activationOpen ? true : undefined}>
       <p className="eyebrow">Fair race planning</p>
       <h2 ref={headingRef} id="page-title" tabIndex={-1}>Schedule Lab</h2>
       <p className="page-intro">Compare deterministic candidates term by term, inspect fairness evidence, and activate only a validated schedule.</p>
@@ -146,16 +175,17 @@ export function ScheduleLabPage() {
           <h3 id="custom-builder-title">Deterministic candidate search</h3>
           <label>Schedule seed<input value={seedDraft} onChange={(event) => setSeedDraft(event.target.value)} /></label>
           <label>Matches<input type="number" min="1" max="10" value={matchesDraft} onChange={(event) => setMatchesDraft(event.target.value)} /></label>
-          <button type="button" onClick={generateCandidates}>Generate three candidates</button>
+          {customGate ? <p className="inline-error" role="alert">{customGate}</p> : null}
+          <button type="button" disabled={customGate !== null} onClick={generateCandidates}>Generate three candidates</button>
         </section>
       )}
 
-      <p role="status" className="schedule-status">{status}</p>
+      <p ref={activationStatusRef} role="status" aria-label="Schedule activation status" tabIndex={-1} className="schedule-status">{status}</p>
       <CandidateComparison candidates={candidates} selectedId={selectedId} onSelect={setSelectedId} />
 
       {selected ? (
         <section className="selected-candidate feature-panel" aria-label="Selected schedule candidate">
-          <div className="selected-heading"><div><p className="eyebrow">Immutable selection</p><h3>{selected.source === "preset" ? selected.presetKey : selected.seed}</h3></div><button type="button" disabled={selected.quality.status === "invalid" || (mode === "preset" && presetGate !== null)} onClick={() => setActivationOpen(true)}>Activate selected schedule</button></div>
+          <div className="selected-heading"><div><p className="eyebrow">Immutable selection</p><h3>{selected.source === "preset" ? selected.presetKey : selected.seed}</h3></div><button ref={activationTriggerRef} type="button" disabled={selected.quality.status === "invalid" || (mode === "preset" && presetGate !== null)} onClick={() => setActivationOpen(true)}>Activate selected schedule</button></div>
           <p>{matchCount(selected.heats)} matches · {selected.heats.length} heats</p>
           <p aria-label="Selected schedule seed">{selected.seed}</p>
           <p aria-label="Selected schedule signature" className="signature">{selected.signature}</p>
@@ -166,15 +196,16 @@ export function ScheduleLabPage() {
       ) : null}
 
       {!selected ? <button type="button" disabled>Activate selected schedule</button> : null}
-      {activationOpen && selected ? (
-        <div className="modal-backdrop"><section className="confirmation-panel" role="alertdialog" aria-modal="true" aria-labelledby="activation-title"><h3 id="activation-title">Confirm schedule activation</h3><p>This will replace {state.matches.length} existing preliminary heat{state.matches.length === 1 ? "" : "s"} with {selected.heats.length} validated heats.</p><p>The transaction creates a recovery snapshot of this replacement in local history.</p><div className="action-row"><button type="button" onClick={() => void activate()}>Confirm activation</button><button type="button" className="quiet-action" onClick={() => setActivationOpen(false)}>Cancel activation</button></div></section></div>
-      ) : null}
     </section>
+      {activationOpen && selected ? (
+        <div className="modal-backdrop"><section className="confirmation-panel" role="alertdialog" aria-modal="true" aria-labelledby="activation-title"><h3 id="activation-title">Confirm schedule activation</h3><p>This will replace {state.matches.length} existing preliminary heat{state.matches.length === 1 ? "" : "s"} with {selected.heats.length} validated heats.</p><p>The transaction creates a recovery snapshot of this replacement in local history.</p><div className="action-row"><button ref={activationConfirmRef} type="button" onClick={() => void activate()}>Confirm activation</button><button type="button" className="quiet-action" onClick={cancelActivation}>Cancel activation</button></div></section></div>
+      ) : null}
+    </>
   );
 }
 
 function QualitySummary({ quality }: { quality: ScheduleQualityReport }) {
-  const status = quality.status === "invalid" ? "Invalid" : quality.opponentQualityStatus === "certified-optimal" ? "Certified optimal" : quality.status === "valid-with-warnings" ? "Valid with warnings — best found" : "Valid best found";
+  const status = quality.status === "invalid" ? "Invalid" : quality.status === "valid-with-warnings" ? "Valid with warnings" : quality.opponentQualityStatus === "certified-optimal" ? "Certified optimal" : "Valid best found";
   return <section className="quality-summary" aria-label="Schedule quality certificate"><h4>{status}</h4><p>Repeat excess {quality.repeatedOpponentCount} · lower bound {quality.repeatExcessLowerBound} · gap {quality.repeatExcessGap}</p><p>Maximum pair frequency {quality.maximumPairFrequency} · lower bound {quality.maximumPairFrequencyLowerBound} · gap {quality.maximumPairFrequencyGap}</p><p>Appearance imbalance {quality.appearanceImbalance} · Worst repeat burden {quality.worstPerCarRepeatBurden}</p><p>Squared repeat burden {quality.squaredRepeatBurden} · squared pair frequency {quality.squaredPairFrequency}</p><p>Bye assignments {sum(quality.byeCounts)} · two-car participations {sum(quality.twoCarHeatCounts)}</p>{quality.warnings.map((warning) => <p className="warning-text" key={warning}>{warning}</p>)}{quality.errors.map((error) => <p className="inline-error" key={error}>{error}</p>)}</section>;
 }
 

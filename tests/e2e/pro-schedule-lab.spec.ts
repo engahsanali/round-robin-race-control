@@ -26,4 +26,13 @@ test("compares and inspects a schedule at phone width with keyboard-reachable co
     const style = getComputedStyle(element);
     return Math.max(element.getBoundingClientRect().height, Number.parseFloat(style.minHeight));
   })).toBeGreaterThanOrEqual(48);
+
+  const activation = page.getByRole("button", { name: "Activate selected schedule" });
+  await activation.click();
+  const dialog = page.getByRole("alertdialog", { name: "Confirm schedule activation" });
+  await expect(dialog.getByRole("button", { name: "Confirm activation" })).toBeFocused();
+  await expect(page.getByRole("heading", { name: "Schedule Lab" }).locator("xpath=ancestor-or-self::*[@inert][1]")).toHaveCount(1);
+  await page.keyboard.press("Escape");
+  await expect(dialog).toBeHidden();
+  await expect(activation).toBeFocused();
 });

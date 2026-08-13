@@ -77,6 +77,29 @@ function scheduleEvent(): EventStateV1 {
   return validated.data;
 }
 
+function scheduleEventWithActiveCars(count: number): EventStateV1 {
+  const candidate = scheduleEvent();
+  candidate.participants = Array.from({ length: count }, (_, index) => ({
+    id: `participant-${index + 1}`,
+    name: `Racer ${index + 1}`,
+    email: "",
+    phone: "",
+    notes: "",
+  }));
+  candidate.entries = Array.from({ length: count }, (_, index) => ({
+    id: `car-${index + 1}`,
+    participantId: `participant-${index + 1}`,
+    carNumber: index + 1,
+    name: `Car ${index + 1}`,
+    categoryId: "standard",
+    quantity: 1,
+    active: true,
+  }));
+  const validated = validateEventState(candidate);
+  if (!validated.success) throw new Error("Expanded schedule fixture must be valid");
+  return validated.data;
+}
+
 beforeEach(async () => {
   sequence += 1;
   database = createProDatabase(`rr3-pro-schedule-${sequence}`);
@@ -113,6 +136,23 @@ async function buildNineCarPreset(user: ReturnType<typeof userEvent.setup>) {
 }
 
 describe("ScheduleLabPage", () => {
+  it("gates custom generation outside the shared scheduler's 3–24 active-car range", async () => {
+    await repository.save(scheduleEventWithActiveCars(25), {
+      commandId: "schedule-25-car-proof",
+      timestamp: "2026-08-14T04:30:00.000Z",
+      summary: "Load 25-car gate fixture",
+    });
+    const user = userEvent.setup();
+    renderPage();
+    await screen.findByRole("heading", { name: "Schedule Lab" });
+
+    await user.click(screen.getByRole("radio", { name: "Custom seeded search" }));
+
+    expect(screen.getByRole("alert").textContent).toMatch(/custom schedules support 3–24 active cars.*25 available/i);
+    expect((screen.getByRole("button", { name: "Generate three candidates" }) as HTMLButtonElement).disabled).toBe(true);
+    expect(screen.queryByRole("table", { name: "Schedule candidate comparison" })).toBeNull();
+  });
+
   it("uses exact preset gates and a stable, manually swappable slot mapping", async () => {
     const user = userEvent.setup();
     renderPage();
@@ -198,6 +238,24 @@ describe("ScheduleLabPage", () => {
     expect(within(candidate).getByText(/Maximum lane spread 4/)).toBeTruthy();
   });
 
+  it("labels a warning-bearing valid schedule as Valid with warnings", async () => {
+    await repository.save(scheduleEventWithActiveCars(10), {
+      commandId: "schedule-warning-proof",
+      timestamp: "2026-08-14T04:30:00.000Z",
+      summary: "Load warning fixture",
+    });
+    const user = userEvent.setup();
+    renderPage();
+    await screen.findByRole("heading", { name: "Schedule Lab" });
+    await user.click(screen.getByRole("radio", { name: "Custom seeded search" }));
+    await user.click(screen.getByRole("button", { name: "Generate three candidates" }));
+
+    const certificate = await screen.findByRole("region", { name: "Schedule quality certificate" });
+    expect(within(certificate).getByRole("heading", { name: "Valid with warnings" })).toBeTruthy();
+    expect(within(certificate).queryByRole("heading", { name: "Certified optimal" })).toBeNull();
+    expect(within(certificate).getAllByText(/bye assignment/i).length).toBeGreaterThan(0);
+  });
+
   it("previews destructive impact and activates only a validated candidate", async () => {
     const user = userEvent.setup();
     renderPage();
@@ -205,12 +263,22 @@ describe("ScheduleLabPage", () => {
     await user.click(screen.getByRole("button", { name: "Activate selected schedule" }));
 
     const confirmation = screen.getByRole("alertdialog", { name: "Confirm schedule activation" });
+    expect(document.activeElement).toBe(within(confirmation).getByRole("button", { name: "Confirm activation" }));
+    expect(screen.getByRole("heading", { name: "Schedule Lab" }).closest("[inert]")).toBeTruthy();
     expect(within(confirmation).getByText(/replace 1 existing preliminary heat with 12 validated heats/i)).toBeTruthy();
     expect(within(confirmation).getByText(/recovery snapshot/i)).toBeTruthy();
     expect((await repository.load())?.matches).toHaveLength(1);
-    await user.click(within(confirmation).getByRole("button", { name: "Confirm activation" }));
+    await user.keyboard("{Escape}");
+    expect(screen.queryByRole("alertdialog", { name: "Confirm schedule activation" })).toBeNull();
+    const activationTrigger = screen.getByRole("button", { name: "Activate selected schedule" });
+    expect(document.activeElement).toBe(activationTrigger);
+
+    await user.click(activationTrigger);
+    const reopened = screen.getByRole("alertdialog", { name: "Confirm schedule activation" });
+    await user.click(within(reopened).getByRole("button", { name: "Confirm activation" }));
 
     await waitFor(async () => expect((await repository.load())?.matches).toHaveLength(12));
+    await waitFor(() => expect(document.activeElement).toBe(screen.getByRole("status", { name: "Schedule activation status" })));
     const saved = (await repository.load())!;
     expect(saved.matches[0]).toMatchObject({
       id: "preset-template9-match-1-heat-1",
