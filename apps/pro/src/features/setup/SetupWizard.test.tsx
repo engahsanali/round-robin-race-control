@@ -4,10 +4,13 @@ import { cleanup, render, screen, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { parseEventJson, serializeEvent, type EventStateV1 } from "@rr3/domain";
+import { Link, MemoryRouter } from "react-router-dom";
 import demoEvent from "../../../../../fixtures/demo-event.json";
+import { AppRoutes } from "../../app/routes";
 import { createProDatabase, type ProDatabase } from "../../persistence/db";
 import { EventRepository } from "../../persistence/repository";
 import { EventProvider } from "../../state/EventProvider";
+import { RehearsalWorkspaceProvider } from "../../state/RehearsalWorkspace";
 import { DashboardPage } from "../dashboard/DashboardPage";
 import { RecoveryPanel } from "../shared/RecoveryPanel";
 import { SetupWizard } from "./SetupWizard";
@@ -35,7 +38,7 @@ function renderWithProvider(node: React.ReactNode) {
       now={() => "2026-08-14T06:00:00.000Z"}
       createId={() => `setup-command-${sequence}`}
     >
-      {node}
+      <RehearsalWorkspaceProvider>{node}</RehearsalWorkspaceProvider>
     </EventProvider>,
   );
 }
@@ -109,7 +112,7 @@ describe("SetupWizard", () => {
     expect(saved?.auditLog.at(-1)?.action).toBe("event.replaced");
   }, 10_000);
 
-  it("labels a demo rehearsal as isolated practice rather than a real event", async () => {
+  it("creates a demo rehearsal in memory without replacing the official repository", async () => {
     const user = userEvent.setup();
     renderWithProvider(<SetupWizard />);
 
@@ -123,14 +126,53 @@ describe("SetupWizard", () => {
 
     expect(screen.getByText("Demo rehearsal — isolated practice data")).toBeTruthy();
     await user.click(screen.getByRole("button", { name: "Create demo rehearsal" }));
-    const saved = await repository.load();
-    expect(saved?.event.id).toMatch(/^demo-rehearsal-/);
-    expect(saved?.event.name).toBe("Demo rehearsal — Practice Night");
-    expect(saved?.auditLog.some(({ details }) => details.workspace === "demo-rehearsal")).toBe(true);
+    expect(await screen.findByText("Practice Night was created as an isolated demo rehearsal.")).toBeTruthy();
+    expect(await repository.load()).toBeNull();
   });
 });
 
 describe("DashboardPage and RecoveryPanel", () => {
+  it("keeps rehearsal data and mutations isolated while navigating to Registration and back", async () => {
+    const parsed = parseEventJson(JSON.stringify(demoEvent));
+    if (!parsed.ok) throw new Error("Demo fixture must be valid");
+    const official = structuredClone(parsed.data);
+    official.event.id = "event-official-cross-route";
+    official.event.name = "Official Cross-Route Event";
+    official.participants = official.participants.map((participant) => ({
+      ...participant,
+      name: `Official ${participant.name}`,
+    }));
+    await repository.save(official, {
+      commandId: "official-cross-route-bootstrap",
+      timestamp: "2026-08-14T05:00:00.000Z",
+      summary: "Loaded cross-route official event",
+    });
+    const officialBytes = serializeEvent((await repository.load())!);
+    const user = userEvent.setup();
+
+    renderWithProvider(
+      <MemoryRouter>
+        <nav aria-label="Test workspace routes"><Link to="/">Dashboard route</Link><Link to="/registration">Registration route</Link></nav>
+        <AppRoutes />
+      </MemoryRouter>,
+    );
+
+    expect(await screen.findByText("Official Cross-Route Event")).toBeTruthy();
+    await user.click(screen.getByRole("button", { name: "Load demo rehearsal" }));
+    await user.click(screen.getByRole("link", { name: "Registration route" }));
+
+    expect(await screen.findByText("Sample 01 - Ada")).toBeTruthy();
+    expect(screen.queryByText("Official Sample 01 - Ada")).toBeNull();
+    await user.click(screen.getByRole("button", { name: "Withdraw car 1 Sample Car 01" }));
+    await user.click(within(screen.getByRole("alertdialog", { name: "Confirm car withdrawal" })).getByRole("button", { name: "Confirm withdrawal" }));
+    expect(await screen.findByRole("button", { name: "Restore car 1 Sample Car 01" })).toBeTruthy();
+    expect(serializeEvent((await repository.load())!)).toBe(officialBytes);
+
+    await user.click(screen.getByRole("link", { name: "Dashboard route" }));
+    expect(await screen.findByText("8 active cars")).toBeTruthy();
+    expect(screen.getByText("Demo rehearsal — isolated practice")).toBeTruthy();
+    expect(serializeEvent((await repository.load())!)).toBe(officialBytes);
+  });
   it("loads and exits an isolated demo without replacing the recoverable official event", async () => {
     const parsed = parseEventJson(JSON.stringify(demoEvent));
     if (!parsed.ok) throw new Error("Demo fixture must be valid");

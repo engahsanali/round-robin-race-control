@@ -1,8 +1,9 @@
-import { lazy, Suspense, useState } from "react";
+import { lazy, Suspense } from "react";
 import { motion } from "motion/react";
-import { calculateEventAccounts, calculateStandings, parseEventJson, type EventStateV1 } from "@rr3/domain";
+import { calculateEventAccounts, calculateStandings, parseEventJson } from "@rr3/domain";
 import demoEvent from "../../../../../fixtures/demo-event.json";
-import { useOptionalEventState } from "../../state/EventProvider";
+import { useOptionalEventState, useOptionalOfficialEventState } from "../../state/EventProvider";
+import { useOptionalRehearsalWorkspace } from "../../state/RehearsalWorkspace";
 import { formatMoney } from "../payments/AccountPanel";
 import { RecoveryPanel } from "../shared/RecoveryPanel";
 import { SetupWizard } from "../setup/SetupWizard";
@@ -11,17 +12,18 @@ const DashboardCharts = lazy(() => import("./DashboardCharts"));
 
 export function DashboardPage() {
   const eventState = useOptionalEventState();
-  const [demoState, setDemoState] = useState<EventStateV1 | null>(null);
-  const officialState = eventState?.state ?? null;
+  const officialEventState = useOptionalOfficialEventState();
+  const rehearsal = useOptionalRehearsalWorkspace();
+  const officialState = officialEventState?.state ?? null;
 
   function loadDemo() {
     const parsed = parseEventJson(JSON.stringify(demoEvent));
-    if (parsed.ok) setDemoState(parsed.data);
+    if (parsed.ok) rehearsal?.begin(parsed.data);
   }
 
-  if (!eventState) return <EmptyDashboard />;
+  if (!eventState) return <EmptyDashboard onLoadDemo={loadDemo} />;
   if (eventState.loading) return <p role="status">Loading event dashboard…</p>;
-  if (!officialState && !demoState) {
+  if (!eventState.state) {
     return (
       <section className="page-frame dashboard-page" aria-labelledby="page-title">
         <p className="eyebrow">Local race control</p>
@@ -33,7 +35,7 @@ export function DashboardPage() {
     );
   }
 
-  const state = demoState ?? officialState!;
+  const state = eventState.state;
   const heats = [...state.matches, ...state.finals];
   const scheduled = heats.filter(({ status }) => status === "scheduled");
   const current = scheduled[0] ?? null;
@@ -60,11 +62,11 @@ export function DashboardPage() {
       <p className="eyebrow">Local race control</p>
       <h2 id="page-title">Event dashboard</h2>
       <h3>{state.event.name}</h3>
-      <p className="workspace-label">{demoState || state.event.id.startsWith("demo-rehearsal-") || state.event.id.startsWith("event-demo-") ? "Demo rehearsal — isolated practice" : "Real event — official workspace"}</p>
-      {demoState ? (
+      <p className="workspace-label">{rehearsal?.state || state.event.id.startsWith("demo-rehearsal-") || state.event.id.startsWith("event-demo-") ? "Demo rehearsal — isolated practice" : "Real event — official workspace"}</p>
+      {rehearsal?.state ? (
         <div className="demo-callout" role="status">
           <p>{officialState ? `Official event remains saved: ${officialState.event.name}` : "No official event is saved; demo changes remain temporary."}</p>
-          <button type="button" className="secondary-action" onClick={() => setDemoState(null)}>{officialState ? `Return to ${officialState.event.name}` : "Return to empty official workspace"}</button>
+          <button type="button" className="secondary-action" onClick={rehearsal.exit}>{officialState ? `Return to ${officialState.event.name}` : "Return to empty official workspace"}</button>
         </div>
       ) : <button type="button" className="secondary-action" onClick={loadDemo}>Load demo rehearsal</button>}
       <div className="dashboard-facts" aria-label="Event-day facts">
@@ -114,8 +116,8 @@ export function DashboardPage() {
   );
 }
 
-function EmptyDashboard() {
-  return <section className="page-frame dashboard-page" aria-labelledby="page-title"><p className="eyebrow">Local race control</p><h2 id="page-title">Event dashboard</h2><p>Open the installed application to load a real event or isolated demo rehearsal.</p></section>;
+function EmptyDashboard({ onLoadDemo }: { onLoadDemo(): void }) {
+  return <section className="page-frame dashboard-page" aria-labelledby="page-title"><p className="eyebrow">Local race control</p><h2 id="page-title">Event dashboard</h2><EmptyEventSummary onLoadDemo={onLoadDemo} /><SetupWizard /></section>;
 }
 
 function ChartFallbacks({ takeaways }: { takeaways: readonly string[] }) {

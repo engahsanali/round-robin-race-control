@@ -1,6 +1,7 @@
 import { useMemo, useState } from "react";
 import type { CarEntry, EventStateV1, Participant } from "@rr3/domain";
-import { useOptionalEventState } from "../../state/EventProvider";
+import { useOptionalOfficialEventState } from "../../state/EventProvider";
+import { useOptionalRehearsalWorkspace } from "../../state/RehearsalWorkspace";
 
 type WorkspaceKind = "real" | "demo";
 type DraftCar = { name: string; carNumber: string };
@@ -8,7 +9,8 @@ type DraftCar = { name: string; carNumber: string };
 const stepLabels = ["Event details", "Categories & prices", "Entrants & cars", "Competition policy", "Review & create"];
 
 export function SetupWizard() {
-  const eventState = useOptionalEventState();
+  const eventState = useOptionalOfficialEventState();
+  const rehearsal = useOptionalRehearsalWorkspace();
   const [step, setStep] = useState(0);
   const [workspace, setWorkspace] = useState<WorkspaceKind>("real");
   const [name, setName] = useState("");
@@ -66,7 +68,8 @@ export function SetupWizard() {
   }
 
   async function createEvent() {
-    if (!eventState) return;
+    if (workspace === "real" && !eventState) return;
+    if (workspace === "demo" && !rehearsal) return;
     setSubmitting(true);
     setErrors([]);
     try {
@@ -132,11 +135,15 @@ export function SetupWizard() {
           details: { workspace: "demo-rehearsal" },
         }] : [],
       };
-      await eventState.dispatchEventCommand({
-        type: "event.replace",
-        event,
-        summary: workspace === "demo" ? "Created isolated demo rehearsal" : "Created real event workspace",
-      });
+      if (workspace === "demo") {
+        rehearsal!.begin(event);
+      } else {
+        await eventState!.dispatchEventCommand({
+          type: "event.replace",
+          event,
+          summary: "Created real event workspace",
+        });
+      }
       setNotice(workspace === "demo"
         ? `${name.trim()} was created as an isolated demo rehearsal.`
         : `${name.trim()} was created as a real event.`);
@@ -147,8 +154,8 @@ export function SetupWizard() {
     }
   }
 
-  if (!eventState) return <SetupUnavailable />;
-  if (eventState.loading) return <p role="status">Loading local event workspace…</p>;
+  if (!eventState && !rehearsal) return <SetupUnavailable />;
+  if (eventState?.loading) return <p role="status">Loading local event workspace…</p>;
 
   return (
     <section className="setup-wizard feature-panel" aria-labelledby="setup-step-title">

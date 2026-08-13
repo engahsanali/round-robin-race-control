@@ -57,7 +57,8 @@ afterEach(() => {
 });
 
 describe("Pro application shell", () => {
-  it("exposes the credited race-control shell through semantic landmarks", () => {
+  it("exposes the credited race-control shell and a functional empty-dashboard rehearsal", async () => {
+    const user = userEvent.setup();
     renderApp();
 
     expect(screen.getByRole("banner")).toBeTruthy();
@@ -73,6 +74,9 @@ describe("Pro application shell", () => {
     expect(screen.getByText("No event loaded")).toBeTruthy();
     expect(screen.getByRole("button", { name: "Load demo rehearsal" })).toBeTruthy();
     expect(screen.getByText(/demo rehearsal is separate from your real event/i)).toBeTruthy();
+    await user.click(screen.getByRole("button", { name: "Load demo rehearsal" }));
+    expect(screen.getByText("Nine-Car Community Demo")).toBeTruthy();
+    expect(screen.getByText("Demo rehearsal — isolated practice")).toBeTruthy();
     expect(screen.getByRole("status", { name: "Application updates" })).toBeTruthy();
     expect(screen.getByRole("alert", { name: "Application errors" })).toBeTruthy();
   });

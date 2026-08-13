@@ -171,7 +171,9 @@ describe("RegistrationPage", () => {
     expect(await screen.findByText("Withdrawn", { selector: ".status-label" })).toBeTruthy();
     expect((await repository.load())?.entries.find(({ id }) => id === "car-a")?.active).toBe(false);
 
-    await user.click(screen.getByRole("button", { name: "Restore car 1 Alpha" }));
+    const restore = screen.getByRole("button", { name: "Restore car 1 Alpha" });
+    await waitFor(() => expect(document.activeElement).toBe(restore));
+    await user.click(restore);
     await waitFor(async () => {
       expect((await repository.load())?.entries.find(({ id }) => id === "car-a")?.active).toBe(true);
     });

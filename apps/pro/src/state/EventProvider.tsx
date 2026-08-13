@@ -22,6 +22,7 @@ import {
   type PostCommitIssue,
   type PublishCommittedEvent,
 } from "./commands";
+import { useOptionalRehearsalWorkspace } from "./RehearsalWorkspace";
 
 type EventContextValue = {
   state: EventStateV1 | null;
@@ -213,12 +214,41 @@ export function EventProvider({
 }
 
 export function useEventState(): EventContextValue {
-  const context = useContext(EventContext);
+  const context = useOptionalEventState();
   if (!context) throw new Error("useEventState must be used within EventProvider");
   return context;
 }
 
 export function useOptionalEventState(): EventContextValue | null {
+  const official = useContext(EventContext);
+  const rehearsal = useOptionalRehearsalWorkspace();
+  if (!rehearsal?.state) return official;
+
+  return {
+    state: rehearsal.state,
+    loading: false,
+    error: null,
+    postCommitIssue: null,
+    persistenceStatus: official?.persistenceStatus ?? "unavailable",
+    snapshots: official?.snapshots ?? [],
+    dispatchEventCommand: rehearsal.dispatch,
+    requestPersistentStorage: official?.requestPersistentStorage ?? (async () => "unavailable"),
+    importEventJson: async (text, summary = "Imported event into rehearsal workspace") => {
+      const parsed = parseEventJson(text);
+      if (!parsed.ok) throw new EventRepositoryValidationError("Imported event is invalid", parsed.issues);
+      return rehearsal.dispatch({ type: "event.replace", event: parsed.data, summary });
+    },
+    previewSnapshot: async () => {
+      throw new Error("Exit the rehearsal before previewing official recovery history");
+    },
+    restoreSnapshot: async () => {
+      throw new Error("Exit the rehearsal before restoring an official event snapshot");
+    },
+    refreshSnapshots: official?.refreshSnapshots ?? (async () => []),
+  };
+}
+
+export function useOptionalOfficialEventState(): EventContextValue | null {
   return useContext(EventContext);
 }
 

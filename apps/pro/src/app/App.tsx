@@ -3,6 +3,7 @@ import { MotionConfig } from "motion/react";
 import { NavLink } from "react-router-dom";
 import { useRegisterSW } from "virtual:pwa-register/react";
 import { AppRoutes, operatorDestinations } from "./routes";
+import { RehearsalWorkspaceProvider } from "../state/RehearsalWorkspace";
 
 const THEME_STORAGE_KEY = "rr3.pro.theme";
 const CREATOR_CREDIT = "Made by Cesar Lacsamana and Ahsan Ali";
@@ -131,6 +132,14 @@ function UpdatePrompt({ updateSafety }: { updateSafety: UpdateSafety }) {
 }
 
 export function App({ updateSafety = idleUpdateSafety }: AppProps) {
+  return (
+    <RehearsalWorkspaceProvider>
+      <AppShell updateSafety={updateSafety} />
+    </RehearsalWorkspaceProvider>
+  );
+}
+
+function AppShell({ updateSafety }: { updateSafety: UpdateSafety }) {
   const [theme, setTheme] = useState<ThemePreference>(readThemePreference);
   const [aboutOpen, setAboutOpen] = useState(false);
   const isReducedMotion = useReducedMotionPreference();

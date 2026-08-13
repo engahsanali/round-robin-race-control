@@ -54,6 +54,11 @@ export type CommandDispatcher = {
   readonly pending: boolean;
 };
 
+export type PreparedEventCommand = {
+  event: EventStateV1;
+  receipt: CommandReceipt;
+};
+
 class TransactionalCommandDispatcher implements CommandDispatcher {
   private isPending = false;
   private readonly repository: EventRepository;
@@ -88,26 +93,9 @@ class TransactionalCommandDispatcher implements CommandDispatcher {
     const current = await this.repository.load();
     const commandId = this.createId();
     const timestamp = this.now();
-    const rankingPhase = rankingPhaseForCommand(current, command);
-    const previousRanks = current ? rankMap(current, rankingPhase) : {};
-    const { event: candidate, affectedCarIds, summary, undoable } = applyCommand(
-      current,
-      command,
-      commandId,
-      timestamp,
-    );
-    const nextRanks = rankMap(candidate, rankingPhase);
-    const receipt: CommandReceipt = {
-      commandId,
-      timestamp,
-      summary,
-      affectedCarIds,
-      previousRanks,
-      nextRanks,
-      undoUntil: undoable ? addSeconds(timestamp, 30) : null,
-    };
+    const { event: candidate, receipt } = prepareEventCommand(current, command, commandId, timestamp);
 
-    await this.repository.save(candidate, { commandId, timestamp, summary });
+    await this.repository.save(candidate, { commandId, timestamp, summary: receipt.summary });
     let committed = candidate;
     try {
       const readBack = await this.repository.load();
@@ -150,6 +138,34 @@ class TransactionalCommandDispatcher implements CommandDispatcher {
 
 export function createCommandDispatcher(options: CommandDispatcherOptions): CommandDispatcher {
   return new TransactionalCommandDispatcher(options);
+}
+
+export function prepareEventCommand(
+  current: EventStateV1 | null,
+  command: EventCommand,
+  commandId: string,
+  timestamp: string,
+): PreparedEventCommand {
+  const rankingPhase = rankingPhaseForCommand(current, command);
+  const previousRanks = current ? rankMap(current, rankingPhase) : {};
+  const { event, affectedCarIds, summary, undoable } = applyCommand(
+    current,
+    command,
+    commandId,
+    timestamp,
+  );
+  return {
+    event,
+    receipt: {
+      commandId,
+      timestamp,
+      summary,
+      affectedCarIds,
+      previousRanks,
+      nextRanks: rankMap(event, rankingPhase),
+      undoUntil: undoable ? addSeconds(timestamp, 30) : null,
+    },
+  };
 }
 
 type AppliedCommand = {

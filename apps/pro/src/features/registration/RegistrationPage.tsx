@@ -23,6 +23,7 @@ export function RegistrationPage() {
   const [error, setError] = useState("");
   const withdrawalTrigger = useRef<HTMLButtonElement | null>(null);
   const withdrawalConfirm = useRef<HTMLButtonElement | null>(null);
+  const entryActionButtons = useRef(new Map<string, HTMLButtonElement>());
 
   useEffect(() => {
     if (withdrawEntryId) withdrawalConfirm.current?.focus();
@@ -67,9 +68,15 @@ export function RegistrationPage() {
   const provider = eventState;
   const currentState = state;
 
-  function closeWithdrawal() {
+  function closeWithdrawal(focusEntryId?: string) {
     setWithdrawEntryId(null);
-    window.setTimeout(() => withdrawalTrigger.current?.focus(), 0);
+    window.setTimeout(() => {
+      if (focusEntryId) {
+        entryActionButtons.current.get(focusEntryId)?.focus();
+      } else {
+        withdrawalTrigger.current?.focus();
+      }
+    }, 0);
   }
 
   const accounts = calculateEventAccounts(currentState);
@@ -125,7 +132,7 @@ export function RegistrationPage() {
     };
     try {
       await replaceEvent(candidate, `${active ? "Restored" : "Withdrew"} car ${entry.carNumber} (${entry.id})`);
-      closeWithdrawal();
+      if (!active) closeWithdrawal(entry.id);
     } catch {
       // The page-level alert already explains the rejected update.
     }
@@ -229,8 +236,8 @@ export function RegistrationPage() {
                   <button type="button" className="quiet-action" onClick={() => setEditingParticipantId(participant.id)}>Edit participant {participant.name}</button>
                   <button type="button" className="quiet-action" onClick={() => setAccountParticipantId(participant.id)}>Manage account {participant.name}</button>
                   {entry.active
-                    ? <button type="button" className="danger-action" onClick={(event) => { withdrawalTrigger.current = event.currentTarget; setWithdrawEntryId(entry.id); }}>Withdraw car {entry.carNumber} {entry.name}</button>
-                    : <button type="button" className="secondary-action" onClick={() => void setEntryActive(entry, true)}>Restore car {entry.carNumber} {entry.name}</button>}
+                    ? <button ref={(node) => { if (node) entryActionButtons.current.set(entry.id, node); else entryActionButtons.current.delete(entry.id); }} type="button" className="danger-action" onClick={(event) => { withdrawalTrigger.current = event.currentTarget; setWithdrawEntryId(entry.id); }}>Withdraw car {entry.carNumber} {entry.name}</button>
+                    : <button ref={(node) => { if (node) entryActionButtons.current.set(entry.id, node); else entryActionButtons.current.delete(entry.id); }} type="button" className="secondary-action" onClick={() => void setEntryActive(entry, true)}>Restore car {entry.carNumber} {entry.name}</button>}
                 </td>
               </tr>
             );
@@ -264,7 +271,7 @@ export function RegistrationPage() {
             <h3 id="withdraw-title">Confirm car withdrawal</h3>
             <p>Car {withdrawEntry.carNumber} appears in {scheduledHeatCount(currentState, withdrawEntry.id)} scheduled heat{scheduledHeatCount(currentState, withdrawEntry.id) === 1 ? "" : "s"}.</p>
             <p>The car stays in event history and existing schedules. Future scheduling will exclude it while withdrawn.</p>
-            <div className="action-row"><button ref={withdrawalConfirm} type="button" className="danger-action" onClick={() => void setEntryActive(withdrawEntry, false)}>Confirm withdrawal</button><button type="button" className="quiet-action" onClick={closeWithdrawal}>Keep car active</button></div>
+            <div className="action-row"><button ref={withdrawalConfirm} type="button" className="danger-action" onClick={() => void setEntryActive(withdrawEntry, false)}>Confirm withdrawal</button><button type="button" className="quiet-action" onClick={() => closeWithdrawal()}>Keep car active</button></div>
           </section>
         </div>
       ) : null}
