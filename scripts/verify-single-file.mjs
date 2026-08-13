@@ -1,82 +1,135 @@
 import { readdir, readFile } from 'node:fs/promises';
-import { dirname, extname, join, resolve } from 'node:path';
+import { basename, dirname, join, relative, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 
-const repositoryRoot = resolve(dirname(fileURLToPath(import.meta.url)), '..');
-const runtimeDirectory = join(repositoryRoot, 'single-file');
+const scriptRoot = resolve(dirname(fileURLToPath(import.meta.url)), '..');
+const directoryArgument = process.argv.indexOf('--directory');
+const runtimeDirectory = directoryArgument >= 0 ? resolve(process.argv[directoryArgument + 1] || '') : join(scriptRoot, 'single-file');
 const htmlPath = join(runtimeDirectory, 'index.html');
 const failures = [];
-const requireCondition = (condition, message) => { if (!condition) failures.push(message); };
+const failUnless = (condition, message) => { if (!condition) failures.push(message); };
+
+async function inventory(directory, prefix = '') {
+  const entries = await readdir(directory, { withFileTypes: true });
+  const found = [];
+  for (const entry of entries) {
+    const path = prefix ? `${prefix}/${entry.name}` : entry.name;
+    found.push({ path, directory: entry.isDirectory() });
+    if (entry.isDirectory()) found.push(...await inventory(join(directory, entry.name), path));
+  }
+  return found;
+}
+
+// Tokenizes start tags while honoring comments and quoted `>` characters. This
+// is intentionally an HTML-aware scanner rather than a source-line regex.
+function tokenizeStartTags(source) {
+  const tags = [];
+  let index = 0;
+  while (index < source.length) {
+    const open = source.indexOf('<', index);
+    if (open < 0) break;
+    if (source.startsWith('<!--', open)) { const close = source.indexOf('-->', open + 4); index = close < 0 ? source.length : close + 3; continue; }
+    if (/^<[/!?]/.test(source.slice(open, open + 2))) { const close = source.indexOf('>', open + 2); index = close < 0 ? source.length : close + 1; continue; }
+    let cursor = open + 1; while (/\s/.test(source[cursor] || '')) cursor += 1;
+    const nameMatch = source.slice(cursor).match(/^[A-Za-z][\w:-]*/); if (!nameMatch) { index = open + 1; continue; }
+    const name = nameMatch[0].toLowerCase(); cursor += nameMatch[0].length; const attributes = new Map();
+    while (cursor < source.length) {
+      while (/\s/.test(source[cursor] || '')) cursor += 1;
+      if (source[cursor] === '>') { cursor += 1; break; }
+      if (source[cursor] === '/' && source[cursor + 1] === '>') { cursor += 2; break; }
+      const attributeMatch = source.slice(cursor).match(/^[^\s=/>]+/); if (!attributeMatch) { cursor += 1; continue; }
+      const attributeName = attributeMatch[0].toLowerCase(); cursor += attributeMatch[0].length; while (/\s/.test(source[cursor] || '')) cursor += 1; let value = '';
+      if (source[cursor] === '=') {
+        cursor += 1; while (/\s/.test(source[cursor] || '')) cursor += 1; const quote = source[cursor];
+        if (quote === '"' || quote === "'") { cursor += 1; const end = source.indexOf(quote, cursor); value = source.slice(cursor, end < 0 ? source.length : end); cursor = end < 0 ? source.length : end + 1; }
+        else { const valueMatch = source.slice(cursor).match(/^[^\s>]+/); value = valueMatch?.[0] || ''; cursor += value.length; }
+      }
+      attributes.set(attributeName, value);
+    }
+    tags.push({ name, attributes, start: open, end: cursor }); index = cursor;
+  }
+  return tags;
+}
+
+function isInlineReference(value) { const normalized = value.trim().toLowerCase(); return !normalized || normalized.startsWith('data:') || normalized.startsWith('#'); }
+function selectorTokens(selector) {
+  return [...selector.matchAll(/#([\w-]+)|\.([\w-]+)|\[([\w-]+)/g)].map((match) => ({ type: match[1] ? 'id' : match[2] ? 'class' : 'attribute', value: match[1] || match[2] || match[3] }));
+}
+
+const contents = await inventory(runtimeDirectory);
+const unexpected = contents.filter(({ path, directory }) => directory || !['index.html', 'netlify.toml'].includes(path));
+failUnless(unexpected.length === 0, `Unexpected file or directory in single-file/: ${unexpected.map(({ path }) => path).join(', ') || 'none'}. Only index.html and root netlify.toml are permitted.`);
+failUnless(contents.some(({ path }) => path === 'index.html'), 'single-file/index.html is missing.');
 const html = await readFile(htmlPath, 'utf8');
-const runtimeExtensions = new Set(['.html', '.htm', '.js', '.mjs', '.cjs', '.css', '.json', '.wasm']);
-const runtimeFiles = (await readdir(runtimeDirectory, { withFileTypes: true }))
-  .filter((entry) => entry.isFile() && runtimeExtensions.has(extname(entry.name).toLowerCase()))
-  .map((entry) => entry.name).sort();
+const tags = tokenizeStartTags(html); const tagValues = (name) => tags.filter((tag) => tag.name === name);
 
-requireCondition(runtimeFiles.length === 1 && runtimeFiles[0] === 'index.html', `Expected index.html to be the only runtime file; found: ${runtimeFiles.join(', ') || 'none'}`);
-requireCondition((html.match(/Round Robin Race Control/g) || []).length >= 3, 'Product brand is missing or incomplete.');
-requireCondition((html.match(/Made by Cesar Lacsamana and Ahsan Ali/g) || []).length >= 3, 'Exact creator credit must appear in shell, reports, and diagnostics.');
-
+failUnless((html.match(/Round Robin Race Control/g) || []).length >= 3, 'Product brand is missing or incomplete.');
+failUnless((html.match(/Made by Cesar Lacsamana and Ahsan Ali/g) || []).length >= 3, 'Exact creator credit must appear in shell, reports, and diagnostics.');
 const expectedViews = ['dashboard', 'registration', 'setup', 'live', 'standings', 'finals', 'reports', 'settings', 'diagnostics'];
-const views = [...html.matchAll(/<button\b[^>]*\bdata-view="([^"]+)"/gi)].map((match) => match[1]);
-requireCondition(JSON.stringify(views) === JSON.stringify(expectedViews), `Expected exactly nine ordered views; found: ${views.join(', ')}`);
+const views = tagValues('button').map(({ attributes }) => attributes.get('data-view')).filter(Boolean);
+failUnless(JSON.stringify(views) === JSON.stringify(expectedViews), `Expected exactly nine ordered views; found: ${views.join(', ')}`);
 
-const presetBlock = html.match(/<script\s+type="application\/json"\s+id="preset-data">([\s\S]*?)<\/script>/i);
-if (!presetBlock) failures.push('Inert preset data block is missing.');
+const presetTag = tagValues('script').find(({ attributes }) => attributes.get('id') === 'preset-data' && attributes.get('type')?.toLowerCase() === 'application/json');
+if (!presetTag) failures.push('Inert preset data block is missing.');
 else {
+  const close = html.toLowerCase().indexOf('</script>', presetTag.end);
   try {
-    const presets = JSON.parse(presetBlock[1]);
-    requireCondition(JSON.stringify(Object.keys(presets)) === JSON.stringify(['template9', 'template12', 'template15', 'finals15']), 'Expected exactly four canonical presets.');
-    requireCondition([presets.template9?.length, presets.template12?.length, presets.template15?.length, presets.finals15?.length].join(',') === '4,5,6,5', 'Canonical preset match counts are incorrect.');
+    const presets = JSON.parse(html.slice(presetTag.end, close));
+    failUnless(JSON.stringify(Object.keys(presets)) === JSON.stringify(['template9', 'template12', 'template15', 'finals15']), 'Expected exactly four canonical presets.');
+    failUnless([presets.template9?.length, presets.template12?.length, presets.template15?.length, presets.finals15?.length].join(',') === '4,5,6,5', 'Canonical preset match counts are incorrect.');
   } catch (error) { failures.push(`Preset data is not valid JSON: ${error instanceof Error ? error.message : String(error)}`); }
 }
 
-requireCondition(/\brunAllTests\s*\(/.test(html) && /run-embedded-tests/.test(html), 'Embedded self-test entry point is missing.');
-requireCondition(/@media\s+print\b/.test(html), 'Print CSS is missing.');
-requireCondition(/@media\s*\(prefers-reduced-motion:\s*reduce\)/.test(html), 'Reduced-motion CSS is missing.');
+failUnless(/\brunAllTests\s*\(/.test(html) && /run-embedded-tests/.test(html), 'Embedded self-test entry point is missing.');
+failUnless(/@media\s+print\b/.test(html), 'Print CSS is missing.');
+failUnless(/@media\s*\(prefers-reduced-motion:\s*reduce\)/.test(html), 'Reduced-motion CSS is missing.');
 
-const forbiddenPatterns = [
-  [/<script\b[^>]*\bsrc\s*=/i, 'External script source is forbidden.'],
-  [/<link\b[^>]*\brel\s*=\s*["']?stylesheet/i, 'External stylesheet is forbidden.'],
-  [/<(?:img|source|video|audio|iframe)\b[^>]*\bsrc\s*=\s*["']?https?:/i, 'Remote media source is forbidden.'],
-  [/<(?:a|form)\b[^>]*\b(?:href|action)\s*=\s*["']?https?:/i, 'Remote navigation or form action is forbidden.'],
-  [/url\(\s*["']?https?:/i, 'Remote CSS URL is forbidden.'],
-  [/\son[a-z]+\s*=/i, 'Inline event handlers are forbidden.'],
-  [/\beval\s*\(/, 'eval is forbidden.'],
-  [/\bFunction\s*\(/, 'Function constructor is forbidden.'],
-  [/document\.write\s*\(/, 'document.write is forbidden.'],
+const resourceAttributes = new Map([
+  ['script', ['src']], ['img', ['src', 'srcset']], ['source', ['src', 'srcset']], ['video', ['src', 'poster']],
+  ['audio', ['src']], ['track', ['src']], ['object', ['data']], ['embed', ['src']], ['iframe', ['src']],
+  ['input', ['src']], ['form', ['action']],
+]);
+for (const tag of tags) {
+  for (const attribute of resourceAttributes.get(tag.name) || []) {
+    if (tag.attributes.has(attribute) && !isInlineReference(tag.attributes.get(attribute))) failures.push(`Runtime reference is forbidden: <${tag.name} ${attribute}="${tag.attributes.get(attribute)}">.`);
+  }
+  if (tag.name === 'link' && tag.attributes.has('href')) failures.push(`Runtime link reference is forbidden: rel="${tag.attributes.get('rel') || ''}" href="${tag.attributes.get('href')}".`);
+  for (const [name] of tag.attributes) if (/^on[a-z]+$/.test(name)) failures.push(`Inline event handler ${name} is forbidden.`);
+  const inlineStyle = tag.attributes.get('style'); if (inlineStyle && (/url\(\s*(?!["']?data:)/i.test(inlineStyle) || /@import\b/i.test(inlineStyle))) failures.push('CSS runtime reference is forbidden in a style attribute.');
+}
+const styleText = tagValues('style').map((tag) => html.slice(tag.end, html.toLowerCase().indexOf('</style>', tag.end))).join('\n');
+failUnless(!/@import\b/i.test(styleText), 'CSS @import runtime reference is forbidden.');
+failUnless(!/url\(\s*(?!["']?data:)/i.test(styleText), 'CSS url() runtime reference is forbidden unless it is an inline data URL.');
+
+const forbiddenSource = [
+  [/\beval\s*\(/, 'eval is forbidden.'], [/\bFunction\s*\(/, 'Function constructor is forbidden.'], [/document\.write\s*\(/, 'document.write is forbidden.'],
   [/(?:\.innerHTML|\.outerHTML|insertAdjacentHTML)\b/, 'Unsafe user-HTML sink is forbidden.'],
-  [/\b(?:fetch|XMLHttpRequest|WebSocket|EventSource)\s*\(/, 'Network API is forbidden in the standalone runtime.'],
-  [/navigator\.sendBeacon\s*\(/, 'Network beacon API is forbidden in the standalone runtime.'],
+  [/\b(?:fetch|XMLHttpRequest|WebSocket|EventSource)\s*\(/, 'Network API is forbidden.'], [/navigator\.sendBeacon\s*\(/, 'Network beacon API is forbidden.'],
+  [/\bimport\s*\(/, 'Dynamic import runtime reference is forbidden.'], [/\b(?:SharedWorker|Worker)\s*\(/, 'Worker runtime reference is forbidden.'], [/serviceWorker\s*\.\s*register\s*\(/, 'Service-worker runtime reference is forbidden.'],
+  [/(?:\.\s*(?:src|href|srcset|data)|setAttribute\(\s*["'](?:src|href|srcset|data)["'])\s*(?:=|,)\s*["'](?!data:|#)/i, 'Dynamic runtime source assignment is forbidden.'],
   [/\b(?:TODO|FIXME|placeholder|starter|implement later|same as above|pseudocode)\b/i, 'Incomplete implementation marker is forbidden.'],
 ];
-for (const [pattern, message] of forbiddenPatterns) requireCondition(!pattern.test(html), message);
+for (const [pattern, message] of forbiddenSource) failUnless(!pattern.test(html), message);
 
-const declaredIds = new Set([
-  ...[...html.matchAll(/\bid\s*=\s*["']([^"']+)["']/gi)].map((match) => match[1]),
-  ...[...html.matchAll(/\bid\s*:\s*["']([^"']+)["']/g)].map((match) => match[1]),
-  ...[...html.matchAll(/\b(?:field|selectField)\([^,]+,\s*["']([^"']+)["']/g)].map((match) => match[1]),
-]);
-const referencedIds = [...html.matchAll(/getElementById\(\s*["']([^"']+)["']\s*\)/g)].map((match) => match[1]);
-for (const id of new Set(referencedIds)) requireCondition(declaredIds.has(id), `getElementById references undeclared selector #${id}.`);
-
-const selectorReferences = [...html.matchAll(/querySelector(?:All)?\(\s*["']([^"']+)["']\s*\)/g)].map((match) => match[1]);
-for (const selector of new Set(selectorReferences)) {
-  const identifiers = [...selector.matchAll(/([.#])([a-zA-Z_][\w-]*)|\[([\w-]+)/g)];
-  for (const identifier of identifiers) {
-    const token = identifier[2] || identifier[3];
-    requireCondition(html.split(token).length > 2, `querySelector references missing selector token ${token}.`);
+const ids = new Set(tags.map(({ attributes }) => attributes.get('id')).filter(Boolean));
+const classes = new Set(tags.flatMap(({ attributes }) => (attributes.get('class') || '').split(/\s+/).filter(Boolean)));
+const attributes = new Set(tags.flatMap((tag) => [...tag.attributes.keys()]));
+for (const match of html.matchAll(/\belement\([^,]+,\s*\{[\s\S]{0,300}?attributes\s*:\s*\{[\s\S]{0,250}?\bid\s*:\s*["']([^"']+)["']/g)) ids.add(match[1]);
+for (const match of html.matchAll(/\b(?:field|selectField)\([^,]+,\s*["']([^"']+)["']/g)) ids.add(match[1]);
+for (const match of html.matchAll(/\bclassName\s*:\s*["'`]([^"'`$]+)["'`]/g)) match[1].split(/\s+/).filter(Boolean).forEach((name) => classes.add(name));
+for (const match of html.matchAll(/["']([\w-]*data-[\w-]+)["']\s*:/g)) attributes.add(match[1]);
+for (const match of html.matchAll(/getElementById\(\s*["']([^"']+)["']\s*\)/g)) failUnless(ids.has(match[1]), `getElementById references undeclared selector #${match[1]}.`);
+for (const match of html.matchAll(/querySelector(?:All)?\(\s*["']([^"']+)["']\s*\)/g)) {
+  for (const token of selectorTokens(match[1])) {
+    const collection = token.type === 'id' ? ids : token.type === 'class' ? classes : attributes;
+    failUnless(collection.has(token.value), `querySelector references undeclared ${token.type} selector ${token.type === 'id' ? '#' : token.type === 'class' ? '.' : '['}${token.value}${token.type === 'attribute' ? ']' : ''}.`);
   }
 }
 
-requireCondition(!/<script\b[^>]*\btype\s*=\s*["']module["']/i.test(html), 'Module scripts can introduce companion runtime dependencies.');
-requireCondition(!/\bimport\s+(?:[^('";]+\s+from\s+)?["'][.\/]/.test(html), 'Relative runtime imports are forbidden.');
-
 if (failures.length) {
-  console.error(`Single-file verification failed (${failures.length}):`);
-  failures.forEach((failure) => console.error(`- ${failure}`));
-  process.exitCode = 1;
+  console.error(`Single-file verification failed (${failures.length}) for ${relative(scriptRoot, htmlPath) || basename(htmlPath)}:`);
+  failures.forEach((failure) => console.error(`- ${failure}`)); process.exitCode = 1;
 } else {
   console.log(`Single-file verification passed: ${htmlPath}`);
-  console.log('Verified one runtime HTML, exact identity, nine views, four presets, self-tests, accessibility CSS, selector integrity, and offline safety constraints.');
+  console.log('Verified recursive artifact isolation, parsed runtime references, exact identity, views, presets, self-tests, selectors, accessibility CSS, and offline safety constraints.');
 }

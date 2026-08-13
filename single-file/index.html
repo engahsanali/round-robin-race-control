@@ -383,6 +383,8 @@
       .skip-link, .theme-control, .view-nav, .action-row, .live-dock, dialog, [data-print-controls], [data-share-controls] { display: none !important; }
       .shell-header, .shell-footer, .panel { box-shadow: none; }
       .main-inner { padding-block: 1rem; }
+      .print-sheet table { width: 100%; table-layout: fixed; }
+      .print-sheet th, .print-sheet td { white-space: normal; overflow-wrap: anywhere; word-break: break-word; }
       .credit { color: #000; }
     }
   </style>
@@ -639,7 +641,12 @@
       function announce(message) { const region = document.getElementById('save-status'); if (region) region.textContent = String(message); }
       function sanitizeError(value) {
         const raw = value instanceof Error ? value.message : String(value || 'Unexpected application error');
-        return raw.replace(/[\r\n\t]+/g, ' ').replace(/(?:file|https?):\/\/\S+/gi, '[location]').slice(0, 180);
+        return raw.replace(/[\r\n\t]+/g, ' ')
+          .replace(/(?:file|https?):\/\/\S+/gi, '[location]')
+          .replace(/\b[A-Z0-9._%+-]+@[A-Z0-9.-]+\.[A-Z]{2,}\b/gi, '[email]')
+          .replace(/(?:\+?\d[\d ()-]{7,}\d)/g, '[phone]')
+          .replace(/\b(?:api[_-]?key|access[_-]?token|refresh[_-]?token|token|password|passwd|secret|authorization)\b\s*(?:[:=]\s*|\s+)(?:bearer\s+)?[^\s,;]+/gi, '[credential]')
+          .slice(0, 180);
       }
 
       function sameValue(left, right) { return JSON.stringify(sortKeys(left)) === JSON.stringify(sortKeys(right)); }
@@ -1570,38 +1577,56 @@
           group('Schedules');
           check('Workbook preset match counts stay exact', [4, 5, 6, 5], () => ['template9', 'template12', 'template15', 'finals15'].map((key) => presets[key].length));
           check('Workbook preset heat counts stay exact', [12, 20, 30, 25], () => ['template9', 'template12', 'template15', 'finals15'].map((key) => presets[key].flat().length));
+          check('All four workbook preset arrays stay exact', true, () => sameValue(presets, {"template9":[[[1,2,3],[4,5,6],[7,8,9]],[[1,4,7],[2,5,8],[3,6,9]],[[1,8,6],[4,2,9],[7,5,3]],[[1,5,9],[4,8,3],[7,2,6]]],"template12":[[[1,2,3],[4,5,6],[7,8,9],[10,11,12]],[[1,6,11],[5,10,4],[9,3,8],[2,7,12]],[[1,10,8],[6,4,2],[11,9,7],[5,3,12]],[[1,4,7],[10,2,5],[8,11,3],[6,9,12]],[[1,5,9],[2,6,10],[3,7,11],[4,8,12]]],"template15":[[[1,2,3],[4,5,6],[7,8,9],[10,11,12],[13,14,15]],[[1,12,9],[6,3,14],[11,8,5],[2,13,10],[7,4,15]],[[1,14,13],[12,11,10],[9,8,7],[6,5,4],[3,2,15]],[[1,10,5],[14,9,4],[13,8,3],[12,7,2],[11,6,15]],[[1,4,7],[10,13,2],[5,8,11],[14,3,6],[9,12,15]],[[1,6,11],[2,7,12],[3,8,13],[4,9,14],[5,10,15]]],"finals15":[[[15,1,14],[11,9,7],[13,8,10],[5,12,2],[4,6,3]],[[12,10,4],[1,3,13],[6,7,5],[9,2,15],[8,14,11]],[[7,13,1],[2,4,8],[10,11,6],[3,15,12],[14,5,9]],[[5,1,10],[15,8,7],[11,6,3],[13,9,14],[4,12,2]],[[7,3,13],[6,2,15],[8,9,5],[12,14,11],[1,10,4]]]}));
+          check('Preset slots map through stable car IDs without reordering', ['car-01', 'car-02', 'car-03'], () => { const fixture = diagnosticFixture(); eventState = fixture; return buildPresetCandidate('template9', fixture.entries.map((entry) => entry.id))[0].lanes; });
 
           group('Scoring');
           check('Only completed assigned winners score', 1, () => { const fixture = diagnosticFixture(); fixture.matches[0].status = 'completed'; fixture.matches[0].winnerEntryId = fixture.matches[0].lanes[0]; eventState = fixture; return calculateStandings('preliminary').reduce((sum, row) => sum + row.totalWins, 0); });
           check('Cancelled heats do not count as completed appearances', 3, () => { const fixture = diagnosticFixture(); fixture.matches[0].status = 'completed'; fixture.matches[0].winnerEntryId = fixture.matches[0].lanes[0]; fixture.matches[1].status = 'cancelled'; eventState = fixture; return calculateStandings('preliminary').reduce((sum, row) => sum + row.completedHeats, 0); });
+          check('Invalid winner outside its heat is rejected', false, () => { const fixture = diagnosticFixture(); fixture.matches[0].status = 'completed'; fixture.matches[0].winnerEntryId = fixture.entries[8].id; return validateEvent(fixture).ok; });
+          check('Cancelled and rerun heats never double-count', [0, 0], () => { const fixture = diagnosticFixture(); fixture.matches[0].status = 'cancelled'; fixture.matches[1].status = 'rerun'; eventState = fixture; const rows = calculateStandings('preliminary'); return [rows.reduce((sum, row) => sum + row.totalWins, 0), rows.reduce((sum, row) => sum + row.completedHeats, 0)]; });
 
           group('Ranking');
           check('Competition ranking skips after a tie', [1, 2, 2, 4], () => { const fixture = diagnosticFixture(); fixture.entries = fixture.entries.slice(0, 4); fixture.participants = fixture.participants.slice(0, 4); fixture.settings.rankingMode = 'competition'; fixture.settings.tieBreakOrder = ['totalWins']; eventState = fixture; const rows = calculateStandings('preliminary'); [3, 2, 2, 1].forEach((wins, index) => Object.assign(rows[index], { totalWins: wins, completedHeats: 3 })); return calculateRankings(rows).map((row) => row.rank); });
           check('Dense ranking advances by one after a tie', [1, 2, 2, 3], () => { const fixture = diagnosticFixture(); fixture.entries = fixture.entries.slice(0, 4); fixture.participants = fixture.participants.slice(0, 4); fixture.settings.rankingMode = 'dense'; fixture.settings.tieBreakOrder = ['totalWins']; eventState = fixture; const rows = calculateStandings('preliminary'); [3, 2, 2, 1].forEach((wins, index) => Object.assign(rows[index], { totalWins: wins, completedHeats: 3 })); return calculateRankings(rows).map((row) => row.rank); });
+          check('Ranking proof names every configured comparison', ['totalWins', 'matchesWon', 'carNumber'], () => { const fixture = diagnosticFixture(); fixture.entries = fixture.entries.slice(0, 2); fixture.participants = fixture.participants.slice(0, 2); fixture.settings.tieBreakOrder = ['totalWins', 'matchesWon', 'carNumber']; eventState = fixture; const rows = calculateStandings('preliminary'); rows.forEach((row) => { row.completedHeats = 1; }); return calculateRankings(rows)[0].tieBreaks.map((proof) => proof.key); });
+          check('Ordinal mode rejects a competitively unresolved tie', true, () => { const fixture = diagnosticFixture(); fixture.entries = fixture.entries.slice(0, 2); fixture.participants = fixture.participants.slice(0, 2); fixture.settings.rankingMode = 'ordinal'; fixture.settings.tieBreakOrder = ['totalWins']; eventState = fixture; const rows = calculateStandings('preliminary'); rows.forEach((row) => { row.completedHeats = 1; }); try { calculateRankings(rows); return false; } catch (_) { return true; } });
 
           group('Payments');
           check('Integer-cent partial payment derives the remaining balance', 700, () => { const fixture = diagnosticFixture(); fixture.entries = fixture.entries.slice(0, 1); fixture.participants = fixture.participants.slice(0, 1); fixture.payments = [{ id: 'test-payment', participantId: fixture.participants[0].id, amountCents: 500, kind: 'payment', paidAt: nowIso(), note: '' }]; return calculateAccountsForState(fixture).accounts.get(fixture.participants[0].id).balance; });
           check('Refund reverses collected cents', 400, () => { const fixture = diagnosticFixture(); fixture.entries = fixture.entries.slice(0, 1); fixture.participants = fixture.participants.slice(0, 1); fixture.payments = [{ id: 'test-payment', participantId: fixture.participants[0].id, amountCents: 1200, kind: 'payment', paidAt: nowIso(), note: '' }, { id: 'test-refund', participantId: fixture.participants[0].id, amountCents: 400, kind: 'refund', paidAt: nowIso(), note: '' }]; return calculateAccountsForState(fixture).accounts.get(fixture.participants[0].id).balance; });
+          check('Unsafe accounting overflow is rejected', false, () => { const fixture = diagnosticFixture(); fixture.settings.prices.standard = Number.MAX_SAFE_INTEGER; fixture.entries[0].quantity = 2; return validateEvent(fixture).ok; });
+          check('Current price and quantity derive charge in safe cents', 3600, () => { const fixture = diagnosticFixture(); fixture.entries = fixture.entries.slice(0, 1); fixture.participants = fixture.participants.slice(0, 1); fixture.settings.prices.standard = 1800; fixture.entries[0].quantity = 2; return calculateAccountsForState(fixture).totalCharge; });
 
           group('Persistence / import');
           check('Serialized schema-v1 event validates on round trip', true, () => validateEvent(JSON.parse(serializeEvent(diagnosticFixture()))).ok);
           check('Invalid completed heat is rejected atomically', false, () => { const fixture = diagnosticFixture(); fixture.matches[0].status = 'completed'; fixture.matches[0].winnerEntryId = null; return validateEvent(fixture).ok; });
+          check('Failed import preserves event and browser storage', true, () => { const beforeEvent = serializeEvent(eventState); const beforeStorage = Object.fromEntries(Object.keys(localStorage).sort().map((key) => [key, localStorage.getItem(key)])); const invalid = diagnosticFixture(); invalid.matches[0].status = 'completed'; invalid.matches[0].winnerEntryId = null; const result = validateEvent(invalid); if (result.ok) eventState = result.data; const afterStorage = Object.fromEntries(Object.keys(localStorage).sort().map((key) => [key, localStorage.getItem(key)])); return !result.ok && serializeEvent(eventState) === beforeEvent && sameValue(afterStorage, beforeStorage); });
+          check('Prototype-pollution keys are rejected', false, () => { const fixture = diagnosticFixture(); fixture.auditLog[0].details = JSON.parse('{"__proto__":{"polluted":true}}'); return validateEvent(fixture).ok; });
 
           group('CSV');
           check('Formula-capable cells are neutralized', "'=2+2", () => toCsv([['=2+2']]));
           check('Quotes and commas are escaped with CRLF rows', '"go, ""now"""\r\nnext', () => toCsv([['go, "now"'], ['next']]));
+          check('CSV preserves Unicode and embedded newlines safely', 'César 🏁,"line\nbreak"', () => toCsv([['César 🏁', 'line\nbreak']]));
+          check('CSV neutralizes whitespace-prefixed injection', "'  @SUM(A1)", () => toCsv([['  @SUM(A1)']]));
 
           group('Timing');
           check('Average time uses completed assigned-lane results', 1200, () => { const fixture = diagnosticFixture(); const heat = fixture.matches[0]; heat.status = 'completed'; heat.winnerEntryId = heat.lanes[0]; heat.laneTimesMs = [1200, 1300, 1400]; eventState = fixture; return calculateStandings('preliminary').find((row) => row.carId === heat.lanes[0]).averageTimeMs; });
           check('Best time selects the fastest completed result', 1100, () => { const fixture = diagnosticFixture(); const carId = fixture.matches[0].lanes[0]; const heats = fixture.matches.filter((heat) => heat.lanes.includes(carId)).slice(0, 2); heats.forEach((heat, index) => { heat.status = 'completed'; heat.winnerEntryId = heat.lanes[0]; heat.laneTimesMs = heat.lanes.map((id) => id === carId ? 1200 - index * 100 : 1400); }); eventState = fixture; return calculateStandings('preliminary').find((row) => row.carId === carId).bestTimeMs; });
+          check('Two-car timing preserves the empty lane', null, () => { const fixture = diagnosticFixture(); fixture.entries = fixture.entries.slice(0, 2); fixture.participants = fixture.participants.slice(0, 2); fixture.matches = [{ id: 'two-car-time', phase: 'preliminary', matchNumber: 1, heatNumber: 1, lanes: [fixture.entries[0].id, fixture.entries[1].id, null], status: 'completed', winnerEntryId: fixture.entries[0].id, laneTimesMs: [1100, 1200, null], notes: '' }]; return validateEvent(fixture).data.matches[0].laneTimesMs[2]; });
+          check('Scheduled heat times never enter official averages', null, () => { const fixture = diagnosticFixture(); fixture.matches[0].laneTimesMs = [900, 950, 1000]; eventState = fixture; return calculateStandings('preliminary').find((row) => row.carId === fixture.matches[0].lanes[0]).averageTimeMs; });
 
           group('Scheduler quality');
           check('Canonical nine-car preset is valid', 'valid', () => { const fixture = diagnosticFixture(); eventState = fixture; return analyseSchedule(fixture.matches, fixture.entries.map((entry) => entry.id)).status; });
           check('Duplicate lane assignment is invalid', 'invalid', () => { const fixture = diagnosticFixture(); fixture.matches[0].lanes[1] = fixture.matches[0].lanes[0]; return analyseSchedule(fixture.matches, fixture.entries.map((entry) => entry.id)).status; });
+          check('Seeded scheduler is deterministic and valid', true, () => { const ids = ['a', 'b', 'c', 'd', 'e', 'f', 'g']; const first = generateCustomSchedule(ids, 5, 'embedded-determinism'); const second = generateCustomSchedule(ids, 5, 'embedded-determinism'); return first.quality.status !== 'invalid' && sameValue(first.heats, second.heats); });
+          check('Repeat certificate reports its lower-bound gap truthfully', true, () => { const ids = ['a', 'b', 'c', 'd', 'e']; const quality = generateCustomSchedule(ids, 5, 'embedded-certificate').quality; return quality.repeatExcessGap === Math.max(0, quality.repeatedOpponentCount - quality.repeatExcessLowerBound) && (quality.opponentQualityStatus === 'certified-optimal') === (quality.repeatExcessGap === 0); });
 
           group('Lane balance');
           check('Seeded custom schedule keeps entrant lane spread at most one', true, () => { const ids = ['a', 'b', 'c', 'd', 'e']; return generateCustomSchedule(ids, 4, 'embedded-lane-proof').quality.maximumLaneSpread <= 1; });
           check('Two-car schedule balances the vacant lane', true, () => { const ids = ['a', 'b', 'c', 'd', 'e']; const heats = generateCustomSchedule(ids, 6, 'embedded-vacant-proof').heats; const counts = [0, 1, 2].map((lane) => heats.filter((heat) => heat.lanes[lane] === null).length); return Math.max(...counts) - Math.min(...counts) <= 1; });
+          check('Odd-count schedule keeps appearances within one', true, () => { const ids = ['a', 'b', 'c', 'd', 'e', 'f', 'g']; return generateCustomSchedule(ids, 5, 'embedded-appearance').quality.appearanceImbalance <= 1; });
+          check('Maximum supported roster retains lane spread at most one', true, () => { const ids = Array.from({ length: 24 }, (_, index) => `car-${index + 1}`); return generateCustomSchedule(ids, 3, 'embedded-maximum').quality.maximumLaneSpread <= 1; });
         } catch (caught) {
           if (!activeGroup) group('Harness');
           activeGroup.total += 1; activeGroup.failed += 1; activeGroup.tests.push({ name: 'Harness completes safely', passed: false, expected: true, actual: false, error: sanitizeError(caught) });
@@ -1613,7 +1638,10 @@
       }
       function diagnosticFacts() {
         const previousKey = demoMode ? DEMO_PREVIOUS_KEY : PREVIOUS_KEY; const currentKey = demoMode ? DEMO_KEY : CURRENT_KEY;
-        let storageState = 'Browser-local storage is available.'; try { void localStorage.length; } catch (_) { storageState = 'Browser-local storage is unavailable; use downloaded backups.'; }
+        let storageState = 'Browser-local storage write, read, and remove probe passed.';
+        const probeKey = `rr3:diagnostics:probe:${Date.now().toString(36)}-${Math.random().toString(36).slice(2)}`; const probeValue = `probe-${Math.random().toString(36).slice(2)}`;
+        try { localStorage.setItem(probeKey, probeValue); if (localStorage.getItem(probeKey) !== probeValue) throw new Error('Storage probe read did not match.'); localStorage.removeItem(probeKey); if (localStorage.getItem(probeKey) !== null) throw new Error('Storage probe removal failed.'); }
+        catch (_) { try { localStorage.removeItem(probeKey); } catch (_) { /* storage remains unavailable */ } storageState = 'Browser-local storage write, read, and remove probe failed; use downloaded backups.'; }
         const integrity = !eventState ? null : (eventState.matches.length ? analyseSchedule(eventState.matches, eventState.entries.filter((entry) => entry.active).map((entry) => entry.id)) : null);
         return { protocol: location.protocol, storageState, current: storageRead(currentKey) ? 'Current valid snapshot is present.' : 'No current snapshot is present.', previous: storageRead(previousKey) ? 'A previous valid snapshot is available for recovery.' : 'No previous valid snapshot is currently available.', integrity };
       }
