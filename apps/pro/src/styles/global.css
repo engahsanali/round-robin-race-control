@@ -317,6 +317,7 @@ h3 {
 
 main {
   width: 100%;
+  min-width: 0;
 }
 
 .page-frame {
@@ -374,6 +375,199 @@ main {
   border: 1px solid var(--border);
   border-radius: var(--radius-lg);
   background: var(--surface-soft);
+}
+
+.schedule-lab-page {
+  overflow: hidden;
+}
+
+.schedule-mode {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--space-4);
+  margin-top: var(--space-5);
+}
+
+.schedule-mode label,
+.candidate-choice {
+  display: flex;
+  align-items: center;
+}
+
+.schedule-controls {
+  display: grid;
+  gap: var(--space-4);
+}
+
+.slot-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(13rem, 1fr));
+  gap: var(--space-3);
+}
+
+.schedule-status:empty {
+  display: none;
+}
+
+.schedule-table-scroll {
+  max-width: 100%;
+  margin-top: var(--space-4);
+  overflow-x: auto;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-md);
+}
+
+.schedule-table-scroll table {
+  width: 100%;
+  min-width: max-content;
+  border-collapse: collapse;
+}
+
+.candidate-comparison {
+  font-variant-numeric: tabular-nums;
+}
+
+.candidate-comparison th,
+.candidate-comparison td {
+  white-space: nowrap;
+}
+
+.selected-candidate {
+  margin-top: var(--space-6);
+}
+
+.selected-heading,
+.fairness-heading {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--space-4);
+  align-items: flex-start;
+  justify-content: space-between;
+}
+
+.selected-heading h3,
+.quality-summary h4,
+.fairness-panel h4 {
+  margin-bottom: var(--space-2);
+}
+
+.signature {
+  max-height: 6rem;
+  overflow: auto;
+  color: var(--text-muted);
+  font-family: ui-monospace, SFMono-Regular, Consolas, monospace;
+  font-size: 0.8rem;
+  overflow-wrap: anywhere;
+}
+
+.quality-summary {
+  margin-top: var(--space-4);
+  padding: var(--space-4);
+  border-left: 4px solid var(--lime);
+  background: var(--surface);
+}
+
+.quality-summary p {
+  margin-bottom: var(--space-1);
+}
+
+.warning-text {
+  color: var(--warning);
+  font-weight: 800;
+}
+
+.fairness-grid {
+  display: grid;
+  gap: var(--space-4);
+  margin-top: var(--space-5);
+}
+
+.fairness-panel {
+  min-width: 0;
+  padding: var(--space-4);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-md);
+  background: var(--surface);
+}
+
+.fairness-heading label {
+  min-width: min(100%, 15rem);
+}
+
+.pair-matrix-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(2rem, 1fr));
+  gap: 2px;
+  margin-top: var(--space-4);
+}
+
+.pair-cell {
+  min-height: 2rem;
+  display: grid;
+  border: 1px solid var(--border);
+  border-radius: 0.2rem;
+  background: color-mix(in srgb, var(--cyan) 18%, var(--surface));
+  color: var(--text);
+  font-weight: 900;
+  place-items: center;
+}
+
+.pair-frequency-2 { background: color-mix(in srgb, var(--warning) 45%, var(--surface)); }
+.pair-frequency-3,
+.pair-frequency-4 { background: color-mix(in srgb, var(--danger) 58%, var(--surface)); }
+
+.opponent-network {
+  width: min(100%, 32rem);
+  display: block;
+  margin: var(--space-3) auto;
+}
+
+.opponent-network line {
+  stroke: var(--border);
+  stroke-width: 1.5;
+}
+
+.opponent-network .network-repeat {
+  stroke: var(--warning);
+  stroke-width: 4;
+}
+
+.opponent-network circle {
+  fill: var(--surface-strong);
+  stroke: var(--cyan);
+  stroke-width: 2;
+}
+
+.opponent-network text {
+  fill: var(--text);
+  font-size: 0.7rem;
+  font-weight: 900;
+}
+
+.lane-bars {
+  display: grid;
+  gap: var(--space-2);
+  margin: var(--space-4) 0;
+}
+
+.lane-bar {
+  min-height: 0.7rem;
+  display: flex;
+  overflow: hidden;
+  border-radius: 999px;
+  background: var(--surface-soft);
+}
+
+.lane-bar span:nth-child(1) { background: var(--cyan); }
+.lane-bar span:nth-child(2) { background: var(--lime); }
+.lane-bar span:nth-child(3) { background: var(--podium-gold); }
+
+@media (prefers-reduced-motion: no-preference) {
+  .selected-candidate,
+  .fairness-panel,
+  .pair-cell {
+    transition: border-color 200ms ease, background-color 200ms ease, opacity 200ms ease;
+  }
 }
 
 .setup-wizard,
@@ -726,6 +920,18 @@ dialog::backdrop {
     font-weight: 900;
     letter-spacing: 0.08em;
     text-transform: uppercase;
+  }
+
+  .schedule-mode,
+  .selected-heading,
+  .fairness-heading {
+    align-items: stretch;
+    flex-direction: column;
+  }
+
+  .selected-heading button,
+  .schedule-controls button {
+    width: 100%;
   }
 }
 

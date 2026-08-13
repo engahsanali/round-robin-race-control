@@ -1,6 +1,7 @@
 import { Link, Route, Routes } from "react-router-dom";
 import { DashboardPage } from "../features/dashboard/DashboardPage";
 import { RegistrationPage } from "../features/registration/RegistrationPage";
+import { ScheduleLabPage } from "../features/schedule/ScheduleLabPage";
 
 export const operatorDestinations = [
   { label: "Dashboard", path: "/" },
@@ -65,16 +66,7 @@ export function AppRoutes() {
     <Routes>
       <Route path="/" element={<DashboardPage />} />
       <Route path="/registration" element={<RegistrationPage />} />
-      <Route
-        path="/schedule"
-        element={
-          <PlaceholderPage
-            eyebrow="Fair race planning"
-            heading="Schedule Lab"
-            description="Compare exact presets and deterministic schedule candidates here."
-          />
-        }
-      />
+      <Route path="/schedule" element={<ScheduleLabPage />} />
       <Route
         path="/race"
         element={
