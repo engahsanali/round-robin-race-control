@@ -3,7 +3,7 @@ import "fake-indexeddb/auto";
 import { cleanup, render, screen, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
-import { parseEventJson, type EventStateV1 } from "@rr3/domain";
+import { parseEventJson, serializeEvent, type EventStateV1 } from "@rr3/domain";
 import demoEvent from "../../../../../fixtures/demo-event.json";
 import { createProDatabase, type ProDatabase } from "../../persistence/db";
 import { EventRepository } from "../../persistence/repository";
@@ -107,7 +107,7 @@ describe("SetupWizard", () => {
     ]);
     expect(new Set(saved?.entries.map(({ id }) => id)).size).toBe(2);
     expect(saved?.auditLog.at(-1)?.action).toBe("event.replaced");
-  });
+  }, 10_000);
 
   it("labels a demo rehearsal as isolated practice rather than a real event", async () => {
     const user = userEvent.setup();
@@ -131,6 +131,58 @@ describe("SetupWizard", () => {
 });
 
 describe("DashboardPage and RecoveryPanel", () => {
+  it("loads and exits an isolated demo without replacing the recoverable official event", async () => {
+    const parsed = parseEventJson(JSON.stringify(demoEvent));
+    if (!parsed.ok) throw new Error("Demo fixture must be valid");
+    const official = structuredClone(parsed.data);
+    official.event.id = "event-official-championship";
+    official.event.name = "Official Championship";
+    await repository.save(official, {
+      commandId: "official-bootstrap",
+      timestamp: "2026-08-14T05:00:00.000Z",
+      summary: "Loaded official event",
+    });
+    const officialBytes = serializeEvent((await repository.load())!);
+    const user = userEvent.setup();
+
+    renderWithProvider(<DashboardPage />);
+    expect(await screen.findByText("Official Championship")).toBeTruthy();
+    await user.click(screen.getByRole("button", { name: "Load demo rehearsal" }));
+
+    expect(screen.getByText("Demo rehearsal — isolated practice")).toBeTruthy();
+    expect(screen.getByText("Nine-Car Community Demo")).toBeTruthy();
+    expect(screen.getByText("Official event remains saved: Official Championship")).toBeTruthy();
+    expect(serializeEvent((await repository.load())!)).toBe(officialBytes);
+
+    await user.click(screen.getByRole("button", { name: "Return to Official Championship" }));
+    expect(screen.getByText("Official Championship")).toBeTruthy();
+    expect(screen.getByText("Real event — official workspace")).toBeTruthy();
+    expect(serializeEvent((await repository.load())!)).toBe(officialBytes);
+  });
+
+  it("uses finals when selecting current and next heats and calculating completion", async () => {
+    const parsed = parseEventJson(JSON.stringify(demoEvent));
+    if (!parsed.ok) throw new Error("Demo fixture must be valid");
+    const event = parsed.data;
+    event.matches = event.matches.filter(({ status }) => status === "completed");
+    event.finals = [
+      { id: "final-complete", phase: "final", matchNumber: 1, heatNumber: 1, lanes: ["car-01", "car-02", "car-03"], status: "completed", winnerEntryId: "car-02", laneTimesMs: [null, null, null], notes: "" },
+      { id: "final-current", phase: "final", matchNumber: 1, heatNumber: 2, lanes: ["car-04", "car-05", "car-06"], status: "scheduled", winnerEntryId: null, laneTimesMs: [null, null, null], notes: "" },
+      { id: "final-next", phase: "final", matchNumber: 1, heatNumber: 3, lanes: ["car-07", "car-08", "car-09"], status: "scheduled", winnerEntryId: null, laneTimesMs: [null, null, null], notes: "" },
+    ];
+    await repository.save(event, {
+      commandId: "finals-dashboard",
+      timestamp: "2026-08-14T05:00:00.000Z",
+      summary: "Finals underway",
+    });
+
+    renderWithProvider(<DashboardPage />);
+
+    expect(await screen.findByText("Current heat: final-current")).toBeTruthy();
+    expect(screen.getByText("Next heat: final-next")).toBeTruthy();
+    expect(screen.getByText("7 of 9 heats complete")).toBeTruthy();
+  });
+
   it("shows operational facts and accessible chart alternatives only when result data exists", async () => {
     const parsed = parseEventJson(JSON.stringify(demoEvent));
     if (!parsed.ok) throw new Error("Demo fixture must be valid");

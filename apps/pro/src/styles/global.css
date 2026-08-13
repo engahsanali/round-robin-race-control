@@ -381,6 +381,7 @@ main {
 .dashboard-analytics,
 .registration-table,
 .registration-page > .feature-panel,
+.registration-workspace > .feature-panel,
 .participant-editor,
 .account-panel {
   margin-top: var(--space-6);

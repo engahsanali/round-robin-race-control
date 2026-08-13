@@ -178,6 +178,108 @@ describe("RegistrationPage", () => {
     expect((await repository.load())?.matches[0]?.lanes).toContain("car-a");
   });
 
+  it("moves focus into the withdrawal alertdialog, traps background interaction, and restores focus on Escape", async () => {
+    const user = userEvent.setup();
+    renderPage();
+    await screen.findByRole("table", { name: "Registered cars" });
+    const trigger = screen.getByRole("button", { name: "Withdraw car 1 Alpha" });
+
+    await user.click(trigger);
+
+    const confirmation = screen.getByRole("alertdialog", { name: "Confirm car withdrawal" });
+    expect(document.activeElement).toBe(within(confirmation).getByRole("button", { name: "Confirm withdrawal" }));
+    expect(screen.getByRole("searchbox", { name: "Search registration" }).closest("[inert]")).toBeTruthy();
+    await user.keyboard("{Escape}");
+    expect(screen.queryByRole("alertdialog", { name: "Confirm car withdrawal" })).toBeNull();
+    expect(document.activeElement).toBe(trigger);
+    expect((await repository.load())?.entries.find(({ id }) => id === "car-a")?.active).toBe(true);
+  });
+
+  it("adds categories and a participant with multiple validated cars and stable collision-safe IDs", async () => {
+    const user = userEvent.setup();
+    renderPage();
+    await screen.findByRole("table", { name: "Registered cars" });
+
+    await user.type(screen.getByRole("textbox", { name: "New category ID" }), "premium");
+    await user.type(screen.getByRole("textbox", { name: "New category price in cents" }), "2000");
+    await user.click(screen.getByRole("button", { name: "Add category" }));
+    expect(await screen.findByRole("textbox", { name: "premium price in cents" })).toBeTruthy();
+
+    await user.click(screen.getByRole("button", { name: "Add participant" }));
+    const form = screen.getByRole("form", { name: "Add participant" });
+    await user.click(within(form).getByRole("button", { name: "Save participant" }));
+    expect(within(form).getByText("Participant name is required.")).toBeTruthy();
+    await user.type(within(form).getByRole("textbox", { name: "Participant name" }), "Farah");
+    await user.type(within(form).getByRole("textbox", { name: "Car 1 name" }), "Falcon");
+    await user.clear(within(form).getByRole("spinbutton", { name: "Car 1 number" }));
+    await user.type(within(form).getByRole("spinbutton", { name: "Car 1 number" }), "2");
+    await user.click(within(form).getByRole("button", { name: "Save participant" }));
+    expect(within(form).getByText("Active car number 2 is already used.")).toBeTruthy();
+    await user.clear(within(form).getByRole("spinbutton", { name: "Car 1 number" }));
+    await user.type(within(form).getByRole("spinbutton", { name: "Car 1 number" }), "6");
+    await user.selectOptions(within(form).getByRole("combobox", { name: "Car 1 category" }), "premium");
+    await user.click(within(form).getByRole("button", { name: "Add another car" }));
+    await user.type(within(form).getByRole("textbox", { name: "Car 2 name" }), "Comet");
+    await user.clear(within(form).getByRole("spinbutton", { name: "Car 2 number" }));
+    await user.type(within(form).getByRole("spinbutton", { name: "Car 2 number" }), "7");
+    await user.click(within(form).getByRole("button", { name: "Save participant" }));
+
+    expect(await screen.findAllByText("Farah")).toHaveLength(2);
+    const saved = (await repository.load())!;
+    const participant = saved.participants.find(({ name }) => name === "Farah")!;
+    const cars = saved.entries.filter(({ participantId }) => participantId === participant.id);
+    expect(cars.map(({ carNumber, name, categoryId }) => ({ carNumber, name, categoryId }))).toEqual([
+      { carNumber: 6, name: "Falcon", categoryId: "premium" },
+      { carNumber: 7, name: "Comet", categoryId: "standard" },
+    ]);
+    expect(new Set([participant.id, ...cars.map(({ id }) => id)]).size).toBe(3);
+    expect(saved.settings.prices.premium).toBe(2000);
+  });
+
+  it("rejects a category price whose full candidate account aggregation exceeds safe integers", async () => {
+    const user = userEvent.setup();
+    renderPage();
+    await screen.findByRole("table", { name: "Registered cars" });
+    const before = (await repository.load())!.settings.prices.standard;
+    const price = screen.getByRole("textbox", { name: "standard price in cents" });
+
+    await user.clear(price);
+    await user.type(price, String(Number.MAX_SAFE_INTEGER));
+    await user.click(screen.getByRole("button", { name: "Save category prices" }));
+
+    expect((await screen.findByRole("alert")).textContent).toMatch(/safe integer range/i);
+    expect((await repository.load())!.settings.prices.standard).toBe(before);
+  });
+
+  it("generates a collision-safe payment ID instead of deriving it from collection length", async () => {
+    const seeded = (await repository.load())!;
+    seeded.payments.push({
+      id: "account-payment-participant-a-7",
+      participantId: "participant-a",
+      amountCents: 100,
+      kind: "payment",
+      paidAt: "2026-08-14T04:00:00.000Z",
+      note: "Occupies the old length-derived ID",
+    });
+    await repository.save(seeded, {
+      commandId: "payment-collision-seed",
+      timestamp: "2026-08-14T04:00:00.000Z",
+      summary: "Seed payment collision",
+    });
+    const user = userEvent.setup();
+    renderPage();
+    await screen.findByRole("table", { name: "Registered cars" });
+
+    await user.click(screen.getByRole("button", { name: "Manage account Ada" }));
+    const account = screen.getByRole("region", { name: "Ada account" });
+    await user.type(within(account).getByRole("textbox", { name: "Amount in cents" }), "200");
+    await user.click(within(account).getByRole("button", { name: "Record payment" }));
+
+    await waitFor(async () => expect((await repository.load())!.payments).toHaveLength(7));
+    const ids = (await repository.load())!.payments.map(({ id }) => id);
+    expect(new Set(ids).size).toBe(ids.length);
+  });
+
   it("uses current category prices and manages unpaid, partial, paid, credit, and refund accounts", async () => {
     const user = userEvent.setup();
     renderPage();

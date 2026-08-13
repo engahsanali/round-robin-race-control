@@ -1,6 +1,7 @@
-import { lazy, Suspense } from "react";
+import { lazy, Suspense, useState } from "react";
 import { motion } from "motion/react";
-import { calculateEventAccounts, calculateStandings } from "@rr3/domain";
+import { calculateEventAccounts, calculateStandings, parseEventJson, type EventStateV1 } from "@rr3/domain";
+import demoEvent from "../../../../../fixtures/demo-event.json";
 import { useOptionalEventState } from "../../state/EventProvider";
 import { formatMoney } from "../payments/AccountPanel";
 import { RecoveryPanel } from "../shared/RecoveryPanel";
@@ -10,26 +11,35 @@ const DashboardCharts = lazy(() => import("./DashboardCharts"));
 
 export function DashboardPage() {
   const eventState = useOptionalEventState();
+  const [demoState, setDemoState] = useState<EventStateV1 | null>(null);
+  const officialState = eventState?.state ?? null;
+
+  function loadDemo() {
+    const parsed = parseEventJson(JSON.stringify(demoEvent));
+    if (parsed.ok) setDemoState(parsed.data);
+  }
+
   if (!eventState) return <EmptyDashboard />;
   if (eventState.loading) return <p role="status">Loading event dashboard…</p>;
-  if (!eventState.state) {
+  if (!officialState && !demoState) {
     return (
       <section className="page-frame dashboard-page" aria-labelledby="page-title">
         <p className="eyebrow">Local race control</p>
         <h2 id="page-title">Event dashboard</h2>
-        <EmptyEventSummary />
+        <EmptyEventSummary onLoadDemo={loadDemo} />
         <SetupWizard />
         <RecoveryPanel persistenceStatus={eventState.persistenceStatus} snapshotCount={eventState.snapshots.length} portableBackupStatus="not-downloaded" />
       </section>
     );
   }
 
-  const state = eventState.state;
-  const scheduled = state.matches.filter(({ status }) => status === "scheduled");
+  const state = demoState ?? officialState!;
+  const heats = [...state.matches, ...state.finals];
+  const scheduled = heats.filter(({ status }) => status === "scheduled");
   const current = scheduled[0] ?? null;
   const next = scheduled[1] ?? null;
-  const completed = state.matches.filter(({ status, winnerEntryId }) => status === "completed" && winnerEntryId !== null).length;
-  const total = state.matches.length;
+  const completed = heats.filter(({ status, winnerEntryId }) => status === "completed" && winnerEntryId !== null).length;
+  const total = heats.length;
   const activeCars = state.entries.filter(({ active }) => active);
   const accounts = calculateEventAccounts(state);
   const standings = calculateStandings(state, "preliminary");
@@ -49,7 +59,14 @@ export function DashboardPage() {
     <section className="page-frame dashboard-page" aria-labelledby="page-title">
       <p className="eyebrow">Local race control</p>
       <h2 id="page-title">Event dashboard</h2>
-      <p className="workspace-label">{state.event.id.startsWith("demo-rehearsal-") || state.event.id.startsWith("event-demo-") ? "Demo rehearsal — isolated practice" : "Real event — official workspace"}</p>
+      <h3>{state.event.name}</h3>
+      <p className="workspace-label">{demoState || state.event.id.startsWith("demo-rehearsal-") || state.event.id.startsWith("event-demo-") ? "Demo rehearsal — isolated practice" : "Real event — official workspace"}</p>
+      {demoState ? (
+        <div className="demo-callout" role="status">
+          <p>{officialState ? `Official event remains saved: ${officialState.event.name}` : "No official event is saved; demo changes remain temporary."}</p>
+          <button type="button" className="secondary-action" onClick={() => setDemoState(null)}>{officialState ? `Return to ${officialState.event.name}` : "Return to empty official workspace"}</button>
+        </div>
+      ) : <button type="button" className="secondary-action" onClick={loadDemo}>Load demo rehearsal</button>}
       <div className="dashboard-facts" aria-label="Event-day facts">
         <motion.section className="fact-card" layout><h3>Race position</h3><p>Current heat: {current?.id ?? "none scheduled"}</p><p>Next heat: {next?.id ?? "none scheduled"}</p></motion.section>
         <motion.section className="fact-card" layout><h3>Progress</h3><p>{completed} of {total} heats complete</p><p>{activeCars.length} active cars</p></motion.section>
@@ -98,7 +115,7 @@ export function DashboardPage() {
 }
 
 function EmptyDashboard() {
-  return <section className="page-frame dashboard-page" aria-labelledby="page-title"><p className="eyebrow">Local race control</p><h2 id="page-title">Event dashboard</h2><EmptyEventSummary /><SetupWizard /></section>;
+  return <section className="page-frame dashboard-page" aria-labelledby="page-title"><p className="eyebrow">Local race control</p><h2 id="page-title">Event dashboard</h2><p>Open the installed application to load a real event or isolated demo rehearsal.</p></section>;
 }
 
 function ChartFallbacks({ takeaways }: { takeaways: readonly string[] }) {
@@ -115,6 +132,6 @@ function ChartFallbacks({ takeaways }: { takeaways: readonly string[] }) {
   );
 }
 
-function EmptyEventSummary() {
-  return <div className="empty-event"><div><p className="status-kicker">Empty real event</p><h3>No event loaded</h3><p>Create a real event when you are ready to register cars and arm a schedule.</p></div><div className="demo-callout"><p><strong>Practise safely first.</strong></p><p>The demo rehearsal is separate from your real event and will always be clearly labeled.</p><button type="button" className="secondary-action">Load demo rehearsal</button></div></div>;
+function EmptyEventSummary({ onLoadDemo }: { onLoadDemo(): void }) {
+  return <div className="empty-event"><div><p className="status-kicker">Empty real event</p><h3>No event loaded</h3><p>Create a real event when you are ready to register cars and arm a schedule.</p></div><div className="demo-callout"><p><strong>Practise safely first.</strong></p><p>The demo rehearsal is separate from your real event and will always be clearly labeled.</p><button type="button" className="secondary-action" onClick={onLoadDemo}>Load demo rehearsal</button></div></div>;
 }
