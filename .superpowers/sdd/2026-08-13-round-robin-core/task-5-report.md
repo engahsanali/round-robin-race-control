@@ -132,3 +132,42 @@ Resolved all four Important review findings.
 
 - The explicit import budgets are defensive limits, not schema capacity claims. Current valid event collections are capped at 10,000 each, while 100,000 object nodes leaves substantial room for all defined collections and bounded audit details.
 - `calculateParticipantAccount` intentionally remains a separately validated public boundary; only the event-wide operation avoids calling it repeatedly.
+
+## Review Fix Round 2
+
+Resolved the remaining Important deterministic standings-order finding.
+
+- Ranking now seeds stable-ID display order with a shared locale-independent UTF-16 code-unit comparator, so unresolved ties and no-results rows do not change across host locales.
+- Standings CSV inherits that fixed ranking order; a no-results Unicode fixture proves `car-z` precedes `car-ä` with null competitive ranks.
+- The same audit found the only other parameterless `localeCompare` in shared domain/scheduler code: same-slot heat ordering in result projections. It now uses the shared comparator so recent form and timing sequences are deterministic too.
+- A fresh source scan found no remaining `localeCompare` usage under `packages/domain` or `packages/scheduler`.
+
+### Round 2 TDD evidence
+
+1. RED command:
+
+   `pnpm vitest run packages/domain/src/rankings.test.ts packages/domain/src/csv.test.ts packages/domain/src/results.test.ts`
+
+   Outcome: exit 1 with exactly three focused failures and 34 passes. The host locale emitted `ä` before `z` in ranking, standings CSV, and same-slot result ordering.
+
+2. Focused GREEN command:
+
+   `pnpm vitest run packages/domain/src/rankings.test.ts packages/domain/src/csv.test.ts packages/domain/src/results.test.ts`
+
+   Outcome: all 3 files and 37/37 tests passed. A trailing `rg localeCompare` in the same shell invocation returned status 1 solely because it found zero matches.
+
+3. Source audit:
+
+   `rg -n "localeCompare" packages/domain packages/scheduler`
+
+   Outcome: no matches.
+
+4. Explicit type and full verification:
+
+   `pnpm typecheck; pnpm check`
+
+   Outcome: exit 0; both typecheck runs completed with zero errors, then 11 test files and 172/172 tests passed.
+
+### Round 2 concerns
+
+- Code-unit order is intentionally mechanical and locale-independent; it is a deterministic display fallback, not a human-language collation or competitive tie break.
