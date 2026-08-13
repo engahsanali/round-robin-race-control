@@ -1,6 +1,6 @@
 # Round Robin Race Suite — Product and Architecture Design
 
-Date: 2026-08-13  
+Date: 2026-08-13
 Status: Approved for implementation by the user's explicit request for both editions and subagent-driven execution
 
 ## 1. Outcome
@@ -72,7 +72,7 @@ Both editions use schema version 1:
 - Official wins derived only from completed heat records whose winner belongs to that heat.
 - Withdrawn cars retained for history but excluded from future scheduling.
 
-Solo persists the current and previous valid snapshots in namespaced `localStorage`. Pro uses IndexedDB for the live event and bounded snapshot history, with a small localStorage bootstrap marker. Both support atomic JSON import, JSON export, guarded reset, previous-save restoration, and CSV exports protected against formula injection.
+Solo persists the current and previous valid snapshots in namespaced `localStorage`, but explicitly labels file-URL storage as best-effort and treats downloaded event backups as the durable portable copy. Pro uses IndexedDB for the live event and bounded snapshot history, requests persistent storage when supported, and shows the actual persistence result. Both support atomic JSON import, JSON export, guarded reset, previous-save restoration, and CSV exports protected against formula injection.
 
 ## 5. Scheduling engine
 
@@ -91,16 +91,21 @@ Slots map to active cars in ascending car-number order by default and can be man
 
 The custom generator is deterministic for the same ordered entrants, configuration, and seed. It creates candidate match partitions, assigns lanes, and improves them with a bounded seeded local search.
 
-The lexicographic quality objective is:
+The opponent-grouping objective is lexicographic:
 
 1. Eliminate invalid heats and duplicate appearances within a match.
 2. Minimize the maximum difference in total appearances.
-3. Minimize repeated opponent pairs, heavily penalizing third and later meetings.
-4. Minimize each car's lane-count spread.
-5. Minimize consecutive byes/two-car heats for the same car.
-6. Minimize immediate repeat opponents and consecutive lane reuse.
+3. Minimize total pair meetings beyond the first.
+4. Minimize maximum pair frequency.
+5. Minimize the worst per-car repeat burden.
+6. Minimize squared repeat burden and squared pair frequencies.
+7. Minimize consecutive byes and immediate repeat opponents.
 
-The generator evaluates multiple deterministic restarts, preserves the best schedule by a stable comparison key, and stops at the configured iteration budget. Counts not divisible by three use labeled two-car heats or byes, allocated so appearance difference is at most one where mathematically possible. The quality report explains unavoidable imbalance instead of claiming false perfection.
+The generator builds a cyclic valid baseline, evaluates deterministic min-conflicts/tabu restarts, preserves the best schedule by a stable comparison key, and stops at a fixed iteration/stagnation budget rather than wall-clock time. Legal swaps and three-cycles preserve appearance counts and distinctness. Counts not divisible by three use labeled two-car heats or byes, allocated so appearance difference is at most one where mathematically possible.
+
+After opponents are fixed, lane assignment is a separate deterministic balancing pass. It targets a per-car lane spread no greater than one, so opponent quality is never traded away merely to improve lane counts.
+
+The report calculates lower bounds for repeat excess and maximum pair frequency. A lower-bound hit may be labeled optimal for that objective; any higher result is labeled best found with its gap, not falsely described as unavoidable.
 
 Metrics include appearances, lane 1/2/3 counts, pair-frequency matrix, repeat-opponent total and maximum, bye/two-car distribution, appearance imbalance, lane imbalance, warnings, and an overall status of Valid, Valid with warnings, or Invalid.
 
@@ -139,7 +144,7 @@ It includes:
 - Guided setup wizard and clearly separate demo event.
 - Accessible participant/car/payment editing with precise inline errors.
 - Large touch and keyboard winner controls; 1/2/3 select lanes, Enter confirms, arrows navigate, U undoes.
-- Dependency-free Canvas charts for completion, wins, payments, categories, and lane balance.
+- Dependency-free inline-SVG/Canvas charts for completion, wins, payments, categories, and lane balance, each paired with a text takeaway and data table.
 - CSS counter, page, chart, rank-change, and winner animations.
 - Search/filter/sort controls that never mutate business IDs.
 - Theme persistence, print layouts, audit history, JSON/CSV workflows, optional timing, and diagnostics.
@@ -147,7 +152,7 @@ It includes:
 
 ## 8. Pro Edition experience
 
-The Pro Edition uses React, TypeScript, Vite, a PWA service worker, IndexedDB, a declarative chart library, and an animation library. Domain and scheduler code remain framework-independent packages.
+The Pro Edition uses React, TypeScript, Vite, Dexie/IndexedDB, Recharts, Motion, and a prompt-update PWA service worker. Domain and scheduler code remain framework-independent packages.
 
 It includes everything in Solo plus:
 
@@ -155,12 +160,16 @@ It includes everything in Solo plus:
 - **Spectator Board:** full-screen projector-friendly display synchronized between same-origin tabs through BroadcastChannel, without sending data to a server.
 - **Schedule Lab:** compare deterministic candidate schedules, visualize opponent networks and pair-frequency heatmaps, and activate only a validated candidate.
 - **Replay Timeline:** inspect and restore bounded local snapshots; winner changes show before/after standings impact.
+- **Result Receipts:** every result save shows the exact official change, standings impact, timestamp, and reversible undo window; later corrections require a reason.
 - **Insight Studio:** animated ranking history, win distribution, category comparisons, lane-bias indicators, consistency, head-to-head explorer, and qualification projections clearly labeled as provisional.
+- **Why This Rank?:** a proof drawer shows the score and each configured tie-break comparison in order.
+- **What-if Sandbox:** hypothetical remaining results can be explored without mutating official event data.
 - **Announcer Mode:** optional browser speech for heat calls and winner confirmation, with explicit enable/disable control.
 - **Event Pack:** one action exports the event JSON, printable schedule, registration CSV, fees CSV, results CSV, standings CSV, audit CSV, and a human-readable summary.
 - **Cross-edition transfer:** import an event from Solo and continue in Pro, or export a schema-compatible snapshot back.
 - **Installability and offline shell:** after first load, the app can reopen without network access. Update availability is announced and never forces a reload during a live event.
 - **Presentation polish:** celebratory winner moment, podium reveal, full-screen mode, share-preview artwork, and privacy-respecting local-only operation.
+- **Official Seal:** results move from provisional to official through an explicit action; the status is visible in control, presentation, exports, and audit history.
 
 Pro does not claim multi-device live sync because no backend is in scope. Same-browser tab synchronization is explicitly labeled.
 
