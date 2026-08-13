@@ -22,7 +22,13 @@ export type CommandReceipt = {
 
 export type EventCommand =
   | { type: "event.replace"; event: EventStateV1; summary: string }
-  | { type: "result.record-winner"; heatId: string; carId: string; correctionReason?: string }
+  | {
+      type: "result.record-winner";
+      heatId: string;
+      carId: string;
+      correctionReason?: string;
+      laneTimesMs?: [number | null, number | null, number | null];
+    }
   | { type: "heat.cancel"; heatId: string; reason: string }
   | { type: "heat.mark-rerun"; heatId: string; reason: string };
 
@@ -203,6 +209,18 @@ function applyCommand(
   if (command.type === "result.record-winner") {
     const previousWinner = requireHeat(timestamped, command.heatId).winnerEntryId;
     const event = recordWinner(timestamped, command.heatId, command.carId, command.correctionReason);
+    if (command.laneTimesMs) {
+      const located = requireHeat(event, command.heatId);
+      command.laneTimesMs.forEach((time, laneIndex) => {
+        if (time !== null && (!Number.isSafeInteger(time) || time < 0)) {
+          throw new Error(`Lane ${laneIndex + 1} time must be a non-negative safe integer`);
+        }
+        if (located.lanes[laneIndex] === null && time !== null) {
+          throw new Error(`Lane ${laneIndex + 1} is vacant and cannot have a time`);
+        }
+      });
+      located.laneTimesMs = [...command.laneTimesMs] as [number | null, number | null, number | null];
+    }
     return {
       event,
       affectedCarIds: uniqueCarIds(previousWinner, command.carId),

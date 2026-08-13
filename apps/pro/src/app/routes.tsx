@@ -2,6 +2,8 @@ import { Link, Route, Routes } from "react-router-dom";
 import { DashboardPage } from "../features/dashboard/DashboardPage";
 import { RegistrationPage } from "../features/registration/RegistrationPage";
 import { ScheduleLabPage } from "../features/schedule/ScheduleLabPage";
+import { RaceCommandPage } from "../features/race/RaceCommandPage";
+import { PresentationPage } from "../features/presentation/PresentationPage";
 
 export const operatorDestinations = [
   { label: "Dashboard", path: "/" },
@@ -35,22 +37,6 @@ function PlaceholderPage({ eyebrow, heading, description }: PlaceholderPageProps
   );
 }
 
-function PresentationPage() {
-  return (
-    <section className="page-frame presentation-placeholder" aria-labelledby="page-title">
-      <p className="eyebrow">Projector surface</p>
-      <h2 id="page-title">Presentation board</h2>
-      <p className="page-intro">
-        This is a read-only presentation in this browser. It does not claim cloud or cross-device sync.
-      </p>
-      <div className="empty-panel" role="note">
-        <strong>Waiting for a live event</strong>
-        <p>The spectator surface will show only validated local event snapshots.</p>
-      </div>
-    </section>
-  );
-}
-
 function NotFoundPage() {
   return (
     <section className="page-frame" aria-labelledby="page-title">
@@ -67,16 +53,7 @@ export function AppRoutes() {
       <Route path="/" element={<DashboardPage />} />
       <Route path="/registration" element={<RegistrationPage />} />
       <Route path="/schedule" element={<ScheduleLabPage />} />
-      <Route
-        path="/race"
-        element={
-          <PlaceholderPage
-            eyebrow="Live operations"
-            heading="Race Command Center"
-            description="Current heat, lane controls, result receipts, and recovery tools will live here."
-          />
-        }
-      />
+      <Route path="/race" element={<RaceCommandPage />} />
       <Route
         path="/standings"
         element={

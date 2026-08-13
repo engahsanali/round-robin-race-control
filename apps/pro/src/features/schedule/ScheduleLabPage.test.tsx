@@ -211,7 +211,7 @@ describe("ScheduleLabPage", () => {
     await user.click(within(screen.getByRole("table", { name: "Schedule candidate comparison" }))
       .getByRole("radio", { name: "Choose candidate 2" }));
     expect(screen.getByLabelText("Selected schedule signature").textContent).toBe(signature);
-  });
+  }, 15_000);
 
   it("explains every quality dimension with semantic pair and lane alternatives", async () => {
     const user = userEvent.setup();

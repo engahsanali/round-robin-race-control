@@ -570,6 +570,115 @@ main {
   }
 }
 
+.race-command-heading,
+.heat-navigation,
+.presentation-controls,
+.spectator-surface > header {
+  display: flex;
+  gap: var(--space-3);
+  align-items: center;
+  justify-content: space-between;
+}
+
+.live-control-toggles,
+.button-stack,
+.presentation-controls {
+  display: flex;
+  gap: var(--space-2);
+  flex-wrap: wrap;
+}
+
+.race-command-grid {
+  display: grid;
+  grid-template-columns: minmax(0, 2fr) minmax(17rem, 1fr);
+  gap: var(--space-5);
+  align-items: start;
+}
+
+.lane-grid,
+.spectator-race {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: var(--space-3);
+}
+
+.lane-card,
+.spectator-fact,
+.result-receipt {
+  min-width: 0;
+  padding: var(--space-4);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-md);
+  background: var(--surface-soft);
+}
+
+.lane-card button,
+.race-command-page button,
+.presentation-board button {
+  min-height: 48px;
+}
+
+.lane-selected {
+  border-color: var(--lime);
+  box-shadow: inset 0 0 0 2px var(--lime);
+}
+
+.heat-status {
+  display: inline-flex;
+  padding: 0.25rem 0.55rem;
+  border: 1px solid currentColor;
+  border-radius: 999px;
+  font-weight: 850;
+  text-transform: capitalize;
+}
+
+.race-side-panel,
+.spectator-surface {
+  display: grid;
+  gap: var(--space-4);
+}
+
+.race-side-panel ul {
+  display: grid;
+  gap: var(--space-2);
+  padding: 0;
+  list-style: none;
+}
+
+.presentation-board {
+  max-width: 100%;
+}
+
+.spectator-surface {
+  padding: clamp(var(--space-4), 4vw, var(--space-7));
+  border: 1px solid var(--border);
+  border-radius: var(--radius-lg);
+  background: linear-gradient(145deg, var(--surface), var(--surface-strong));
+}
+
+@media (max-width: 46rem) {
+  .race-command-heading,
+  .heat-navigation,
+  .presentation-controls,
+  .spectator-surface > header {
+    align-items: stretch;
+    flex-direction: column;
+  }
+
+  .race-command-grid,
+  .lane-grid,
+  .spectator-race {
+    grid-template-columns: 1fr;
+  }
+
+  .live-control-toggles,
+  .live-control-toggles button,
+  .button-stack,
+  .button-stack button {
+    width: 100%;
+  }
+}
+
 .setup-wizard,
 .recovery-panel,
 .dashboard-analytics,

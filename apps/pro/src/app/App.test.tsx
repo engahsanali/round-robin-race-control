@@ -108,8 +108,8 @@ describe("Pro application shell", () => {
     }
 
     const presentation = renderApp("/present");
-    expect(screen.getByRole("heading", { name: "Presentation board", level: 2 })).toBeTruthy();
-    expect(screen.getByText(/read-only presentation in this browser/i)).toBeTruthy();
+    expect(screen.getByRole("heading", { name: "Spectator Board", level: 2 })).toBeTruthy();
+    expect(screen.getByText(/same browser and device.*not cloud or cross-device/i)).toBeTruthy();
     presentation.unmount();
   });
 
