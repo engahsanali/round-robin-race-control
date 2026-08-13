@@ -1,4 +1,5 @@
 .codex-tmp/
+.worktrees/
 node_modules/
 dist/
 playwright-report/
