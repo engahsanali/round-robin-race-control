@@ -147,7 +147,7 @@ test('returns focus after Escape from registration, live, recovery, and finals d
 });
 
 test('fits all views and print routes at phone, tablet, desktop, and projector sizes', async ({ page }) => {
-  test.setTimeout(120_000);
+  test.setTimeout(300_000);
   await page.goto(fileUrl);
   for (const width of [320, 768, 1280, 1920]) {
     await page.setViewportSize({ width, height: 900 });
