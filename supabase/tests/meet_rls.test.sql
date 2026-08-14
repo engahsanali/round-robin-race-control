@@ -114,10 +114,10 @@ select is((select count(*) from public.organisations), 1::bigint, 'viewer reads 
 select is((select count(*) from public.security_events), 0::bigint, 'viewer cannot read security events');
 
 set local request.jwt.claim.sub = '10000000-0000-0000-0000-000000000003';
-select lives_ok(
+select throws_ok(
   $$insert into public.meets (organisation_id, name, venue, meet_date, created_by)
     values ('11000000-0000-0000-0000-000000000001', 'Organiser Meet', 'Track A', '2026-08-15', '10000000-0000-0000-0000-000000000003')$$,
-  'organiser can create a meet in their organisation'
+  '42501', null, 'organiser meet creation must use the validated workbook RPC'
 );
 select throws_ok(
   $$insert into public.heats
@@ -128,16 +128,16 @@ select throws_ok(
        '10000000-0000-0000-0000-000000000003', now())$$,
   '42501', null, 'organiser cannot forge a confirmed heat through direct insert'
 );
-select lives_ok(
+select throws_ok(
   $$insert into public.heats
       (organisation_id, bracket_id, round_number, heat_number, lane_1_car_id)
     values
       ('11000000-0000-0000-0000-000000000001', '11000000-0000-0000-0003-000000000001', 2, 1,
        '11000000-0000-0000-0005-000000000001')$$,
-  'organiser can insert only a safe pending schedule row'
+  '42501', null, 'organiser schedule writes must use the validated activation RPC'
 );
-select is((select count(*) from public.heats where bracket_id = '11000000-0000-0000-0003-000000000001' and round_number = 2 and status = 'pending' and winner_car_id is null and version = 1), 1::bigint, 'safe direct heat insert preserves protected defaults');
-select is((select count(*) from public.audit_events where action = 'heat.schedule_inserted' and actor_id = '10000000-0000-0000-0000-000000000003'), 1::bigint, 'direct schedule insert writes a same-transaction actor audit');
+select is((select count(*) from public.heats where bracket_id = '11000000-0000-0000-0003-000000000001' and round_number = 2), 0::bigint, 'denied direct schedule insert writes no heat');
+select is((select count(*) from public.audit_events where action = 'heat.schedule_inserted' and actor_id = '10000000-0000-0000-0000-000000000003'), 0::bigint, 'denied direct schedule insert writes no audit');
 select throws_ok(
   $$update public.heats set status = 'confirmed', winner_car_id = lane_1_car_id, lane_1_time = 9.0, version = 99,
       confirmed_by = '10000000-0000-0000-0000-000000000003', confirmed_at = now()
@@ -147,18 +147,18 @@ select throws_ok(
 
 create temporary table bracket_version_before as
 select version from public.brackets where id = '11000000-0000-0000-0003-000000000001';
-select lives_ok(
+select throws_ok(
   $$insert into public.cars (organisation_id, bracket_id, participant_id, car_number, name)
     values ('11000000-0000-0000-0000-000000000001', '11000000-0000-0000-0003-000000000001',
       '11000000-0000-0000-0004-000000000001', 8, 'Second Alpha Car')$$,
-  'organiser registration mutation succeeds through audited direct policy'
+  '42501', null, 'organiser registration writes must use the validated batch RPC'
 );
 select is(
   (select version from public.brackets where id = '11000000-0000-0000-0003-000000000001'),
-  (select version + 1 from bracket_version_before),
-  'registration mutation increments the source bracket version'
+  (select version from bracket_version_before),
+  'denied direct registration leaves the bracket version unchanged'
 );
-select is((select count(*) from public.audit_events where action = 'car.inserted' and actor_id = '10000000-0000-0000-0000-000000000003'), 1::bigint, 'registration mutation stores actor and before/after audit');
+select is((select count(*) from public.audit_events where action = 'car.inserted' and actor_id = '10000000-0000-0000-0000-000000000003'), 0::bigint, 'denied direct registration writes no audit');
 
 set local request.jwt.claim.sub = '10000000-0000-0000-0000-000000000004';
 select throws_ok(

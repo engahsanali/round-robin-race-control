@@ -1,0 +1,52 @@
+[
+  {
+    "name": "missing atomic workbook graph validation",
+    "expectedCode": "missing_workbook_transaction",
+    "sql": "-- WORKBOOK COMMANDS V7\ncreate function public.save_registration_batch(target_bracket_id uuid, expected_version integer, rows jsonb, request_id uuid) returns jsonb language sql as $$ select '{}'::jsonb $$;"
+  },
+  {
+    "name": "missing lineage-safe registration batch",
+    "expectedCode": "missing_registration_transaction",
+    "sql": "-- WORKBOOK COMMANDS V7\ncreate function public.save_meet_workbook(target_organisation_id uuid, target_meet_id uuid, expected_version integer, workbook jsonb, request_id uuid) returns jsonb language sql as $$ select '{}'::jsonb $$;"
+  },
+  {
+    "name": "missing schedule safety validation",
+    "expectedCode": "missing_schedule_transaction",
+    "sql": "-- WORKBOOK COMMANDS V7\ncreate function public.activate_bracket_schedule(target_bracket_id uuid, expected_version integer, schedule jsonb, replacement_reason text, request_id uuid) returns jsonb language sql as $$ select '{}'::jsonb $$;"
+  },
+  {
+    "name": "missing exact millisecond conversion",
+    "expectedCode": "missing_exact_millisecond_conversion",
+    "sql": "-- WORKBOOK COMMANDS V7\nselect 1;"
+  },
+  {
+    "name": "direct grants bypass workbook transactions",
+    "expectedCode": "workbook_rpc_bypass",
+    "sql": "-- WORKBOOK COMMANDS V7\ngrant insert on public.heats to authenticated;"
+  },
+  {
+    "name": "confirmed progression graph remains mutable",
+    "expectedCode": "mutable_confirmed_progression",
+    "sql": "-- WORKBOOK COMMANDS V7\ncreate function public.save_meet_workbook(target_organisation_id uuid, target_meet_id uuid, expected_version integer, workbook jsonb, request_id uuid) returns jsonb language sql as $$ select '{}'::jsonb $$;"
+  },
+  {
+    "name": "client schedule quality is not recomputed",
+    "expectedCode": "unverified_schedule_quality",
+    "sql": "-- WORKBOOK COMMANDS V7\nraise exception using message = 'MEET_INVALID_SCHEDULE_QUALITY';"
+  },
+  {
+    "name": "registration can invalidate schedules or lineage",
+    "expectedCode": "workbook_relational_bypass",
+    "sql": "-- WORKBOOK COMMANDS V7\nraise exception using message = 'MEET_DUPLICATE_CAR_NUMBER';"
+  },
+  {
+    "name": "overwrites retain only summary receipts",
+    "expectedCode": "missing_entity_audit_deltas",
+    "sql": "-- WORKBOOK COMMANDS V7\ninsert into public.audit_events(action) values ('registration.batch_saved');"
+  },
+  {
+    "name": "post-advancement metadata save or audit retention is broken",
+    "expectedCode": "workbook_lifecycle_break",
+    "sql": "-- WORKBOOK COMMANDS V7\nalter table public.audit_events drop constraint audit_events_bracket_id_fkey;\nraise exception using message = 'MEET_WORKBOOK_IN_USE';"
+  }
+]

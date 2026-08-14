@@ -9,6 +9,7 @@ const REQUIRED_FILES = [
   "202608140004_meet_review_hardening.sql",
   "202608140005_meet_ranking_and_access_hardening.sql",
   "202608140006_meet_preliminary_and_identity_hardening.sql",
+  "202608140007_meet_workbook_commands.sql",
 ];
 
 const OWNED_TABLES = [
@@ -41,7 +42,111 @@ const REQUIRED_RPCS = [
   "record_security_event",
   "revoke_invitation",
   "list_organisation_members",
+  "save_meet_workbook",
+  "save_registration_batch",
+  "activate_bracket_schedule",
 ];
+
+export function verifyWorkbookCommandInvariant(source) {
+  const sql = normalize(source);
+  const latest = lastMigrationV7(sql);
+  const issues = [];
+  const requireMarker = (condition, code, target, message) => {
+    if (!condition) issues.push(issue(code, target, message));
+  };
+  requireMarker(
+    /function\s+public\.save_meet_workbook\s*\(\s*target_organisation_id\s+uuid\s*,\s*target_meet_id\s+uuid\s*,\s*expected_version\s+integer\s*,\s*workbook\s+jsonb\s*,\s*request_id\s+uuid/i.test(latest)
+      && /jsonb_array_length\(workbook->'brackets'\)\s+not\s+between\s+1\s+and\s+15/i.test(latest)
+      && /MEET_ADVANCEMENT_CYCLE/i.test(latest)
+      && /MEET_DESTINATION_CAPACITY/i.test(latest)
+      && /meet\.workbook_saved/i.test(latest),
+    "missing_workbook_transaction", "save_meet_workbook",
+    "Workbook setup must be a versioned, audited transaction with bracket, DAG and capacity validation",
+  );
+  requireMarker(
+    /function\s+public\.save_registration_batch\s*\(\s*target_bracket_id\s+uuid\s*,\s*expected_version\s+integer\s*,\s*rows\s+jsonb\s*,\s*request_id\s+uuid/i.test(latest)
+      && /MEET_DUPLICATE_CAR_NUMBER/i.test(latest)
+      && /MEET_REGISTRATION_LINEAGE_LOCKED/i.test(latest)
+      && /registration\.batch_saved/i.test(latest),
+    "missing_registration_transaction", "save_registration_batch",
+    "Registration batches must atomically upsert bracket-scoped identities and active state without mutating advancement lineage",
+  );
+  requireMarker(
+    /function\s+public\.activate_bracket_schedule\s*\(\s*target_bracket_id\s+uuid\s*,\s*expected_version\s+integer\s*,\s*schedule\s+jsonb\s*,\s*replacement_reason\s+text\s*,\s*request_id\s+uuid/i.test(latest)
+      && /MEET_CONFIRMED_RESULTS_EXIST/i.test(latest)
+      && /MEET_DUPLICATE_ROUND_APPEARANCE/i.test(latest)
+      && /opponentRepeatExcess/i.test(latest)
+      && /schedule\.activated/i.test(latest),
+    "missing_schedule_transaction", "activate_bracket_schedule",
+    "Schedule activation must validate active lanes, rounds and quality before pending-only replacement",
+  );
+  requireMarker(
+    /function\s+private_meet\.lane_times_from_milliseconds/i.test(latest)
+      && /numeric\(12\s*,\s*3\)/i.test(latest)
+      && /1000::numeric/i.test(latest)
+      && /MEET_INVALID_LANE_TIMES/i.test(latest),
+    "missing_exact_millisecond_conversion", "lane times",
+    "Integer browser milliseconds must convert exactly to numeric seconds with three decimal places",
+  );
+  requireMarker(
+    /revoke\s+insert\s*,\s*update\s*,\s*delete\s+on\s+table\s+public\.meets[\s\S]*?public\.advancement_rule_destinations\s+from\s+authenticated/i.test(latest)
+      && /revoke\s+insert\s*\(organisation_id\s*,\s*bracket_id\s*,\s*round_number[\s\S]*?\)\s+on\s+public\.heats\s+from\s+authenticated/i.test(latest)
+      && /revoke\s+update\s*\(round_number\s*,\s*heat_number[\s\S]*?\)\s+on\s+public\.heats\s+from\s+authenticated/i.test(latest),
+    "workbook_rpc_bypass", "direct table grants",
+    "Workbook setup, registration, schedule and progression writes must not bypass their validated RPC transactions",
+  );
+  requireMarker(
+    /has_snapshots\s+and[\s\S]*MEET_WORKBOOK_IN_USE/i.test(latest)
+      && /version\s*=\s*case\s+when\s+has_snapshots\s+then\s+public\.brackets\.version/i.test(latest)
+      && /version\s*=\s*case\s+when\s+has_snapshots\s+then\s+public\.advancement_rules\.version/i.test(latest),
+    "mutable_confirmed_progression", "save_meet_workbook",
+    "After advancement, harmless meet metadata may change but the bracket/rule graph and source-result versions must stay frozen",
+  );
+  requireMarker(
+    /MEET_SCHEDULE_QUALITY_MISMATCH/i.test(latest)
+      && /MEET_UNBALANCED_APPEARANCES/i.test(latest)
+      && /MEET_UNBALANCED_LANES/i.test(latest)
+      && /computed_repeat_excess/i.test(latest)
+      && /computed_lane_spread/i.test(latest),
+    "unverified_schedule_quality", "activate_bracket_schedule",
+    "Schedule quality must be recomputed server-side and balanced before client-reported metrics are trusted",
+  );
+  requireMarker(
+    /MEET_REGISTRATION_SCHEDULED/i.test(latest)
+      && /participant\.id\s*=\s*\(row_value->>'participantId'\)::uuid[\s\S]*MEET_REGISTRATION_LINEAGE_LOCKED/i.test(latest)
+      && /MEET_INCONSISTENT_DESTINATION_CAPACITY/i.test(latest)
+      && /stale_advancement_count/i.test(latest),
+    "workbook_relational_bypass", "registration and capacity",
+    "Registration must preserve scheduled and advanced identities, and shared destinations need one capacity contract",
+  );
+  requireMarker(
+    /meet\.bracket_saved\./i.test(latest)
+      && /meet\.rule_saved\./i.test(latest)
+      && /registration\.row_saved\./i.test(latest)
+      && /schedule\.heat_retired\./i.test(latest)
+      && /schedule\.heat_activated\./i.test(latest),
+    "missing_entity_audit_deltas", "workbook commands",
+    "Destructive and overwriting workbook commands must retain bounded per-entity before and after values",
+  );
+  const snapshotLoad = latest.search(/select\s+exists\s*\([\s\S]*?public\.advancement_snapshots[\s\S]*?into\s+has_snapshots/i);
+  const capacitySimulation = latest.search(/if\s+not\s+has_snapshots\s+and\s+exists\s*\(\s*with\s+recursive\s+bracket_payload/i);
+  requireMarker(
+    /drop\s+constraint\s+audit_events_organisation_id_bracket_id_fkey/i.test(latest)
+      && /add\s+constraint\s+audit_events_bracket_id_fkey[\s\S]*?on\s+delete\s+set\s+null\s*\(\s*bracket_id\s*\)/i.test(latest)
+      && snapshotLoad >= 0 && capacitySimulation > snapshotLoad,
+    "workbook_lifecycle_break", "post-advancement lifecycle",
+    "Metadata saves after advancement must not double-allocate capacity, and deleted brackets must retain organisation-owned audit history",
+  );
+  for (const rpc of ["save_meet_workbook", "save_registration_batch", "activate_bracket_schedule"]) {
+    requireMarker(
+      new RegExp(`revoke\\s+execute\\s+on\\s+function\\s+public\\.${rpc}[\\s\\S]*?from\\s+public\\s*,\\s*anon`, "i").test(latest)
+        && new RegExp(`grant\\s+execute\\s+on\\s+function\\s+public\\.${rpc}[\\s\\S]*?to\\s+authenticated`, "i").test(latest),
+      "unsafe_workbook_rpc_grant", rpc,
+      `Workbook RPC ${rpc} must be executable only by authenticated users`,
+    );
+  }
+  return issues;
+}
 
 export function verifyReviewRound2Invariant(source) {
   const sql = normalize(source);
@@ -330,6 +435,7 @@ export async function verifyMeetMigrations(migrationsDirectory) {
   issues.push(...verifyReviewInvariant(allMigrations));
   issues.push(...verifyReviewRound2Invariant(allMigrations));
   issues.push(...verifyReviewRound3Invariant(allMigrations));
+  issues.push(...verifyWorkbookCommandInvariant(allMigrations));
   return { ok: issues.length === 0, issues, schemaVersion: REQUIRED_FILES.length };
 }
 
@@ -355,6 +461,12 @@ function lastMigrationV5(source) {
 
 function lastMigrationV6(source) {
   const marker = "-- REVIEW HARDENING V6";
+  const index = source.lastIndexOf(marker);
+  return index === -1 ? source : source.slice(index);
+}
+
+function lastMigrationV7(source) {
+  const marker = "-- WORKBOOK COMMANDS V7";
   const index = source.lastIndexOf(marker);
   return index === -1 ? source : source.slice(index);
 }

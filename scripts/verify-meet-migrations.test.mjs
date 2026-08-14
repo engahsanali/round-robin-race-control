@@ -20,12 +20,15 @@ const reviewRound2Fixtures = JSON.parse(
 const reviewRound3Fixtures = JSON.parse(
   await readFile(path.join(import.meta.dirname, "fixtures", "meet-review-round3-negative.json"), "utf8"),
 );
+const workbookFixtures = JSON.parse(
+  await readFile(path.join(import.meta.dirname, "fixtures", "meet-workbook-negative.json"), "utf8"),
+);
 
 test("accepts the checked-in Meet migration security contract", async () => {
   const result = await verifier.verifyMeetMigrations(migrationsDir);
   assert.deepEqual(result.issues, []);
   assert.equal(result.ok, true);
-  assert.equal(result.schemaVersion, 6);
+  assert.equal(result.schemaVersion, 7);
 });
 
 for (const fixture of fixtures) {
@@ -39,6 +42,7 @@ for (const fixture of fixtures) {
         "202608140004_meet_review_hardening.sql",
         "202608140005_meet_ranking_and_access_hardening.sql",
         "202608140006_meet_preliminary_and_identity_hardening.sql",
+        "202608140007_meet_workbook_commands.sql",
       ]) {
         const original = await readFile(path.join(migrationsDir, fileName), "utf8");
         const mutated = fileName === fixture.file
@@ -56,6 +60,17 @@ for (const fixture of fixtures) {
     } finally {
       await rm(temporary, { recursive: true, force: true });
     }
+  });
+}
+
+for (const fixture of workbookFixtures) {
+  test(`workbook invariant rejects ${fixture.name}`, () => {
+    assert.equal(typeof verifier.verifyWorkbookCommandInvariant, "function");
+    const issues = verifier.verifyWorkbookCommandInvariant(fixture.sql);
+    assert.ok(
+      issues.some((issue) => issue.code === fixture.expectedCode),
+      `${fixture.name} should report ${fixture.expectedCode}; got ${JSON.stringify(issues)}`,
+    );
   });
 }
 
