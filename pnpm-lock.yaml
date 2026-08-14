@@ -94,6 +94,18 @@ importers:
         specifier: ^3.25.76
         version: 3.25.76
 
+  packages/meet-domain:
+    dependencies:
+      '@rr3/domain':
+        specifier: workspace:*
+        version: link:../domain
+      '@rr3/scheduler':
+        specifier: workspace:*
+        version: link:../scheduler
+      zod:
+        specifier: ^3.25.76
+        version: 3.25.76
+
   packages/scheduler:
     dependencies:
       '@rr3/domain':

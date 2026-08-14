@@ -1,0 +1,12 @@
+{
+  "name": "@rr3/meet-domain",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "exports": { ".": "./src/index.ts" },
+  "dependencies": {
+    "@rr3/domain": "workspace:*",
+    "@rr3/scheduler": "workspace:*",
+    "zod": "^3.25.76"
+  }
+}
