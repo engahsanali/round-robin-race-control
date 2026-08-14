@@ -37,7 +37,7 @@ describe("reviewed workbook interactions", () => {
     expect(actions.confirmWinner).not.toHaveBeenCalled();
   });
 
-  it("edits, filters and sorts registration and guards a withdrawal impact", async () => {
+  it("edits, filters and sorts registration while blocking protected withdrawals", async () => {
     const meet = withSchedule(makeMeet(1, 3));
     meet.brackets[0]!.lineage = [{ sourceBracketId: "source", sourceCarId: "car", ruleId: "rule", snapshotId: "snapshot" }];
     mount(meet);
@@ -47,9 +47,25 @@ describe("reviewed workbook interactions", () => {
     const dialog = screen.getByRole("dialog", { name: /registration/i });
     expect(within(dialog).getByLabelText(/car 1 participant/i)).not.toBeNull();
     await userEvent.click(within(dialog).getByRole("button", { name: /withdraw car #1/i }));
-    const warning = screen.getByRole("alertdialog", { name: /withdraw car #1/i });
-    expect(warning).not.toBeNull();
-    expect(within(warning).getByText(/scheduled|advancement lineage/i)).not.toBeNull();
+    expect(screen.queryByRole("alertdialog", { name: /withdraw car #1/i })).toBeNull();
+    expect(screen.getByRole("alert").textContent).toMatch(/replace.*schedule.*review.*advancement first/i);
+  });
+
+  it("truthfully describes upsert registration and reason-confirms an unscheduled status change", async () => {
+    mount(makeMeet(1, 3));
+    await userEvent.click(screen.getByRole("button", { name: /registration/i }));
+    const dialog = screen.getByRole("dialog", { name: /registration/i });
+    expect(within(dialog).getByRole("button", { name: /validate and save rows/i })).not.toBeNull();
+    expect(within(dialog).getByText(/submitted rows add\/update; unlisted existing rows remain/i)).not.toBeNull();
+    await userEvent.click(within(dialog).getByRole("button", { name: /withdraw car #1/i }));
+    const confirmation = screen.getByRole("alertdialog", { name: /withdraw car #1/i });
+    const confirm = within(confirmation).getByRole("button", { name: /confirm status change/i });
+    expect(confirm.hasAttribute("disabled")).toBe(true);
+    await userEvent.type(within(confirmation).getByLabelText(/^reason$/i), "Car failed scrutineering");
+    const enabledConfirm = within(confirmation).getByRole("button", { name: /confirm status change/i });
+    expect(enabledConfirm.hasAttribute("disabled")).toBe(false);
+    await userEvent.click(enabledConfirm);
+    expect(within(dialog).getByRole("button", { name: /restore car #1/i })).not.toBeNull();
   });
 
   it("requires an official replacement reason and shows the full quality certificate", async () => {

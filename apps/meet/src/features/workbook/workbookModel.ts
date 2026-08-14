@@ -62,7 +62,7 @@ export function registrationRows(bracket: BracketState): RegistrationDraft[] {
   });
 }
 
-export function parseRegistrationPaste(value: string): RegistrationParse {
+export function parseRegistrationPaste(value: string, bracketId: string): RegistrationParse {
   const lines = value.split(/\r?\n/u).map((line) => line.trim()).filter(Boolean);
   const rows: RegistrationDraft[] = [];
   const errors: string[] = [];
@@ -82,7 +82,7 @@ export function parseRegistrationPaste(value: string): RegistrationParse {
       errors.push(`Row ${index + 1}: participant identity conflicts with an earlier row.`);
     }
     const participant = existing ?? {
-      id: deterministicUuid(`participant:${identity}`),
+      id: deterministicUuid(`bracket:${bracketId}:participant:${identity}`),
       name: participantName,
       email,
       phone,
@@ -91,7 +91,7 @@ export function parseRegistrationPaste(value: string): RegistrationParse {
     participants.set(identity, participant);
     rows.push({
       participantId: participant.id, participantName, email, phone, notes,
-      carId: deterministicUuid(`car:${identity}:${carNumber}:${carName.toLocaleLowerCase()}`), carNumber, carName, active: true,
+      carId: deterministicUuid(`bracket:${bracketId}:car:${identity}:${carNumber}:${carName.toLocaleLowerCase()}`), carNumber, carName, active: true,
     });
   });
   return errors.length > 0 || rows.length === 0

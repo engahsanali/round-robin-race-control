@@ -13,16 +13,16 @@ describe("Meet workbook model", () => {
     meet.brackets[1]!.event.entries[0]!.carNumber = meet.brackets[0]!.event.entries[0]!.carNumber;
     expect(registrationRows(meet.brackets[0]!)).toHaveLength(3);
     expect(registrationRows(meet.brackets[1]!)).toHaveLength(3);
-    const parsed = parseRegistrationPaste("7\tCesar\tComet\n7\tAhsan\tNova");
+    const parsed = parseRegistrationPaste("7\tCesar\tComet\n7\tAhsan\tNova", "bracket-a");
     expect(parsed.ok).toBe(false);
     expect(parsed.errors[0]).toMatch(/duplicate car number/i);
   });
 
   it("parses a complete bulk paste atomically and reports row-specific errors", () => {
-    const valid = parseRegistrationPaste("7\tCesar\tComet\n8\tAhsan\tNova");
+    const valid = parseRegistrationPaste("7\tCesar\tComet\n8\tAhsan\tNova", "bracket-a");
     expect(valid.ok).toBe(true);
     expect(valid.rows).toHaveLength(2);
-    const invalid = parseRegistrationPaste("nope\t\tComet\n8\tAhsan");
+    const invalid = parseRegistrationPaste("nope\t\tComet\n8\tAhsan", "bracket-a");
     expect(invalid.ok).toBe(false);
     expect(invalid.rows).toHaveLength(0);
     expect(invalid.errors).toEqual(expect.arrayContaining([expect.stringMatching(/row 1/i), expect.stringMatching(/row 2/i)]));

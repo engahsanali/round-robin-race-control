@@ -5,13 +5,16 @@ import { parseRegistrationPaste, validateSetupGraph } from "./workbookModel";
 describe("workbook review regressions", () => {
   it("groups multiple cars under stable participant identity and rejects the whole invalid candidate", () => {
     const text = "7\tCesar\tComet\tcesar@example.com\n8\tCesar\tNova\tcesar@example.com";
-    const first = parseRegistrationPaste(text);
-    const second = parseRegistrationPaste(text);
+    const first = parseRegistrationPaste(text, "bracket-alpha");
+    const second = parseRegistrationPaste(text, "bracket-alpha");
+    const otherBracket = parseRegistrationPaste(text, "bracket-beta");
     expect(first.ok).toBe(true);
     expect(first.rows[0]?.participantId).toBe(first.rows[1]?.participantId);
     expect(first.rows.map((row) => row.participantId)).toEqual(second.rows.map((row) => row.participantId));
     expect(first.rows.map((row) => row.carId)).toEqual(second.rows.map((row) => row.carId));
-    expect(parseRegistrationPaste(`${text}\nnope\tBroken\tCar`).rows).toEqual([]);
+    expect(first.rows[0]?.participantId).not.toBe(otherBracket.rows[0]?.participantId);
+    expect(first.rows[0]?.carId).not.toBe(otherBracket.rows[0]?.carId);
+    expect(parseRegistrationPaste(`${text}\nnope\tBroken\tCar`, "bracket-alpha").rows).toEqual([]);
   });
 
   it("rejects self, backward and cyclic progression before an RPC", () => {
