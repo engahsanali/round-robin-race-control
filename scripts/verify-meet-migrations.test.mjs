@@ -4,18 +4,22 @@ import { tmpdir } from "node:os";
 import path from "node:path";
 import test from "node:test";
 
-import { verifyMeetMigrations } from "./verify-meet-migrations.mjs";
+import * as verifier from "./verify-meet-migrations.mjs";
 
 const root = path.resolve(import.meta.dirname, "..");
 const migrationsDir = path.join(root, "supabase", "migrations");
 const fixtures = JSON.parse(
   await readFile(path.join(import.meta.dirname, "fixtures", "meet-migrations-negative.json"), "utf8"),
 );
+const reviewFixtures = JSON.parse(
+  await readFile(path.join(import.meta.dirname, "fixtures", "meet-review-negative.json"), "utf8"),
+);
 
 test("accepts the checked-in Meet migration security contract", async () => {
-  const result = await verifyMeetMigrations(migrationsDir);
+  const result = await verifier.verifyMeetMigrations(migrationsDir);
   assert.deepEqual(result.issues, []);
   assert.equal(result.ok, true);
+  assert.equal(result.schemaVersion, 4);
 });
 
 for (const fixture of fixtures) {
@@ -26,6 +30,7 @@ for (const fixture of fixtures) {
         "202608140001_meet_core.sql",
         "202608140002_meet_rls.sql",
         "202608140003_meet_commands.sql",
+        "202608140004_meet_review_hardening.sql",
       ]) {
         const original = await readFile(path.join(migrationsDir, fileName), "utf8");
         const mutated = fileName === fixture.file
@@ -34,7 +39,7 @@ for (const fixture of fixtures) {
         await writeFile(path.join(temporary, fileName), mutated, "utf8");
       }
 
-      const result = await verifyMeetMigrations(temporary);
+      const result = await verifier.verifyMeetMigrations(temporary);
       assert.equal(result.ok, false);
       assert.ok(
         result.issues.some((issue) => issue.code === fixture.expectedCode),
@@ -43,6 +48,17 @@ for (const fixture of fixtures) {
     } finally {
       await rm(temporary, { recursive: true, force: true });
     }
+  });
+}
+
+for (const fixture of reviewFixtures) {
+  test(`review invariant rejects ${fixture.name}`, () => {
+    assert.equal(typeof verifier.verifyReviewInvariant, "function", "review invariant verifier must be exported");
+    const issues = verifier.verifyReviewInvariant(fixture.sql);
+    assert.ok(
+      issues.some((issue) => issue.code === fixture.expectedCode),
+      `${fixture.name} should report ${fixture.expectedCode}; got ${JSON.stringify(issues)}`,
+    );
   });
 }
 

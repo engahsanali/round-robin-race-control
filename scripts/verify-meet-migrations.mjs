@@ -6,6 +6,7 @@ const REQUIRED_FILES = [
   "202608140001_meet_core.sql",
   "202608140002_meet_rls.sql",
   "202608140003_meet_commands.sql",
+  "202608140004_meet_review_hardening.sql",
 ];
 
 const OWNED_TABLES = [
@@ -35,7 +36,102 @@ const REQUIRED_RPCS = [
   "correct_heat_winner",
   "confirm_advancement",
   "replace_advancement",
+  "record_security_event",
 ];
+
+export function verifyReviewInvariant(source) {
+  const sql = normalize(source);
+  const issues = [];
+  const requireMarker = (condition, code, target, message) => {
+    if (!condition) issues.push(issue(code, target, message));
+  };
+
+  requireMarker(
+    /invitation_failure_result[\s\S]*MEET_INVITATION_UNAVAILABLE/i.test(sql)
+      && /rate_limit_result[\s\S]*MEET_RATE_LIMITED/i.test(sql),
+    "aborting_invitation_failure", "redeem_invitation",
+    "Invalid, expired and rate-limited invitation attempts must return structured results so counters commit",
+  );
+  requireMarker(
+    /grant\s+insert\s*\(organisation_id\s*,\s*bracket_id\s*,\s*round_number\s*,\s*heat_number\s*,\s*phase\s*,\s*lane_1_car_id\s*,\s*lane_2_car_id\s*,\s*lane_3_car_id\)\s+on\s+public\.heats/i.test(sql)
+      && /revoke\s+insert\s+on\s+public\.heats\s+from\s+authenticated/i.test(sql),
+    "unsafe_heat_insert_grant", "heats",
+    "Authenticated direct heat INSERT must be restricted to safe schedule columns",
+  );
+  requireMarker(
+    (sql.match(/reason\s+is\s+null\s+or\s+char_length\(btrim\(reason\)\)\s+not\s+between\s+1\s+and\s+500/gi) ?? []).length >= 4,
+    "nullable_reason_bypass", "reason validation",
+    "Every required reason must reject NULL, blank and overlong input",
+  );
+  requireMarker(
+    /create\s+unique\s+index\s+cars_one_active_source_lineage[\s\S]*\(source_bracket_id\s*,\s*source_car_id\)[\s\S]*where[\s\S]*source_car_id\s+is\s+not\s+null[\s\S]*and\s+active/i.test(sql),
+    "missing_global_active_lineage", "cars lineage",
+    "Only one active advancement is allowed per source bracket and source car across rules and snapshots",
+  );
+  requireMarker(
+    /update\s+public\.cars\s+set\s+active\s*=\s*false\s+where\s+snapshot_id\s*=\s*previous\.id/i.test(sql)
+      && !/delete\s+from\s+public\.cars\s+where\s+snapshot_id\s*=\s*previous\.id/i.test(lastMigration(sql)),
+    "destructive_advancement_replacement", "replace_advancement",
+    "Replacement must retire historical cars without deleting downstream lineage",
+  );
+  requireMarker(
+    /alter\s+table\s+public\.advancement_rule_destinations\s+add\s+column\s+meet_id/i.test(sql)
+      && /advancement_rule_destinations_same_meet_fk/i.test(sql)
+      && /advancement_rules_source_same_meet_fk/i.test(sql),
+    "missing_same_meet_graph", "advancement graph",
+    "Rules, sources and destinations require composite same-organisation, same-meet constraints",
+  );
+  requireMarker(
+    /expected_destination_id/i.test(sql)
+      && /MEET_DESTINATION_ALLOCATION/i.test(sql)
+      && /destination_order[\s\S]*active_occupancy/i.test(sql),
+    "missing_server_allocation", "advancement allocation",
+    "The server must derive balanced destination allocation from active occupancy and stable order",
+  );
+  requireMarker(
+    /source_is_complete/i.test(sql)
+      && /MEET_SOURCE_INCOMPLETE/i.test(sql)
+      && /cutoff_end\s*>\s*rule\.top_n/i.test(sql)
+      && !/rank\(\)\s+over\s*\(order\s+by\s+wins\s+desc\s*,\s*(?:car\.)?id/i.test(lastMigration(sql)),
+    "unsafe_cutoff_ranking", "advancement ranking",
+    "Automatic advancement must use server result groups, never UUID order, and reject incomplete sources",
+  );
+  requireMarker(
+    /create\s+or\s+replace\s+function\s+private_meet\.audit_direct_meet_mutation/i.test(sql)
+      && /car\.inserted/i.test(sql)
+      && /heat\.schedule_inserted/i.test(sql)
+      && /advancement_rule\.updated/i.test(sql),
+    "unaudited_direct_mutation", "direct mutations",
+    "Direct organiser mutations must bump versions and write actor/before/after audit in the same transaction",
+  );
+  requireMarker(
+    /lock\s+table\s+public\.organisations\s+in\s+row\s+exclusive\s+mode/i.test(sql)
+      && /order\s+by\s+membership\.user_id\s+for\s+update/i.test(sql),
+    "unserialized_last_owner", "remove_membership",
+    "Membership removal must serialize the organisation owner set before checking the final owner",
+  );
+  requireMarker(
+    /alter\s+publication\s+supabase_realtime\s+add\s+table\s+public\.heats/i.test(sql)
+      && /public\.security_events/i.test(sql),
+    "missing_realtime_publication", "supabase_realtime",
+    "RLS-readable operational tables must be explicitly published to authorised Realtime clients",
+  );
+  requireMarker(
+    /create\s+or\s+replace\s+function\s+public\.record_security_event/i.test(sql)
+      && /MEET_SECURITY_EVENT_NOT_ALLOWED/i.test(sql)
+      && /grant\s+execute\s+on\s+function\s+public\.record_security_event/i.test(sql),
+    "missing_security_event_rpc", "security_events",
+    "Authenticated members need a rate-limited, allow-listed, idempotent security-event RPC",
+  );
+  requireMarker(
+    /lane_2_car_id\s+is\s+not\s+null\s+or\s+lane_2_time\s+is\s+null/i.test(sql)
+      && /lane_3_car_id\s+is\s+not\s+null\s+or\s+lane_3_time\s+is\s+null/i.test(sql)
+      && /MEET_INVALID_LANE_TIMES/i.test(sql),
+    "unassigned_lane_time", "lane times",
+    "Unassigned lanes must have absent or null times at both table and RPC boundaries",
+  );
+  return issues;
+}
 
 export async function verifyMeetMigrations(migrationsDirectory) {
   const issues = [];
@@ -53,6 +149,7 @@ export async function verifyMeetMigrations(migrationsDirectory) {
   const rls = sources.get(REQUIRED_FILES[1]);
   const commands = sources.get(REQUIRED_FILES[2]);
   const all = `${core}\n${rls}\n${commands}`;
+  const allMigrations = [...sources.values()].join("\n");
 
   for (const table of OWNED_TABLES) {
     if (!new RegExp(`create\\s+table\\s+public\\.${table}\\b`, "i").test(core)) {
@@ -73,7 +170,7 @@ export async function verifyMeetMigrations(migrationsDirectory) {
     }
   }
 
-  const definerFunctions = [...all.matchAll(/create\s+or\s+replace\s+function\s+([\w.]+)\s*\([\s\S]*?\)\s*returns\b[\s\S]*?\$\$[\s\S]*?\$\$\s*;/gi)]
+  const definerFunctions = [...allMigrations.matchAll(/create\s+or\s+replace\s+function\s+([\w.]+)\s*\([\s\S]*?\)\s*returns\b[\s\S]*?\$\$[\s\S]*?\$\$\s*;/gi)]
     .filter((match) => /security\s+definer/i.test(match[0]));
   for (const definition of definerFunctions) {
     if (!/set\s+search_path\s*=\s*''/i.test(definition[0])) {
@@ -88,8 +185,8 @@ export async function verifyMeetMigrations(migrationsDirectory) {
   }
 
   for (const rpc of REQUIRED_RPCS) {
-    if (!new RegExp(`create\\s+or\\s+replace\\s+function\\s+public\\.${rpc}\\s*\\(`, "i").test(commands)
-        || !new RegExp(`grant\\s+execute\\s+on\\s+function\\s+public\\.${rpc}\\s*\\(`, "i").test(commands)) {
+    if (!new RegExp(`create\\s+or\\s+replace\\s+function\\s+public\\.${rpc}\\s*\\(`, "i").test(allMigrations)
+        || !new RegExp(`grant\\s+execute\\s+on\\s+function\\s+public\\.${rpc}\\s*\\(`, "i").test(allMigrations)) {
       issues.push(issue("missing_rpc", rpc, `Required authenticated RPC is missing or ungranted: ${rpc}`));
     }
   }
@@ -146,7 +243,8 @@ export async function verifyMeetMigrations(migrationsDirectory) {
     if (!new RegExp(`'${role}'`).test(all)) issues.push(issue("missing_policy_role", role, `The schema and policies omit role ${role}`));
   }
 
-  return { ok: issues.length === 0, issues };
+  issues.push(...verifyReviewInvariant(allMigrations));
+  return { ok: issues.length === 0, issues, schemaVersion: REQUIRED_FILES.length };
 }
 
 function normalize(source) {
@@ -155,6 +253,12 @@ function normalize(source) {
 
 function issue(code, target, message) {
   return { code, target, message };
+}
+
+function lastMigration(source) {
+  const marker = "-- REVIEW HARDENING V4";
+  const index = source.lastIndexOf(marker);
+  return index === -1 ? source : source.slice(index);
 }
 
 if (process.argv[1] && path.resolve(process.argv[1]) === fileURLToPath(import.meta.url)) {

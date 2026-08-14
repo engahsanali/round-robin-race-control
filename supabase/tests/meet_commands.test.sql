@@ -1,7 +1,7 @@
 begin;
 
 create extension if not exists pgtap with schema extensions;
-select plan(30);
+select plan(40);
 
 insert into auth.users (id, instance_id, aud, role, email, encrypted_password, email_confirmed_at, created_at, updated_at)
 values
@@ -77,13 +77,32 @@ select lives_ok(
 );
 
 set local request.jwt.claim.sub = '30000000-0000-0000-0000-000000000006';
-select throws_ok(
-  $$select public.redeem_invitation((select payload->>'code' from invitation_result), '30000000-0000-0000-0001-000000000005')$$,
+select is(
+  (public.redeem_invitation((select payload->>'code' from invitation_result), '30000000-0000-0000-0001-000000000005')->>'code'),
   'MEET_INVITATION_UNAVAILABLE',
-  'a different user cannot reuse a redeemed invitation'
+  'a used invitation returns the same structured unavailable result as an invalid code'
 );
+do $$
+begin
+  for attempt in 2..10 loop
+    perform public.redeem_invitation(encode(extensions.gen_random_bytes(24), 'hex'), extensions.gen_random_uuid());
+  end loop;
+end;
+$$;
+select is(
+  (public.redeem_invitation(encode(extensions.gen_random_bytes(24), 'hex'), extensions.gen_random_uuid())->>'code'),
+  'MEET_RATE_LIMITED',
+  'committed failed redemption attempts reach the first-party rate limit'
+);
+select is((select count(*) from public.organisation_memberships where user_id = '30000000-0000-0000-0000-000000000006'), 0::bigint, 'failed invitation guesses never create membership');
+select is((select used_by::text from public.organisation_invitations where id = (select (payload->>'invitation_id')::uuid from invitation_result)), '30000000-0000-0000-0000-000000000007', 'failed guesses never mutate the redeemed invitation');
 
 set local request.jwt.claim.sub = '30000000-0000-0000-0000-000000000001';
+select throws_ok(
+  $$select public.remove_membership((select id from public.organisations where slug = 'command-club'), '30000000-0000-0000-0000-000000000005', null, '30000000-0000-0000-0001-000000000015')$$,
+  'MEET_REASON_REQUIRED',
+  'membership removal rejects a NULL reason'
+);
 select throws_ok(
   $$select public.remove_membership((select id from public.organisations where slug = 'command-club'), '30000000-0000-0000-0000-000000000001', 'Remove final owner', '30000000-0000-0000-0001-000000000006')$$,
   'MEET_LAST_OWNER',
@@ -133,6 +152,11 @@ select throws_ok(
   'MEET_REASON_REQUIRED',
   'winner correction requires a bounded non-empty reason'
 );
+select throws_ok(
+  $$select public.correct_heat_winner('31000000-0000-0000-0004-000000000001', '31000000-0000-0000-0003-000000000002', null, 2, null, '30000000-0000-0000-0001-000000000016')$$,
+  'MEET_REASON_REQUIRED',
+  'winner correction rejects a NULL reason'
+);
 select lives_ok(
   $$select public.correct_heat_winner('31000000-0000-0000-0004-000000000001', '31000000-0000-0000-0003-000000000002', '{"lane2": 10.1}', 2, 'Photo finish review', '30000000-0000-0000-0001-000000000010')$$,
   'authorised winner correction succeeds atomically'
@@ -144,11 +168,17 @@ select '31000000-0000-0000-0005-000000000001', organisation_id, meet_id, id, 2, 
 insert into public.participants (id, organisation_id, bracket_id, name)
 select '31000000-0000-0000-0002-000000000010', organisation_id, id, 'Pre-registered Finalist'
 from public.brackets where id = '31000000-0000-0000-0001-000000000002';
-insert into public.advancement_rule_destinations (organisation_id, rule_id, destination_bracket_id, destination_order)
-select organisation_id, '31000000-0000-0000-0005-000000000001', '31000000-0000-0000-0001-000000000002', 1 from public.brackets where id = '31000000-0000-0000-0001-000000000001';
+insert into public.advancement_rule_destinations (organisation_id, meet_id, rule_id, destination_bracket_id, destination_order)
+select organisation_id, meet_id, '31000000-0000-0000-0005-000000000001', '31000000-0000-0000-0001-000000000002', 1
+from public.brackets where id = '31000000-0000-0000-0001-000000000001';
 
 set local role authenticated;
 set local request.jwt.claim.sub = '30000000-0000-0000-0000-000000000003';
+select throws_ok(
+  $$select public.confirm_advancement('31000000-0000-0000-0005-000000000001', 3, 1, '[{"sourceCarId":"31000000-0000-0000-0003-000000000002","destinationBracketId":"31000000-0000-0000-0001-000000000002","rank":1},{"sourceCarId":"31000000-0000-0000-0003-000000000001","destinationBracketId":"31000000-0000-0000-0001-000000000002","rank":2}]', null, '30000000-0000-0000-0001-000000000017')$$,
+  'MEET_REASON_REQUIRED',
+  'automatic advancement rejects a NULL reason at an unresolved cutoff tie'
+);
 select throws_ok(
   $$select public.confirm_advancement('31000000-0000-0000-0005-000000000001', 3, 1, '[{"sourceCarId":"31000000-0000-0000-0003-000000000001","destinationBracketId":"31000000-0000-0000-0001-000000000002","rank":1}]', null, '30000000-0000-0000-0001-000000000011')$$,
   'MEET_SELECTION_COUNT',
@@ -175,12 +205,32 @@ select lives_ok(
 select is((select stale from public.advancement_snapshots where request_id = '30000000-0000-0000-0001-000000000012'), true, 'upstream correction marks the confirmed snapshot stale');
 
 set local request.jwt.claim.sub = '30000000-0000-0000-0000-000000000003';
+select throws_ok(
+  $$select public.replace_advancement('31000000-0000-0000-0005-000000000001', 4, 2, '[{"sourceCarId":"31000000-0000-0000-0003-000000000001","destinationBracketId":"31000000-0000-0000-0001-000000000002","rank":1},{"sourceCarId":"31000000-0000-0000-0003-000000000002","destinationBracketId":"31000000-0000-0000-0001-000000000002","rank":2}]', null, '30000000-0000-0000-0001-000000000018')$$,
+  'MEET_REASON_REQUIRED',
+  'advancement replacement rejects a NULL reason'
+);
 select lives_ok(
   $$select public.replace_advancement('31000000-0000-0000-0005-000000000001', 4, 2, '[{"sourceCarId":"31000000-0000-0000-0003-000000000001","destinationBracketId":"31000000-0000-0000-0001-000000000002","rank":1},{"sourceCarId":"31000000-0000-0000-0003-000000000002","destinationBracketId":"31000000-0000-0000-0001-000000000002","rank":2}]', 'Reconfirmed after timing appeal', '30000000-0000-0000-0001-000000000014')$$,
   'organiser replaces stale advancement with a reasoned snapshot'
 );
-select is((select count(*) from public.cars where bracket_id = '31000000-0000-0000-0001-000000000002'), 2::bigint, 'replacement swaps destination copies instead of duplicating them');
+select is((select count(*) from public.cars where bracket_id = '31000000-0000-0000-0001-000000000002' and active), 2::bigint, 'replacement exposes only the new active destination copies');
+select is((select count(*) from public.cars where bracket_id = '31000000-0000-0000-0001-000000000002'), 4::bigint, 'replacement retains historical destination cars for downstream lineage');
+select is((select count(*) from public.cars where bracket_id = '31000000-0000-0000-0001-000000000002' and not active), 2::bigint, 'replacement retires prior destination cars without deleting history');
 select is((select count(*) from public.participants where id = '31000000-0000-0000-0002-000000000010'), 1::bigint, 'replacement preserves unrelated destination registrations');
+
+reset role;
+insert into public.heats (id, organisation_id, bracket_id, round_number, heat_number, lane_1_car_id, lane_2_car_id)
+select '31000000-0000-0000-0004-000000000002', organisation_id, id, 2, 1,
+  '31000000-0000-0000-0003-000000000001', '31000000-0000-0000-0003-000000000002'
+from public.brackets where id = '31000000-0000-0000-0001-000000000001';
+set local role authenticated;
+set local request.jwt.claim.sub = '30000000-0000-0000-0000-000000000004';
+select throws_ok(
+  $$select public.confirm_heat_winner('31000000-0000-0000-0004-000000000002', '31000000-0000-0000-0003-000000000001', '{"lane3":12.0}', 1, '30000000-0000-0000-0001-000000000019')$$,
+  'MEET_INVALID_LANE_TIMES',
+  'an unassigned lane accepts no non-null time'
+);
 
 select * from finish();
 rollback;

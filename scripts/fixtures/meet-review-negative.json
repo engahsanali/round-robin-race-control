@@ -1,0 +1,67 @@
+[
+  {
+    "name": "aborting invalid invitation redemption rolls back abuse counters",
+    "sql": "perform private_meet.consume_rate_limit(null, 'redeem_invitation', 10); if not found then raise exception using message = 'MEET_INVITATION_UNAVAILABLE'; end if;",
+    "expectedCode": "aborting_invitation_failure"
+  },
+  {
+    "name": "table-level heat insert can forge confirmed results",
+    "sql": "grant insert on public.heats to authenticated;",
+    "expectedCode": "unsafe_heat_insert_grant"
+  },
+  {
+    "name": "nullable required reason bypasses validation",
+    "sql": "if char_length(btrim(reason)) not between 1 and 500 then raise exception; end if;",
+    "expectedCode": "nullable_reason_bypass"
+  },
+  {
+    "name": "lineage uniqueness is scoped only to one snapshot and rule",
+    "sql": "unique (snapshot_id, rule_id, source_car_id)",
+    "expectedCode": "missing_global_active_lineage"
+  },
+  {
+    "name": "replacement deletes historically referenced advancement cars",
+    "sql": "delete from public.cars where snapshot_id = previous.id;",
+    "expectedCode": "destructive_advancement_replacement"
+  },
+  {
+    "name": "advancement destination is not constrained to the rule meet",
+    "sql": "create table public.advancement_rule_destinations (organisation_id uuid, rule_id uuid, destination_bracket_id uuid);",
+    "expectedCode": "missing_same_meet_graph"
+  },
+  {
+    "name": "client-selected destination is trusted without balanced server allocation",
+    "sql": "destination_bracket_id := (selection.value->>'destinationBracketId')::uuid;",
+    "expectedCode": "missing_server_allocation"
+  },
+  {
+    "name": "UUID silently breaks a competitive cutoff tie",
+    "sql": "rank() over (order by wins desc, car.id) as place",
+    "expectedCode": "unsafe_cutoff_ranking"
+  },
+  {
+    "name": "direct registration mutation has no versioned audit trigger",
+    "sql": "grant insert, update on public.cars to authenticated;",
+    "expectedCode": "unaudited_direct_mutation"
+  },
+  {
+    "name": "last owner removal does not serialize organisation owners",
+    "sql": "delete from public.organisation_memberships where organisation_id = target_organisation_id and user_id = target_user_id;",
+    "expectedCode": "unserialized_last_owner"
+  },
+  {
+    "name": "operational tables are absent from authorised realtime publication",
+    "sql": "create table public.heats (id uuid primary key);",
+    "expectedCode": "missing_realtime_publication"
+  },
+  {
+    "name": "no authenticated allow-listed security event RPC exists",
+    "sql": "create table public.security_events (event_type text not null); revoke insert on public.security_events from authenticated;",
+    "expectedCode": "missing_security_event_rpc"
+  },
+  {
+    "name": "unassigned lanes can retain a supplied time",
+    "sql": "lane_2_car_id uuid, lane_2_time numeric check (lane_2_time > 0)",
+    "expectedCode": "unassigned_lane_time"
+  }
+]

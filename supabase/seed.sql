@@ -55,7 +55,8 @@ values
    'de000000-0000-0000-0000-000000000020', 'de000000-0000-0000-0000-000000000031', 2, 6);
 
 insert into public.advancement_rule_destinations
-  (organisation_id, rule_id, destination_bracket_id, destination_order)
+  (organisation_id, meet_id, rule_id, destination_bracket_id, destination_order)
 values
-  ('de000000-0000-0000-0000-000000000010', 'de000000-0000-0000-0000-000000000070',
+  ('de000000-0000-0000-0000-000000000010', 'de000000-0000-0000-0000-000000000020',
+   'de000000-0000-0000-0000-000000000070',
    'de000000-0000-0000-0000-000000000032', 1);
