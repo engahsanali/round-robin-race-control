@@ -38,6 +38,7 @@ describe("MeetRepository", () => {
     expect(result.value.brackets[0]?.event.matches[0]?.laneTimesMs[0]).toBe(1234);
     expect(result.value.brackets[0]?.event.finals).toEqual([]);
     expect(result.value.meet.version).toBe(3);
+    expect(result.heatVersions[IDS.heat]).toBe(2);
   });
 
   it("rejects invalid or cross-organisation normalized data before publication", () => {
@@ -129,6 +130,22 @@ describe("MeetRepository", () => {
     const repository = new MeetRepository(port);
     await repository.correctHeatWinner(IDS.heat, IDS.car, { lane1: 1.111, lane2: null }, 4, "Photo finish correction", "00000000-0000-4000-8000-000000000084");
     expect(port.rpcCalls[0]).toEqual({ name: "correct_heat_winner", args: { heat_id: IDS.heat, winner_car_id: IDS.car, lane_times: { lane1: 1.111, lane2: null }, expected_version: 4, reason: "Photo finish correction", request_id: "00000000-0000-4000-8000-000000000084" } });
+  });
+
+  it("shapes workbook, registration, schedule and millisecond winner RPC contracts", async () => {
+    const port = new FakeDataPort();
+    const repository = new MeetRepository(port);
+    const requestId = "00000000-0000-4000-8000-000000000087";
+    await repository.saveMeetWorkbook(IDS.org, IDS.meet, 3, { meet: {}, brackets: [], rules: [] }, requestId);
+    await repository.saveRegistrationBatch(IDS.bracket, 2, [{ carId: IDS.car }], requestId);
+    await repository.activateBracketSchedule(IDS.bracket, 2, { seed: "s", quality: {}, heats: [] }, null, requestId);
+    await repository.confirmHeatWinnerMs(IDS.heat, IDS.car, { lane1: 1234 }, 2, requestId);
+    await repository.correctHeatWinnerMs(IDS.heat, IDS.car, { lane1: 1111 }, 3, "Photo review", requestId);
+    expect(port.rpcCalls.map(({ name }) => name)).toEqual([
+      "save_meet_workbook", "save_registration_batch", "activate_bracket_schedule", "confirm_heat_winner_ms", "correct_heat_winner_ms",
+    ]);
+    expect(port.rpcCalls[0]?.args).toMatchObject({ target_organisation_id: IDS.org, target_meet_id: IDS.meet, expected_version: 3, request_id: requestId });
+    expect(port.rpcCalls[3]?.args).toMatchObject({ heat_id: IDS.heat, lane_times_ms: { lane1: 1234 }, expected_version: 2 });
   });
 
   it("returns committed success with an advisory when readback fails", async () => {

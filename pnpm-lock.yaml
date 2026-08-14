@@ -35,6 +35,9 @@ importers:
       '@rr3/meet-domain':
         specifier: workspace:*
         version: link:../../packages/meet-domain
+      '@rr3/scheduler':
+        specifier: workspace:*
+        version: link:../../packages/scheduler
       '@supabase/supabase-js':
         specifier: ^2.57.4
         version: 2.112.3

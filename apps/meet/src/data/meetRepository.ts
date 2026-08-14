@@ -37,7 +37,7 @@ export type AdvancementHistorySelection = {
   destinationBracketId: string; destinationCarId: string | null; rank: number;
 };
 export type AdvancementHistory = { snapshots: AdvancementHistorySnapshot[]; selections: AdvancementHistorySelection[] };
-export type LoadReceipt = { ok: true; value: MeetStateV1; history: AdvancementHistory } | { ok: false; kind: RepositoryFailureKind; message: string };
+export type LoadReceipt = { ok: true; value: MeetStateV1; history: AdvancementHistory; heatVersions: Readonly<Record<string, number>> } | { ok: false; kind: RepositoryFailureKind; message: string };
 
 const TABLES = [
   "meets", "brackets", "participants", "cars", "heats", "advancement_rules",
@@ -170,6 +170,21 @@ export class MeetRepository {
   }
   removeMembership(organisationId: string, userId: string, reason: string, requestId = createRequestId()) {
     return this.execute<{ organisation_id: string; user_id: string; removed: boolean }>("remove_membership", { target_organisation_id: organisationId, target_user_id: userId, reason, request_id: requestId }, (value) => this.readOne("organisation_memberships", { organisation_id: value.organisation_id }));
+  }
+  saveMeetWorkbook(organisationId: string, meetId: string | null, expectedVersion: number | null, workbook: Record<string, unknown>, requestId = createRequestId()) {
+    return this.execute<{ meet_id: string; version: number; bracket_count: number; rule_count: number }>("save_meet_workbook", { target_organisation_id: organisationId, target_meet_id: meetId, expected_version: expectedVersion, workbook, request_id: requestId }, (value) => this.readOne("meets", { id: value.meet_id, organisation_id: organisationId }));
+  }
+  saveRegistrationBatch(bracketId: string, expectedVersion: number, rows: readonly Record<string, unknown>[], requestId = createRequestId()) {
+    return this.execute<{ bracket_id: string; version: number; saved_count: number; stale_advancement_count: number }>("save_registration_batch", { target_bracket_id: bracketId, expected_version: expectedVersion, rows, request_id: requestId }, (value) => this.readOne("brackets", { id: value.bracket_id }));
+  }
+  activateBracketSchedule(bracketId: string, expectedVersion: number, schedule: Record<string, unknown>, replacementReason: string | null, requestId = createRequestId()) {
+    return this.execute<{ bracket_id: string; version: number; heat_count: number }>("activate_bracket_schedule", { target_bracket_id: bracketId, expected_version: expectedVersion, schedule, replacement_reason: replacementReason, request_id: requestId }, (value) => this.readOne("brackets", { id: value.bracket_id }));
+  }
+  confirmHeatWinnerMs(heatId: string, winnerId: string, laneTimesMs: Record<string, number>, expectedVersion: number, requestId = createRequestId()) {
+    return this.execute<{ heat_id: string; winner_car_id: string; version: number }>("confirm_heat_winner_ms", { heat_id: heatId, winner_car_id: winnerId, lane_times_ms: laneTimesMs, expected_version: expectedVersion, request_id: requestId }, (value) => this.readOne("heats", { id: value.heat_id }));
+  }
+  correctHeatWinnerMs(heatId: string, winnerId: string, laneTimesMs: Record<string, number>, expectedVersion: number, reason: string, requestId = createRequestId()) {
+    return this.execute<{ heat_id: string; winner_car_id: string; version: number }>("correct_heat_winner_ms", { heat_id: heatId, winner_car_id: winnerId, lane_times_ms: laneTimesMs, expected_version: expectedVersion, reason, request_id: requestId }, (value) => this.readOne("heats", { id: value.heat_id }));
   }
   confirmHeatWinner(heatId: string, winnerId: string, laneTimes: Record<string, number | null>, expectedVersion: number, requestId = createRequestId()) {
     return this.execute<{ heat_id: string; winner_car_id: string; version: number }>("confirm_heat_winner", { heat_id: heatId, winner_car_id: winnerId, lane_times: laneTimes, expected_version: expectedVersion, request_id: requestId }, (value) => this.readOne("heats", { id: value.heat_id }));
@@ -333,7 +348,12 @@ export function hydrateMeetState(rows: Record<string, unknown[]>, organisationId
     })),
   };
   const validation = validateMeetState(candidate);
-  return validation.success ? { ok: true, value: validation.data, history: historyResult.history } : { ok: false, kind: "validation", message: `Hosted meet data failed validation: ${validation.issues[0]?.message ?? "unknown issue"}` };
+  return validation.success ? {
+    ok: true,
+    value: validation.data,
+    history: historyResult.history,
+    heatVersions: Object.fromEntries(heats.map((heat) => [asString(heat.id), asInteger(heat.version, 1)])),
+  } : { ok: false, kind: "validation", message: `Hosted meet data failed validation: ${validation.issues[0]?.message ?? "unknown issue"}` };
 }
 
 function validateHostedRows(rows: Record<string, unknown[]>): string | null {

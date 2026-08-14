@@ -10,6 +10,7 @@
   "dependencies": {
     "@rr3/domain": "workspace:*",
     "@rr3/meet-domain": "workspace:*",
+    "@rr3/scheduler": "workspace:*",
     "@supabase/supabase-js": "^2.57.4",
     "react": "^19.2.4",
     "react-dom": "^19.2.4"
