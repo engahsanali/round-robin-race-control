@@ -1,0 +1,107 @@
+[
+  {
+    "name": "missing owned table",
+    "file": "202608140001_meet_core.sql",
+    "find": "create table public.security_events",
+    "replace": "create table public.security_event_log",
+    "expectedCode": "missing_table"
+  },
+  {
+    "name": "missing row security",
+    "file": "202608140002_meet_rls.sql",
+    "find": "alter table public.heats enable row level security;",
+    "replace": "-- row security accidentally removed",
+    "expectedCode": "missing_rls"
+  },
+  {
+    "name": "anonymous policy exposure",
+    "file": "202608140002_meet_rls.sql",
+    "find": "on public.organisations for select\nto authenticated\nusing (private_meet.is_org_member(id));",
+    "replace": "on public.organisations for select\nto authenticated, anon\nusing (true);",
+    "expectedCode": "anonymous_policy"
+  },
+  {
+    "name": "recursive membership policy",
+    "file": "202608140002_meet_rls.sql",
+    "find": "create policy \"meets_member_read\"\non public.meets for select\nto authenticated\nusing (private_meet.is_org_member(organisation_id));",
+    "replace": "create policy \"meets_member_read\"\non public.meets for select\nto authenticated\nusing (exists (select 1 from public.organisation_memberships om where om.organisation_id = organisation_id and om.user_id = auth.uid()));",
+    "expectedCode": "recursive_membership_policy"
+  },
+  {
+    "name": "unsafe definer search path",
+    "file": "202608140002_meet_rls.sql",
+    "find": "create or replace function private_meet.is_org_member(target_organisation_id uuid)\nreturns boolean\nlanguage sql\nstable\nsecurity definer\nset search_path = ''",
+    "replace": "create or replace function private_meet.is_org_member(target_organisation_id uuid)\nreturns boolean\nlanguage sql\nstable\nsecurity definer",
+    "expectedCode": "unsafe_definer"
+  },
+  {
+    "name": "public function execution",
+    "file": "202608140003_meet_commands.sql",
+    "find": "revoke execute on all functions in schema public from public, anon;\nalter default privileges in schema public revoke execute on functions from public, anon, authenticated;",
+    "replace": "grant execute on all functions in schema public to public, anon;\nalter default privileges in schema public grant execute on functions to public, anon;",
+    "expectedCode": "unsafe_function_grant"
+  },
+  {
+    "name": "winner lacks optimistic version",
+    "file": "202608140003_meet_commands.sql",
+    "find": "if heat.version <> expected_version then",
+    "replace": "if false then",
+    "expectedCode": "missing_version_check"
+  },
+  {
+    "name": "winner lacks audit",
+    "file": "202608140003_meet_commands.sql",
+    "find": "'heat.winner_confirmed'",
+    "replace": "'heat.result_updated'",
+    "expectedCode": "missing_audit_action"
+  },
+  {
+    "name": "advancement lacks source lineage uniqueness",
+    "file": "202608140001_meet_core.sql",
+    "find": "unique (bracket_id, car_number),\n  unique (snapshot_id, rule_id, source_car_id)",
+    "replace": "unique (bracket_id, car_number),\n  unique (snapshot_id, source_car_id)",
+    "expectedCode": "missing_lineage_constraint"
+  },
+  {
+    "name": "invitation stores raw code",
+    "file": "202608140001_meet_core.sql",
+    "find": "code_digest text not null",
+    "replace": "code text not null",
+    "expectedCode": "unsafe_invitation_storage"
+  },
+  {
+    "name": "invitation lacks expiry",
+    "file": "202608140001_meet_core.sql",
+    "find": "expires_at timestamptz not null",
+    "replace": "expires_at timestamptz",
+    "expectedCode": "missing_invitation_expiry"
+  },
+  {
+    "name": "invitation lacks rate limiting",
+    "file": "202608140003_meet_commands.sql",
+    "find": "create or replace function private_meet.consume_rate_limit(",
+    "replace": "create or replace function private_meet.ignore_rate_limit(",
+    "expectedCode": "missing_rate_limit"
+  },
+  {
+    "name": "correction lacks bounded reason",
+    "file": "202608140003_meet_commands.sql",
+    "find": "if correction and not (char_length(btrim(reason)) between 1 and 500) then",
+    "replace": "if correction and not (reason is not null) then",
+    "expectedCode": "missing_reason_check"
+  },
+  {
+    "name": "winner lacks stale propagation",
+    "file": "202608140003_meet_commands.sql",
+    "find": "set stale = true",
+    "replace": "set stale = false",
+    "expectedCode": "missing_stale_propagation"
+  },
+  {
+    "name": "RPC lacks request idempotency",
+    "file": "202608140001_meet_core.sql",
+    "find": "unique (organisation_id, request_id, action)",
+    "replace": "unique (id)",
+    "expectedCode": "missing_idempotency_constraint"
+  }
+]
