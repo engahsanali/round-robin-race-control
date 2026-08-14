@@ -13,12 +13,13 @@ export function confirmAdvancementPure(state: MeetStateV1, ruleId: string, input
   const rule = ruleFor(state, ruleId);
   const eligible = eligibleAdvancementSelections(state, ruleId);
   const selected = resolveSelections(state, rule, preview.selected, eligible, input.selectedCarIds);
+  const isManual = input.selectedCarIds !== undefined;
   const changedSelection = input.selectedCarIds !== undefined && !sameCars(input.selectedCarIds, preview.selected.map((selection) => selection.sourceCarId));
   const reason = input.reason?.trim() ?? "";
   if (changedSelection && reason.length === 0) throw new Error("A manual advancement reason is required");
   if (reason.length > MAX_REASON) throw new Error(`Manual advancement reason must be at most ${MAX_REASON} characters`);
   if (selected.length !== rule.topN) throw new Error(`Manual advancement must select exactly ${rule.topN} cars`);
-  if ((!preview.canConfirm && !changedSelection) || rule.status !== "active" || preview.staleSource || preview.duplicateCarIds.length > 0 || preview.capacityIssues.length > 0) throw new Error("Advancement preview cannot be confirmed");
+  if ((!isManual && !preview.canConfirm) || rule.status !== "active" || preview.staleSource || hasCapacityIssue(state, rule, selected)) throw new Error("Advancement preview cannot be confirmed");
   if (selected.some((selection) => state.brackets.some((bracket) => bracket.lineage.some((lineage) => lineage.sourceBracketId === preview.sourceBracketId && lineage.sourceCarId === selection.sourceCarId)))) throw new Error("Duplicate advancement is not allowed");
   const capacity = selected.reduce<Record<string, number>>((totals, selection) => ({ ...totals, [selection.destinationBracketId]: (totals[selection.destinationBracketId] ?? 0) + 1 }), {});
   for (const destinationId of rule.destinationOrder) {
@@ -74,4 +75,7 @@ function applySelections(destination: BracketState, source: BracketState, select
 }
 
 function sameCars(left: readonly string[], right: readonly string[]): boolean { return left.length === right.length && left.every((value, index) => value === right[index]); }
+function hasCapacityIssue(state: MeetStateV1, rule: ReturnType<typeof ruleFor>, selections: readonly AdvancementSelection[]): boolean {
+  return rule.destinationOrder.some((destinationId) => bracketFor(state, destinationId).event.entries.filter((entry) => entry.active).length + selections.filter((selection) => selection.destinationBracketId === destinationId).length > rule.destinationCapacity);
+}
 function assertState(state: MeetStateV1): void { const valid = validateMeetState(state); if (!valid.success) throw new Error(`Invalid meet state: ${valid.issues.map((issue) => issue.message).join("; ")}`); }

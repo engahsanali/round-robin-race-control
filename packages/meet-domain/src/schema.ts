@@ -130,6 +130,7 @@ function validateSnapshotAndLineageGraph(state: MeetStateV1, brackets: Map<strin
   const rules = new Map(state.advancementRules.map((rule) => [rule.id, rule]));
   const snapshots = new Map(state.advancementSnapshots.map((snapshot) => [snapshot.id, snapshot]));
   const selectionKeys = new Set<string>();
+  const advancedSourceSnapshots = new Map<string, string>();
   state.advancementSnapshots.forEach((snapshot, snapshotIndex) => {
     const rule = rules.get(snapshot.ruleId);
     if (!rule) { context.addIssue(custom("unknown_snapshot_rule", ["advancementSnapshots", snapshotIndex, "ruleId"], "Snapshot references an unknown advancement rule")); return; }
@@ -141,6 +142,10 @@ function validateSnapshotAndLineageGraph(state: MeetStateV1, brackets: Map<strin
       const selectionPath = ["advancementSnapshots", snapshotIndex, "selections", selectionIndex];
       if (selected.has(selection.sourceCarId)) context.addIssue(custom("duplicate_snapshot_selection", selectionPath, "A source car may appear only once in a snapshot"));
       selected.add(selection.sourceCarId);
+      const advancementKey = `${snapshot.ruleId}\u0000${snapshot.sourceBracketId}\u0000${selection.sourceCarId}`;
+      const previousSnapshot = advancedSourceSnapshots.get(advancementKey);
+      if (previousSnapshot !== undefined && previousSnapshot !== snapshot.id) context.addIssue(custom("duplicate_cross_snapshot_advancement", selectionPath, "A source car may not advance more than once for the same rule and source"));
+      advancedSourceSnapshots.set(advancementKey, snapshot.id);
       if (source && !source.event.entries.some((entry) => entry.id === selection.sourceCarId)) context.addIssue(custom("unknown_snapshot_source_car", [...selectionPath, "sourceCarId"], "Snapshot selection references an unknown source car"));
       if (!rule.destinationBracketIds.includes(selection.destinationBracketId)) context.addIssue(custom("invalid_snapshot_destination", [...selectionPath, "destinationBracketId"], "Snapshot selection destination is not allowed by its rule"));
       if (!brackets.has(selection.destinationBracketId)) context.addIssue(custom("unknown_snapshot_destination", [...selectionPath, "destinationBracketId"], "Snapshot selection destination bracket is unknown"));

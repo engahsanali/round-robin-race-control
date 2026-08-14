@@ -58,3 +58,17 @@
 - Transitive stale propagation through snapshot-backed destination lineage.
 - Complete snapshot/rule/bracket/source-car/destination/lineage graph validation.
 - Locale-independent code-unit report ordering with Unicode regression coverage.
+
+## Review-fix round 2
+
+### RED/GREEN evidence
+
+- `pnpm vitest run packages/meet-domain/src/review-regressions.test.ts` — 2/8 failed before the fix: a reasoned exact two-car manual choice was blocked by the preview's three-car cutoff-group capacity warning, and duplicate advancement across two snapshots was accepted.
+- The same command passed 8/8 after the focused fix.
+- `pnpm vitest run packages/meet-domain/src` — 5 files, 21 tests passed.
+- `pnpm typecheck` and `git diff --check` — passed.
+
+### Review-fix round 2 scope
+
+- Manual confirmation checks disabled, stale, duplicate, and capacity gates against its exact selected cars, while automatic confirmation remains blocked by unresolved cutoff ties.
+- Schema rejects a repeated `(ruleId, sourceBracketId, sourceCarId)` across snapshots and their corresponding lineages.

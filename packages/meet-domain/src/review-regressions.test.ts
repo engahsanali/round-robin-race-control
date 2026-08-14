@@ -54,6 +54,15 @@ describe("review regressions", () => {
     expect(() => domain.confirmAdvancementPure(meet, "q-f", { actorId: "organiser", confirmedAt: "2026-08-14T01:00:00Z", selectedCarIds: ["q-1"], reason: "Too few" })).toThrow(/exactly 2/i);
   });
 
+  test("uses the exact reasoned manual choice, not the unresolved full cutoff group, for capacity", async () => {
+    const domain = await meetDomain(); expect(domain).not.toBeNull(); if (!domain) return;
+    const meet = state([finishedBracket("manual", "qualifier", [4, 2, 2, 1]), bracket("manual-final", "final")]);
+    meet.advancementRules = [rule("manual-final-rule", "manual", ["manual-final"], 2, 2)];
+    expect(domain.previewAdvancement(meet, "manual-final-rule").capacityIssues).toEqual([{ destinationBracketId: "manual-final", available: 2, required: 3 }]);
+    const confirmed = domain.confirmAdvancementPure(meet, "manual-final-rule", { actorId: "organiser", confirmedAt: "2026-08-14T01:00:00Z", selectedCarIds: ["manual-1", "manual-2"], reason: "Chief steward tie decision" });
+    expect(confirmed.brackets.find((item: { id: string }) => item.id === "manual-final")!.event.entries).toHaveLength(2);
+  });
+
   test("propagates stale source lineage transitively and blocks final preview", async () => {
     const domain = await meetDomain(); expect(domain).not.toBeNull(); if (!domain) return;
     const meet = state([finishedBracket("q", "qualifier"), finishedBracket("s", "semifinal"), bracket("f", "final")]);
@@ -77,6 +86,17 @@ describe("review regressions", () => {
     invalid.advancementSnapshots[0].selections.push({ sourceCarId: "unknown", destinationBracketId: "not-a-destination", rank: 1 });
     invalid.brackets[1].lineage.push({ sourceBracketId: "missing", sourceCarId: "q-1", ruleId: "missing", snapshotId: "missing" });
     expect(domain.validateMeetState(invalid).success).toBe(false);
+  });
+
+  test("rejects advancing one source car more than once across snapshots", async () => {
+    const domain = await meetDomain(); expect(domain).not.toBeNull(); if (!domain) return;
+    const meet = state([finishedBracket("source", "qualifier"), bracket("destination", "final")]) as any;
+    meet.advancementRules = [rule("source-destination", "source", ["destination"], 1)];
+    meet.advancementSnapshots = ["first", "second"].map((id) => ({ id, ruleId: "source-destination", sourceBracketId: "source", sourceResultVersion: 1, selections: [{ sourceCarId: "source-1", destinationBracketId: "destination", rank: 1 }], confirmedBy: "organiser", reason: null, confirmedAt: "2026-08-14T01:00:00Z", stale: false }));
+    meet.brackets[1].lineage = ["first", "second"].map((snapshotId) => ({ sourceBracketId: "source", sourceCarId: "source-1", ruleId: "source-destination", snapshotId }));
+    const result = domain.validateMeetState(meet);
+    expect(result.success).toBe(false);
+    if (!result.success) expect(result.issues.some((issue: { code: string }) => issue.code === "duplicate_cross_snapshot_advancement")).toBe(true);
   });
 
   test("uses code-unit ordering for Unicode report rows", async () => {
