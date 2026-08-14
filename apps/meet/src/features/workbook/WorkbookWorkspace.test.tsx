@@ -12,6 +12,8 @@ const actions = (): WorkbookActions => ({
   activateSchedule: vi.fn(async () => ({ ok: true, message: "Schedule activated." })),
   confirmWinner: vi.fn(async () => ({ ok: true, message: "Winner confirmed." })),
   correctWinner: vi.fn(async () => ({ ok: true, message: "Winner corrected." })),
+  confirmAdvancement: vi.fn(async () => ({ ok: true, message: "Advancement confirmed." })),
+  replaceAdvancement: vi.fn(async () => ({ ok: true, message: "Advancement replaced." })),
 });
 
 function renderWorkbook(options: { meet?: ReturnType<typeof makeMeet>; role?: "owner" | "organiser" | "marshal" | "viewer"; readOnly?: boolean; actions?: WorkbookActions } = {}) {

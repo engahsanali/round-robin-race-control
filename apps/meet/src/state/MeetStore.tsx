@@ -26,7 +26,8 @@ export type MeetStoreState = {
   pendingRequestIds: readonly string[];
   advisory: string | null;
   error: string | null;
-  formDirty: boolean;
+  dirtySources: readonly string[];
+  draftEpoch: number;
   queuedRemoteBundle: HostedMeetBundle | null;
   conflict: { kind: "dirty-realtime" | "optimistic"; message: string } | null;
 };
@@ -40,7 +41,7 @@ export type MeetStoreAction =
   | { type: "bundle.loaded"; bundle: HostedMeetBundle; syncedAt: string }
   | { type: "realtime.bundle"; bundle: HostedMeetBundle; syncedAt: string }
   | { type: "connection.changed"; status: ConnectionStatus }
-  | { type: "form.dirty"; dirty: boolean }
+  | { type: "form.dirty"; source: string; dirty: boolean }
   | { type: "remote-update.applied" }
   | { type: "remote-update.accepted" }
   | { type: "remote-update.discarded" }
@@ -57,7 +58,7 @@ export function createInitialMeetStoreState(options: {
   return {
     workspace: options.workspace ?? "official", selectedOrganisationId: options.organisationId ?? null, selectedMeetId: null, role: options.role ?? null,
     snapshot: null, bundle: null, connectionStatus: "offline", saveStatus: "idle", lastSyncedAt: null,
-    pendingRequestIds: [], advisory: null, error: null, formDirty: false, queuedRemoteBundle: null, conflict: null,
+    pendingRequestIds: [], advisory: null, error: null, dirtySources: [], draftEpoch: 0, queuedRemoteBundle: null, conflict: null,
   };
 }
 
@@ -66,27 +67,28 @@ export function meetStoreReducer(state: MeetStoreState, action: MeetStoreAction)
     case "workspace.selected":
       return { ...createInitialMeetStoreState(), workspace: action.workspace };
     case "organisation.selected":
-      return { ...state, selectedOrganisationId: action.organisationId, role: action.role, selectedMeetId: null, snapshot: null, bundle: null, queuedRemoteBundle: null, conflict: null };
+      return { ...state, selectedOrganisationId: action.organisationId, role: action.role, selectedMeetId: null, snapshot: null, bundle: null, queuedRemoteBundle: null, conflict: null, dirtySources: [], draftEpoch: state.draftEpoch + 1 };
     case "meet.selected":
-      return { ...state, selectedMeetId: action.meetId, snapshot: null, bundle: null, queuedRemoteBundle: null, conflict: null };
+      return { ...state, selectedMeetId: action.meetId, snapshot: null, bundle: null, queuedRemoteBundle: null, conflict: null, dirtySources: [], draftEpoch: state.draftEpoch + 1 };
     case "snapshot.loaded":
-      return { ...state, snapshot: action.snapshot, bundle: { state: action.snapshot, history: { snapshots: [], selections: [] }, heatVersions: {} }, lastSyncedAt: action.syncedAt, queuedRemoteBundle: null, conflict: null, error: null };
+      return { ...state, snapshot: action.snapshot, bundle: { state: action.snapshot, history: { snapshots: [], selections: [] }, heatVersions: {} }, lastSyncedAt: action.syncedAt, queuedRemoteBundle: null, conflict: null, error: null, dirtySources: [], draftEpoch: state.draftEpoch + 1 };
     case "realtime.snapshot":
-      if (state.formDirty) return { ...state, queuedRemoteBundle: { state: action.snapshot, history: { snapshots: [], selections: [] }, heatVersions: {} }, conflict: { kind: "dirty-realtime", message: "A remote update is waiting while this form has unsaved changes." }, lastSyncedAt: action.syncedAt };
-      return { ...state, snapshot: action.snapshot, bundle: { state: action.snapshot, history: { snapshots: [], selections: [] }, heatVersions: {} }, lastSyncedAt: action.syncedAt, queuedRemoteBundle: null, conflict: null, error: null };
+      if (state.dirtySources.length > 0) return { ...state, queuedRemoteBundle: { state: action.snapshot, history: { snapshots: [], selections: [] }, heatVersions: {} }, conflict: { kind: "dirty-realtime", message: "A remote update is waiting while forms have unsaved changes." }, lastSyncedAt: action.syncedAt };
+      return { ...state, snapshot: action.snapshot, bundle: { state: action.snapshot, history: { snapshots: [], selections: [] }, heatVersions: {} }, lastSyncedAt: action.syncedAt, queuedRemoteBundle: null, conflict: null, error: null, draftEpoch: state.draftEpoch + 1 };
     case "bundle.loaded":
-      return { ...state, bundle: action.bundle, snapshot: action.bundle.state, lastSyncedAt: action.syncedAt, queuedRemoteBundle: null, conflict: null, error: null };
+      return { ...state, bundle: action.bundle, snapshot: action.bundle.state, lastSyncedAt: action.syncedAt, queuedRemoteBundle: null, conflict: null, error: null, dirtySources: [], draftEpoch: state.draftEpoch + 1 };
     case "realtime.bundle":
-      if (state.formDirty) return { ...state, queuedRemoteBundle: action.bundle, conflict: { kind: "dirty-realtime", message: "A remote update is waiting while this form has unsaved changes." }, lastSyncedAt: action.syncedAt };
-      return { ...state, bundle: action.bundle, snapshot: action.bundle.state, lastSyncedAt: action.syncedAt, queuedRemoteBundle: null, conflict: null, error: null };
+      if (state.dirtySources.length > 0) return { ...state, queuedRemoteBundle: action.bundle, conflict: { kind: "dirty-realtime", message: "A remote update is waiting while forms have unsaved changes." }, lastSyncedAt: action.syncedAt };
+      return { ...state, bundle: action.bundle, snapshot: action.bundle.state, lastSyncedAt: action.syncedAt, queuedRemoteBundle: null, conflict: null, error: null, draftEpoch: state.draftEpoch + 1 };
     case "connection.changed":
       return { ...state, connectionStatus: action.status };
     case "form.dirty":
-      return { ...state, formDirty: action.dirty };
+      if (!action.source.trim()) return state;
+      return { ...state, dirtySources: action.dirty ? state.dirtySources.includes(action.source) ? state.dirtySources : [...state.dirtySources, action.source] : state.dirtySources.filter((source) => source !== action.source) };
     case "remote-update.applied":
     case "remote-update.accepted":
       if (!state.queuedRemoteBundle) return state;
-      return { ...state, bundle: state.queuedRemoteBundle, snapshot: state.queuedRemoteBundle.state, queuedRemoteBundle: null, conflict: null, formDirty: false, error: null };
+      return { ...state, bundle: state.queuedRemoteBundle, snapshot: state.queuedRemoteBundle.state, queuedRemoteBundle: null, conflict: null, dirtySources: [], draftEpoch: state.draftEpoch + 1, error: null };
     case "remote-update.discarded":
       return { ...state, queuedRemoteBundle: null, conflict: null };
     case "command.started":

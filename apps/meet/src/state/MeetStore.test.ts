@@ -41,7 +41,7 @@ describe("Meet store", () => {
 
   it("does not replace dirty form input when realtime changes arrive", () => {
     const current = bundle();
-    const initial = meetStoreReducer(meetStoreReducer(createInitialMeetStoreState(), { type: "bundle.loaded", bundle: current, syncedAt: "2026-08-14T10:00:00.000Z" }), { type: "form.dirty", dirty: true });
+    const initial = meetStoreReducer(meetStoreReducer(createInitialMeetStoreState(), { type: "bundle.loaded", bundle: current, syncedAt: "2026-08-14T10:00:00.000Z" }), { type: "form.dirty", source: "setup", dirty: true });
     const remote = bundle({ ...validMeet(), meet: { ...validMeet().meet, version: 4 } });
     const next = meetStoreReducer(initial, { type: "realtime.bundle", bundle: remote, syncedAt: "2026-08-14T10:01:00.000Z" });
     expect(next.bundle).toEqual(current);
@@ -51,7 +51,7 @@ describe("Meet store", () => {
     const applied = meetStoreReducer(next, { type: "remote-update.applied" });
     expect(applied.bundle).toEqual(remote);
     expect(applied.snapshot).toEqual(remote.state);
-    expect(applied).toMatchObject({ queuedRemoteBundle: null, conflict: null, formDirty: false });
+    expect(applied).toMatchObject({ queuedRemoteBundle: null, conflict: null, dirtySources: [], draftEpoch: 2 });
   });
 
   it("keeps the entire applied bundle atomic until the operator accepts the queued remote bundle", () => {
@@ -59,7 +59,7 @@ describe("Meet store", () => {
     const remote = bundle({ ...validMeet(), meet: { ...validMeet().meet, version: 4 } });
     remote.heatVersions = { heat: 4 };
     let state = meetStoreReducer(createInitialMeetStoreState(), { type: "bundle.loaded", bundle: current, syncedAt: "2026-08-14T10:00:00.000Z" });
-    state = meetStoreReducer(state, { type: "form.dirty", dirty: true });
+    state = meetStoreReducer(state, { type: "form.dirty", source: "registration:source", dirty: true });
     state = meetStoreReducer(state, { type: "realtime.bundle", bundle: remote, syncedAt: "2026-08-14T10:01:00.000Z" });
 
     expect(state.snapshot?.meet.version).toBe(3);
@@ -69,7 +69,7 @@ describe("Meet store", () => {
     const accepted = meetStoreReducer(state, { type: "remote-update.accepted" });
     expect(accepted.snapshot?.meet.version).toBe(4);
     expect(accepted.bundle?.heatVersions).toEqual({ heat: 4 });
-    expect(accepted).toMatchObject({ queuedRemoteBundle: null, formDirty: false, conflict: null });
+    expect(accepted).toMatchObject({ queuedRemoteBundle: null, dirtySources: [], conflict: null, draftEpoch: 2 });
   });
 
   it("lets an operator explicitly keep a dirty local draft without partially applying the queued bundle", () => {
@@ -77,13 +77,37 @@ describe("Meet store", () => {
     const remote = bundle({ ...validMeet(), meet: { ...validMeet().meet, version: 4 } });
     remote.heatVersions = { heat: 4 };
     let state = meetStoreReducer(createInitialMeetStoreState(), { type: "bundle.loaded", bundle: current, syncedAt: "2026-08-14T10:00:00.000Z" });
-    state = meetStoreReducer(state, { type: "form.dirty", dirty: true });
+    state = meetStoreReducer(state, { type: "form.dirty", source: "correction:heat", dirty: true });
     state = meetStoreReducer(state, { type: "realtime.bundle", bundle: remote, syncedAt: "2026-08-14T10:01:00.000Z" });
 
     const kept = meetStoreReducer(state, { type: "remote-update.discarded" });
     expect(kept.bundle).toEqual(current);
     expect(kept.bundle?.heatVersions).toEqual({ heat: 3 });
-    expect(kept).toMatchObject({ queuedRemoteBundle: null, formDirty: true, conflict: null });
+    expect(kept).toMatchObject({ queuedRemoteBundle: null, dirtySources: ["correction:heat"], conflict: null });
+  });
+
+  it("tracks concurrent setup and schedule drafts independently", () => {
+    let state = createInitialMeetStoreState();
+    state = meetStoreReducer(state, { type: "form.dirty", source: "setup", dirty: true });
+    state = meetStoreReducer(state, { type: "form.dirty", source: "schedule:qualifier-a", dirty: true });
+    state = meetStoreReducer(state, { type: "form.dirty", source: "schedule:qualifier-b", dirty: true });
+    state = meetStoreReducer(state, { type: "form.dirty", source: "schedule:qualifier-a", dirty: false });
+    expect(state.dirtySources).toEqual(["setup", "schedule:qualifier-b"]);
+    const remote = bundle({ ...validMeet(), meet: { ...validMeet().meet, version: 5 } });
+    expect(meetStoreReducer(state, { type: "realtime.bundle", bundle: remote, syncedAt: "2026-08-14T10:01:00Z" }).queuedRemoteBundle).toEqual(remote);
+  });
+
+  it("increments the draft epoch only when authoritative data replaces local drafts", () => {
+    const current = bundle();
+    const remote = bundle({ ...validMeet(), meet: { ...validMeet().meet, version: 6 } });
+    let state = meetStoreReducer(createInitialMeetStoreState(), { type: "bundle.loaded", bundle: current, syncedAt: "2026-08-14T10:00:00Z" });
+    state = meetStoreReducer(state, { type: "form.dirty", source: "correction:heat", dirty: true });
+    state = meetStoreReducer(state, { type: "realtime.bundle", bundle: remote, syncedAt: "2026-08-14T10:01:00Z" });
+    const kept = meetStoreReducer(state, { type: "remote-update.discarded" });
+    expect(kept.draftEpoch).toBe(1);
+    const accepted = meetStoreReducer(state, { type: "remote-update.accepted" });
+    expect(accepted).toMatchObject({ draftEpoch: 2, dirtySources: [] });
+    expect(accepted.bundle?.heatVersions).toEqual(remote.heatVersions);
   });
 
   it("derives truthful role capabilities", () => {
@@ -99,6 +123,9 @@ describe("Meet store", () => {
     expect(demo).toMatchObject({ workspace: "demo", selectedOrganisationId: null, role: null, snapshot: null });
     const signedOut = meetStoreReducer(official, { type: "session.cleared" });
     expect(signedOut).toMatchObject({ workspace: "official", selectedOrganisationId: null, role: null, snapshot: null });
+    const dirty = meetStoreReducer(official, { type: "form.dirty", source: "setup", dirty: true });
+    const switched = meetStoreReducer(dirty, { type: "organisation.selected", organisationId: "org-2", role: "owner" });
+    expect(switched).toMatchObject({ selectedOrganisationId: "org-2", dirtySources: [], draftEpoch: 1 });
   });
 
   it("blocks same-tick duplicate commands synchronously and clears pending even when the command throws", async () => {

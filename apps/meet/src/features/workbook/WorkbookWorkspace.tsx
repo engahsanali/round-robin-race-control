@@ -2,7 +2,12 @@ import { memo, useCallback, useEffect, useLayoutEffect, useMemo, useRef, useStat
 import { createPortal } from "react-dom";
 import type { BracketState, MeetStateV1 } from "@rr3/meet-domain";
 import type { OrganisationRole } from "../../data/meetRepository";
+import type { AdminOverview, AdvancementHistory, SecurityEventPageItem } from "../../data/meetRepository";
 import { useMeetStore } from "../../state/MeetStore";
+import { AdvancementPanel, type AdvancementCommitInput } from "../advancement/AdvancementPanel";
+import { AuditTimeline } from "../audit/AuditTimeline";
+import { AdminDashboard } from "../admin/AdminDashboard";
+import { SaveStatus } from "../status/SaveStatus";
 import {
   buildScheduleCandidate,
   parseRegistrationPaste,
@@ -21,11 +26,13 @@ export type WorkbookActions = {
   activateSchedule(input: { bracketId: string; expectedVersion: number; candidate: ReturnType<typeof schedulePayload>; replacementReason: string | null }): Promise<WorkbookActionResult>;
   confirmWinner(input: { heatId: string; winnerId: string; lane: number; laneTimes: Record<string, number>; expectedVersion: number }): Promise<WorkbookActionResult>;
   correctWinner(input: { heatId: string; winnerId: string; lane: number; laneTimes: Record<string, number>; expectedVersion: number; reason: string }): Promise<WorkbookActionResult>;
+  confirmAdvancement(input: AdvancementCommitInput): Promise<WorkbookActionResult>;
+  replaceAdvancement(input: AdvancementCommitInput): Promise<WorkbookActionResult>;
 };
 
 const CREATOR_CREDIT = "Made by Cesar Lacsamana and Ahsan Ali";
 
-export function WorkbookWorkspace({ meet, role, readOnly, actions, heatVersions = {}, onSignOut, onFormDirtyChange }: { meet: MeetStateV1; role: OrganisationRole; readOnly: boolean; actions: WorkbookActions; heatVersions?: Readonly<Record<string, number>>; onSignOut?(): void; onFormDirtyChange?(dirty: boolean): void }) {
+export function WorkbookWorkspace({ meet, role, readOnly, actions, heatVersions = {}, advancementHistory = { snapshots: [], selections: [] }, adminOverview = null, securityEvents = [], onSignOut, onFormDirtyChange }: { meet: MeetStateV1; role: OrganisationRole; readOnly: boolean; actions: WorkbookActions; heatVersions?: Readonly<Record<string, number>>; advancementHistory?: AdvancementHistory; adminOverview?: AdminOverview | null; securityEvents?: readonly SecurityEventPageItem[]; onSignOut?(): void; onFormDirtyChange?(source: string, dirty: boolean): void }) {
   const ordered = useMemo(() => meet.brackets.slice().sort((a, b) => a.displayOrder - b.displayOrder || a.id.localeCompare(b.id)), [meet.brackets]);
   const [selectedId, setSelectedId] = useState(ordered[0]?.id ?? "");
   const [expanded, setExpanded] = useState(() => new Set<string>(ordered[0] ? [ordered[0].id] : []));
@@ -87,11 +94,7 @@ export function WorkbookWorkspace({ meet, role, readOnly, actions, heatVersions 
       <a className="skip-link" href="#active-race-control">Skip to active race control</a>
       <header className="meet-toolbar" aria-label="Meet controls">
         <div className="meet-identity"><p className="eyebrow">{meet.meet.status} meet</p><h2>{meet.meet.name}</h2><p>{meet.meet.venue} · <time dateTime={meet.meet.date}>{meet.meet.date}</time></p></div>
-        <div className="status-cluster" aria-label="Connection and save status">
-          <StatusChip label={readOnly ? "Read-only Viewer" : `Role: ${role}`} tone="neutral" />
-          <StatusChip label={`Connection: ${store.state.connectionStatus}`} tone={store.state.connectionStatus === "connected" ? "good" : "warning"} />
-          <StatusChip label={`Save: ${store.state.saveStatus}`} tone={store.state.saveStatus === "error" ? "bad" : "good"} />
-        </div>
+        <div className="status-cluster" aria-label="Connection and save status"><StatusChip label={readOnly ? "Read-only Viewer" : `Role: ${role}`} tone="neutral" /><SaveStatus connection={store.state.connectionStatus} save={store.state.saveStatus} pendingCount={store.state.pendingRequestIds.length} dirtyCount={store.state.dirtySources.length} queued={store.state.queuedRemoteBundle !== null} conflict={store.state.conflict?.message ?? null} advisory={store.state.advisory} lastSyncedAt={store.state.lastSyncedAt} /></div>
         <nav className="toolbar-actions" aria-label="Workbook actions">
           {!readOnly ? <><button type="button" onClick={() => setSetupOpen(true)}>Meet setup</button><button type="button" onClick={() => setRegistrationOpen(true)}>Registration</button></> : null}
           <button type="button" className="quiet-action" onClick={expandAll}>Expand all</button>
@@ -111,6 +114,7 @@ export function WorkbookWorkspace({ meet, role, readOnly, actions, heatVersions 
 
         <div className="workbook-content">
           <ProgressionSummary meet={meet} />
+          <AdvancementPanel meet={meet} history={advancementHistory} canManage={!readOnly && ["owner", "admin", "organiser"].includes(role)} onNavigateBracket={(id) => selectBracket(id, true)} onCommit={(input) => input.mode === "replace" ? actions.replaceAdvancement(input) : actions.confirmAdvancement(input)} />
           <p className="sr-only" aria-live="polite">{notice || store.state.advisory || store.state.error}</p>
           <div className="bracket-stack">
             {ordered.map((bracket) => (
@@ -131,12 +135,14 @@ export function WorkbookWorkspace({ meet, role, readOnly, actions, heatVersions 
             ))}
           </div>
           <FinalResults meet={meet} />
+          <AuditTimeline events={meet.auditLog} />
+          <AdminDashboard role={role} overview={adminOverview} securityEvents={securityEvents} />
         </div>
       </div>
 
       <p className="print-credit">{CREATOR_CREDIT}</p>
-      {setupOpen ? <SetupDialog meet={meet} actions={actions} onResult={announce} onDirtyChange={(dirty) => onFormDirtyChange?.(dirty)} onClose={() => { onFormDirtyChange?.(false); setSetupOpen(false); }} /> : null}
-      {registrationOpen && selected ? <RegistrationDialog bracket={selected} actions={actions} onResult={announce} onDirtyChange={(dirty) => onFormDirtyChange?.(dirty)} onClose={() => { onFormDirtyChange?.(false); setRegistrationOpen(false); }} /> : null}
+      {setupOpen ? <SetupDialog meet={meet} actions={actions} onResult={announce} onDirtyChange={(dirty) => onFormDirtyChange?.("setup", dirty)} onClose={() => { onFormDirtyChange?.("setup", false); setSetupOpen(false); }} /> : null}
+      {registrationOpen && selected ? <RegistrationDialog bracket={selected} actions={actions} onResult={announce} onDirtyChange={(dirty) => onFormDirtyChange?.(`registration:${selected.id}`, dirty)} onClose={() => { onFormDirtyChange?.(`registration:${selected.id}`, false); setRegistrationOpen(false); }} /> : null}
     </section>
   );
 }
@@ -159,7 +165,7 @@ function ProgressionSummary({ meet }: { meet: MeetStateV1 }) {
   </section>;
 }
 
-const BracketSheet = memo(function BracketSheet({ bracket, active, expanded, readOnly, role, actions, heatVersions, announce, onFormDirtyChange, onSelect, onToggle }: { bracket: BracketState; active: boolean; expanded: boolean; readOnly: boolean; role: OrganisationRole; actions: WorkbookActions; heatVersions: Readonly<Record<string, number>>; announce(result: WorkbookActionResult): WorkbookActionResult; onFormDirtyChange?(dirty: boolean): void; onSelect(): void; onToggle(): void }) {
+const BracketSheet = memo(function BracketSheet({ bracket, active, expanded, readOnly, role, actions, heatVersions, announce, onFormDirtyChange, onSelect, onToggle }: { bracket: BracketState; active: boolean; expanded: boolean; readOnly: boolean; role: OrganisationRole; actions: WorkbookActions; heatVersions: Readonly<Record<string, number>>; announce(result: WorkbookActionResult): WorkbookActionResult; onFormDirtyChange?(source: string, dirty: boolean): void; onSelect(): void; onToggle(): void }) {
   const activeCars = bracket.event.entries.filter((entry) => entry.active).length;
   const heats = bracket.stage === "final" ? bracket.event.finals : bracket.event.matches;
   const complete = heats.filter((heat) => heat.status === "completed").length;
@@ -177,7 +183,7 @@ const BracketSheet = memo(function BracketSheet({ bracket, active, expanded, rea
   </section>;
 });
 
-const BracketDetails = memo(function BracketDetails({ bracket, active, readOnly, role, actions, heatVersions, announce, onFormDirtyChange }: { bracket: BracketState; active: boolean; readOnly: boolean; role: OrganisationRole; actions: WorkbookActions; heatVersions: Readonly<Record<string, number>>; announce(result: WorkbookActionResult): WorkbookActionResult; onFormDirtyChange?(dirty: boolean): void }) {
+const BracketDetails = memo(function BracketDetails({ bracket, active, readOnly, role, actions, heatVersions, announce, onFormDirtyChange }: { bracket: BracketState; active: boolean; readOnly: boolean; role: OrganisationRole; actions: WorkbookActions; heatVersions: Readonly<Record<string, number>>; announce(result: WorkbookActionResult): WorkbookActionResult; onFormDirtyChange?(source: string, dirty: boolean): void }) {
   const view = useMemo(() => workbookViewModel.selectBracketView(bracket), [bracket]);
   return <div id={`bracket-detail-${bracket.id}`} className="sheet-detail">
       <RaceControl bracket={bracket} view={view} readOnly={readOnly} role={role} actions={actions} heatVersions={heatVersions} announce={announce} onFormDirtyChange={onFormDirtyChange} active={active} />
@@ -200,7 +206,7 @@ function RegistrationTable({ bracket }: { bracket: BracketState }) {
   return <section className="sheet-panel"><div className="panel-heading"><h4>Cars and participants</h4><div className="registration-filters"><label><span className="sr-only">Search cars and participants</span><input type="search" placeholder="Search cars or people" value={query} onChange={(event) => setQuery(event.target.value)} /></label><label>Car status<select value={status} onChange={(event) => setStatus(event.target.value as typeof status)}><option value="all">All</option><option value="active">Active</option><option value="withdrawn">Withdrawn</option></select></label><label>Sort cars<select value={sort} onChange={(event) => setSort(event.target.value as typeof sort)}><option value="number">Car number</option><option value="participant">Participant</option><option value="car">Car name</option></select></label></div></div><div className="table-scroll"><table aria-label={`${bracket.name} cars and participants`}><thead><tr><th scope="col">Car #</th><th scope="col">Car</th><th scope="col">Participant</th><th scope="col">State</th></tr></thead><tbody>{rows.map((entry) => <tr key={entry.id}><th scope="row">{entry.carNumber}</th><td>{entry.name}</td><td>{participants.get(entry.participantId)?.name ?? "Unknown"}</td><td>{entry.active ? "Active" : "Withdrawn"}</td></tr>)}</tbody></table></div></section>;
 }
 
-function ScheduleLab({ bracket, readOnly, role, actions, announce, onFormDirtyChange }: { bracket: BracketState; readOnly: boolean; role: OrganisationRole; actions: WorkbookActions; announce(result: WorkbookActionResult): WorkbookActionResult; onFormDirtyChange?(dirty: boolean): void }) {
+function ScheduleLab({ bracket, readOnly, role, actions, announce, onFormDirtyChange }: { bracket: BracketState; readOnly: boolean; role: OrganisationRole; actions: WorkbookActions; announce(result: WorkbookActionResult): WorkbookActionResult; onFormDirtyChange?(source: string, dirty: boolean): void }) {
   const canSchedule = !readOnly && ["owner", "admin", "organiser"].includes(role);
   const [seed, setSeed] = useState(bracket.event.settings.seed || "meet-schedule");
   const [rounds, setRounds] = useState(5);
@@ -208,14 +214,15 @@ function ScheduleLab({ bracket, readOnly, role, actions, announce, onFormDirtyCh
   const [error, setError] = useState("");
   const [replacementReason, setReplacementReason] = useState("");
   const replacing = bracket.event.matches.length > 0 || bracket.event.finals.length > 0;
-  const generate = () => { try { setCandidate(buildScheduleCandidate(bracket, { seed, rounds })); setError(""); onFormDirtyChange?.(true); } catch (cause) { setError(cause instanceof Error ? cause.message : "Schedule generation failed."); } };
+  const dirty = (value: boolean) => onFormDirtyChange?.(`schedule:${bracket.id}`, value);
+  const generate = () => { try { setCandidate(buildScheduleCandidate(bracket, { seed, rounds })); setError(""); dirty(true); } catch (cause) { setError(cause instanceof Error ? cause.message : "Schedule generation failed."); } };
   const activate = async () => {
     if (!candidate) return;
     const result = await actions.activateSchedule({ bracketId: bracket.id, expectedVersion: bracket.version, candidate: schedulePayload(candidate), replacementReason: replacing ? replacementReason.trim() : null });
     announce(result);
-    if (result.ok) onFormDirtyChange?.(false);
+    if (result.ok) dirty(false);
   };
-  return <section className="sheet-panel schedule-lab"><div className="panel-heading"><h4>Schedule quality</h4><span>{candidate?.source ?? "No candidate"}</span></div>{canSchedule ? <div className="schedule-form"><label>Seed<input value={seed} maxLength={128} onChange={(event) => { setSeed(event.target.value); onFormDirtyChange?.(true); }} /></label><label>Rounds<input type="number" min={1} max={10} value={rounds} onChange={(event) => { setRounds(Number(event.target.value)); onFormDirtyChange?.(true); }} /></label><button type="button" onClick={generate}>Generate candidate</button></div> : <p>Viewer-safe schedule summary.</p>}{error ? <p role="alert">{error}</p> : null}{candidate ? <><dl className="quality-grid"><div><dt>Opponent repeats</dt><dd>{candidate.quality.opponentRepeatExcess}</dd></div><div><dt>Appearances</dt><dd>{candidate.quality.appearanceMinimum}–{candidate.quality.appearanceMaximum} per car</dd></div><div><dt>Byes</dt><dd>{candidate.quality.totalByes} total · max {candidate.quality.maximumByes}</dd></div><div><dt>Max car repeat burden</dt><dd>{candidate.quality.maxCarRepeatBurden}</dd></div><div><dt>Lower-bound gap</dt><dd>{candidate.quality.gap}</dd></div><div><dt>Max pair frequency</dt><dd>{candidate.quality.maxPairFrequency}</dd></div><div><dt>Lane spread</dt><dd>{candidate.quality.laneSpread}</dd></div><div><dt>Certificate</dt><dd>{candidate.quality.provenOptimal ? "Certified optimal" : "Best found"}</dd></div></dl>{canSchedule ? <>{replacing ? <label>Replacement reason<textarea required maxLength={500} value={replacementReason} onChange={(event) => { setReplacementReason(event.target.value); onFormDirtyChange?.(true); }} /></label> : null}<button type="button" disabled={replacing && !replacementReason.trim()} onClick={() => void activate()}>Activate schedule</button></> : null}</> : null}</section>;
+  return <section className="sheet-panel schedule-lab"><div className="panel-heading"><h4>Schedule quality</h4><span>{candidate?.source ?? "No candidate"}</span></div>{canSchedule ? <div className="schedule-form"><label>Seed<input value={seed} maxLength={128} onChange={(event) => { setSeed(event.target.value); dirty(true); }} /></label><label>Rounds<input type="number" min={1} max={10} value={rounds} onChange={(event) => { setRounds(Number(event.target.value)); dirty(true); }} /></label><button type="button" onClick={generate}>Generate candidate</button></div> : <p>Viewer-safe schedule summary.</p>}{error ? <p role="alert">{error}</p> : null}{candidate ? <><dl className="quality-grid"><div><dt>Opponent repeats</dt><dd>{candidate.quality.opponentRepeatExcess}</dd></div><div><dt>Appearances</dt><dd>{candidate.quality.appearanceMinimum}–{candidate.quality.appearanceMaximum} per car</dd></div><div><dt>Byes</dt><dd>{candidate.quality.totalByes} total · max {candidate.quality.maximumByes}</dd></div><div><dt>Max car repeat burden</dt><dd>{candidate.quality.maxCarRepeatBurden}</dd></div><div><dt>Lower-bound gap</dt><dd>{candidate.quality.gap}</dd></div><div><dt>Max pair frequency</dt><dd>{candidate.quality.maxPairFrequency}</dd></div><div><dt>Lane spread</dt><dd>{candidate.quality.laneSpread}</dd></div><div><dt>Certificate</dt><dd>{candidate.quality.provenOptimal ? "Certified optimal" : "Best found"}</dd></div></dl>{canSchedule ? <>{replacing ? <label>Replacement reason<textarea required maxLength={500} value={replacementReason} onChange={(event) => { setReplacementReason(event.target.value); dirty(true); }} /></label> : null}<button type="button" disabled={replacing && !replacementReason.trim()} onClick={() => void activate()}>Activate schedule</button></> : null}</> : null}</section>;
 }
 
 function ScheduleTable({ bracket }: { bracket: BracketState }) {
@@ -228,7 +235,7 @@ function StandingsTable({ bracket, view }: { bracket: BracketState; view: Return
   return <section className="sheet-panel full-width"><h4>Standings</h4>{view.standings.every((row) => row.rank === null) ? <p className="ranking-notice">Competitive rankings appear after the first official result.</p> : null}<div className="table-scroll"><table aria-label={`${bracket.name} standings`}><thead><tr><th scope="col">Rank</th><th scope="col">Car</th><th scope="col">Participant</th><th scope="col">Wins</th><th scope="col">Heats</th><th scope="col">Tie state</th></tr></thead><tbody>{view.standings.map((row) => <tr key={row.carId}><td>{row.rank ?? "—"}</td><th scope="row">#{row.carNumber} {row.carName}</th><td>{row.participantName}</td><td>{row.totalWins}</td><td>{row.completedHeats}</td><td>{row.isTied && row.rank !== null ? "Tied" : row.rank === null ? "No official rank" : "Resolved"}</td></tr>)}</tbody></table></div></section>;
 }
 
-function RaceControl({ bracket, view, readOnly, role, actions, heatVersions, announce, onFormDirtyChange, active }: { bracket: BracketState; view: ReturnType<typeof workbookViewModel.selectBracketView>; readOnly: boolean; role: OrganisationRole; actions: WorkbookActions; heatVersions: Readonly<Record<string, number>>; announce(result: WorkbookActionResult): WorkbookActionResult; onFormDirtyChange?(dirty: boolean): void; active: boolean }) {
+function RaceControl({ bracket, view, readOnly, role, actions, heatVersions, announce, onFormDirtyChange, active }: { bracket: BracketState; view: ReturnType<typeof workbookViewModel.selectBracketView>; readOnly: boolean; role: OrganisationRole; actions: WorkbookActions; heatVersions: Readonly<Record<string, number>>; announce(result: WorkbookActionResult): WorkbookActionResult; onFormDirtyChange?(source: string, dirty: boolean): void; active: boolean }) {
   const canRace = !readOnly && ["owner", "admin", "organiser", "marshal"].includes(role);
   const [lane, setLane] = useState(1);
   const [correctionOpen, setCorrectionOpen] = useState(false);
@@ -263,7 +270,7 @@ function RaceControl({ bracket, view, readOnly, role, actions, heatVersions, ann
     {canRace && heat ? <button className="confirm-winner" type="button" onClick={confirm}>Confirm winner · Lane {lane}</button> : null}
     {canRace && completed.length ? <button type="button" className="quiet-danger" onClick={() => setCorrectionOpen(true)}>Correct result</button> : null}
     <button id={`keyboard-help-${bracket.id}`} type="button" className="keyboard-hint" aria-label="Keyboard help">1/2/3 lane · arrows move · Enter confirms · ? help</button>
-    {correctionOpen && completed.length ? <CorrectionDialog heats={completed} bracket={bracket} actions={actions} heatVersions={heatVersions} announce={announce} onDirtyChange={(dirty) => onFormDirtyChange?.(dirty)} onClose={() => { onFormDirtyChange?.(false); setCorrectionOpen(false); }} /> : null}
+    {correctionOpen && completed.length ? <CorrectionDialog heats={completed} bracket={bracket} actions={actions} heatVersions={heatVersions} announce={announce} onDirtyChange={(heatId, dirty) => onFormDirtyChange?.(`correction:${heatId}`, dirty)} onClose={() => { completed.forEach((item) => onFormDirtyChange?.(`correction:${item.id}`, false)); setCorrectionOpen(false); }} /> : null}
   </section>;
 }
 
@@ -343,13 +350,13 @@ function RegistrationDialog({ bracket, actions, onResult, onDirtyChange, onClose
   return <WorkbookDialog title={`Registration · ${bracket.name}`} onClose={onClose}><p>Edit each participant and car, or paste one car per line. Cars sharing the same email are grouped under one participant identity.</p><p>Submitted rows add/update; unlisted existing rows remain.</p><div className="registration-editor">{rows.map((row, index) => <fieldset key={row.carId}><legend>Car #{row.carNumber}</legend><label>Car {row.carNumber} participant<input data-initial-focus={index === 0 ? true : undefined} required maxLength={200} value={row.participantName} onChange={(event) => update(row.carId, "participantName", event.target.value)} /></label><label>Participant email<input type="email" maxLength={320} value={row.email} onChange={(event) => update(row.carId, "email", event.target.value)} /></label><label>Participant phone<input maxLength={80} value={row.phone} onChange={(event) => update(row.carId, "phone", event.target.value)} /></label><label>Participant notes<textarea maxLength={500} value={row.notes} onChange={(event) => update(row.carId, "notes", event.target.value)} /></label><label>Car number<input type="number" min={1} max={999999} value={row.carNumber} onChange={(event) => update(row.carId, "carNumber", Number(event.target.value))} /></label><label>Car name<input required maxLength={200} value={row.carName} onChange={(event) => update(row.carId, "carName", event.target.value)} /></label><button type="button" className={row.active ? "quiet-danger" : "quiet-action"} onClick={() => requestStatus(row)}>{row.active ? `Withdraw car #${row.carNumber}` : `Restore car #${row.carNumber}`}</button></fieldset>)}</div>{statusWarning ? <p role="alert">{statusWarning}</p> : null}<details><summary>Bulk paste</summary><label>Bulk registration rows<textarea value={paste} onChange={(event) => { setPaste(event.target.value); setParsed(null); onDirtyChange(true); }} placeholder={'7\tCesar\tComet\tcesar@example.com\n8\tCesar\tNova\tcesar@example.com'} /></label><button type="button" onClick={applyPaste}>Validate rows</button></details>{parsed ? parsed.ok ? <p role="status">{parsed.rows.length} valid rows ready to add or update. Unlisted existing rows remain.</p> : <ul role="alert">{parsed.errors.map((message) => <li key={message}>{message}</li>)}</ul> : null}{error ? <p role="alert">{error}</p> : null}{pendingRow && pendingStatus ? <section role="alertdialog" aria-labelledby="registration-status-title" className="inline-confirmation"><h3 id="registration-status-title">{pendingStatus.active ? "Restore" : "Withdraw"} car #{pendingRow.carNumber}</h3><p>This unscheduled status change will be submitted with the rest of the registration updates.</p><label>Reason<textarea required maxLength={500} value={statusReason} onChange={(event) => { setStatusReason(event.target.value); onDirtyChange(true); }} /></label><div className="dialog-actions"><button type="button" disabled={!statusReason.trim()} className="quiet-danger" onClick={() => { const carId = pendingRow.carId; const active = pendingStatus.active; const reason = statusReason.trim(); setRows((current) => current.map((row) => row.carId === carId ? { ...row, active, reason } : row)); setPendingStatus(null); }}>Confirm status change</button><button type="button" onClick={() => setPendingStatus(null)}>Keep current status</button></div></section> : null}<div className="dialog-actions"><button type="button" disabled={!validateRows(rows)} onClick={() => void save()}>Validate and save rows</button><button type="button" className="quiet-action" onClick={onClose}>Cancel</button></div></WorkbookDialog>;
 }
 
-function CorrectionDialog({ heats, bracket, actions, heatVersions, announce, onDirtyChange, onClose }: { heats: BracketState["event"]["matches"]; bracket: BracketState; actions: WorkbookActions; heatVersions: Readonly<Record<string, number>>; announce(result: WorkbookActionResult): WorkbookActionResult; onDirtyChange(dirty: boolean): void; onClose(): void }) {
+function CorrectionDialog({ heats, bracket, actions, heatVersions, announce, onDirtyChange, onClose }: { heats: BracketState["event"]["matches"]; bracket: BracketState; actions: WorkbookActions; heatVersions: Readonly<Record<string, number>>; announce(result: WorkbookActionResult): WorkbookActionResult; onDirtyChange(heatId: string, dirty: boolean): void; onClose(): void }) {
   const [heatId, setHeatId] = useState(heats[0]?.id ?? "");
   const [reason, setReason] = useState("");
   const [lane, setLane] = useState(1);
   const heat = heats.find((candidate) => candidate.id === heatId) ?? heats[0]!;
-  const save = async () => { const winnerId = heat.lanes[lane - 1]; if (!winnerId || !reason.trim()) return; const result = await actions.correctWinner({ heatId: heat.id, winnerId, lane, laneTimes: {}, expectedVersion: heatVersions[heat.id] ?? 1, reason: reason.trim() }); announce(result); if (result.ok) { onDirtyChange(false); onClose(); } };
-  return <WorkbookDialog title="Correct official result" onClose={onClose}><label>Completed heat<select autoFocus data-initial-focus value={heat.id} onChange={(event) => { setHeatId(event.target.value); setLane(1); onDirtyChange(true); }}>{heats.map((candidate) => <option key={candidate.id} value={candidate.id}>Round {candidate.matchNumber} · Heat {candidate.heatNumber}</option>)}</select></label><label>Winning lane<select value={lane} onChange={(event) => { setLane(Number(event.target.value)); onDirtyChange(true); }}>{heat.lanes.map((carId, index) => carId ? <option key={carId} value={index + 1}>Lane {index + 1} · #{bracket.event.entries.find((entry) => entry.id === carId)?.carNumber}</option> : null)}</select></label><label>Reason<textarea required maxLength={500} value={reason} onChange={(event) => { setReason(event.target.value); onDirtyChange(true); }} /></label><div className="dialog-actions"><button type="button" disabled={!reason.trim()} onClick={() => void save()}>Save correction</button><button type="button" className="quiet-action" onClick={onClose}>Cancel</button></div></WorkbookDialog>;
+  const save = async () => { const winnerId = heat.lanes[lane - 1]; if (!winnerId || !reason.trim()) return; const result = await actions.correctWinner({ heatId: heat.id, winnerId, lane, laneTimes: {}, expectedVersion: heatVersions[heat.id] ?? 1, reason: reason.trim() }); announce(result); if (result.ok) { onDirtyChange(heat.id, false); onClose(); } };
+  return <WorkbookDialog title="Correct official result" onClose={onClose}><label>Completed heat<select autoFocus data-initial-focus value={heat.id} onChange={(event) => { onDirtyChange(heat.id, false); setHeatId(event.target.value); setLane(1); onDirtyChange(event.target.value, true); }}>{heats.map((candidate) => <option key={candidate.id} value={candidate.id}>Round {candidate.matchNumber} · Heat {candidate.heatNumber}</option>)}</select></label><label>Winning lane<select value={lane} onChange={(event) => { setLane(Number(event.target.value)); onDirtyChange(heat.id, true); }}>{heat.lanes.map((carId, index) => carId ? <option key={carId} value={index + 1}>Lane {index + 1} · #{bracket.event.entries.find((entry) => entry.id === carId)?.carNumber}</option> : null)}</select></label><label>Reason<textarea required maxLength={500} value={reason} onChange={(event) => { setReason(event.target.value); onDirtyChange(heat.id, true); }} /></label><div className="dialog-actions"><button type="button" disabled={!reason.trim()} onClick={() => void save()}>Save correction</button><button type="button" className="quiet-action" onClick={onClose}>Cancel</button></div></WorkbookDialog>;
 }
 
 function WorkbookDialog({ title, onClose, children, role = "dialog" }: { title: string; onClose(): void; children: ReactNode; role?: "dialog" | "alertdialog" }) {

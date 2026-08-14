@@ -176,6 +176,32 @@ body:has(.official-meet-shell) .brand-header { position: relative; }
 .setup-rules fieldset { display: grid; grid-template-columns: 1.4fr .7fr 1.4fr; gap: .6rem; min-width: 0; padding: .8rem; border: 1px solid var(--line); border-radius: .7rem; }
 .setup-rules legend { padding: 0 .35rem; color: var(--lime); font-weight: 850; }
 .dialog-actions { justify-content: flex-start; margin-top: 1rem; }
+.save-status { display: flex; max-width: min(46rem, 100%); flex-wrap: wrap; gap: .35rem; align-items: center; }
+.save-status > * { min-height: 2rem; padding: .35rem .6rem; border: 1px solid var(--line); border-radius: 999px; color: var(--muted); font-size: .75rem; overflow-wrap: anywhere; }
+.save-status strong { border-color: var(--warning); color: var(--warning); }
+.advancement-panel, .audit-timeline, .admin-dashboard { min-width: 0; margin-bottom: 1rem; padding: 1rem; border: 1px solid var(--line); border-radius: 1rem; background: linear-gradient(145deg, var(--surface), var(--surface-soft)); }
+.advancement-rules { display: grid; grid-template-columns: repeat(auto-fit, minmax(min(100%, 19rem), 1fr)); gap: .75rem; margin-top: .8rem; }
+.advancement-rule { min-width: 0; padding: .9rem; border: 1px solid var(--line); border-radius: .75rem; background: var(--surface-soft); }
+.advancement-rule > header { display: flex; gap: .75rem; align-items: start; justify-content: space-between; }
+.advancement-rule h4 { margin: 0 0 .2rem; }
+.advancement-rule a { color: var(--cyan); font-size: .78rem; }
+.advancement-rule dl, .admin-facts { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: .35rem; }
+.advancement-rule dl div, .admin-facts div { min-width: 0; padding: .45rem; border: 1px solid var(--line); border-radius: .45rem; }
+.advancement-rule dt, .admin-facts dt { color: var(--muted); font-size: .65rem; text-transform: uppercase; }
+.advancement-rule dd, .admin-facts dd { margin: .15rem 0 0; font-weight: 900; overflow-wrap: anywhere; }
+.advancement-state { padding: .3rem .5rem; border: 1px solid var(--cyan); border-radius: 999px; color: var(--cyan); font-size: .72rem; font-weight: 900; white-space: nowrap; }
+.state-upstream-stale .advancement-state, .state-capacity-conflict .advancement-state, .state-conflict .advancement-state { border-color: var(--danger); color: var(--danger); }
+.advancement-rule[class*="state-tie-decision"] .advancement-state { border-color: var(--warning); color: var(--warning); }
+.advancement-dialog fieldset { display: grid; gap: .55rem; margin-block: 1rem; padding: .8rem; border: 1px solid var(--warning); border-radius: .7rem; }
+.advancement-dialog fieldset label { display: flex; min-height: 44px; flex-direction: row; gap: .55rem; align-items: center; }
+.advancement-dialog fieldset input { width: auto; }
+.audit-timeline [role="feed"] { display: grid; gap: .65rem; margin-top: .8rem; }
+.audit-timeline article { min-width: 0; padding: .8rem; border: 1px solid var(--line); border-radius: .7rem; background: var(--surface-soft); }
+.audit-timeline article > header { display: flex; gap: .75rem; align-items: center; justify-content: space-between; }
+.audit-timeline time, .admin-dashboard time { color: var(--muted); font-size: .75rem; }
+.audit-change { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: .65rem; }
+.audit-change pre { max-width: 100%; max-height: 18rem; overflow: auto; padding: .65rem; border-radius: .45rem; background: #050c11; color: var(--ink); white-space: pre-wrap; overflow-wrap: anywhere; }
+.admin-dashboard ul { padding-left: 1.25rem; }
 
 @media (max-width: 48rem) {
   .hosted-pill { display: none; }
@@ -207,6 +233,9 @@ body:has(.official-meet-shell) .brand-header { position: relative; }
   .setup-brackets fieldset, .registration-editor fieldset { grid-template-columns: 1fr; }
   .setup-rules fieldset { grid-template-columns: 1fr; }
   .workbook-dialog { max-height: calc(100dvh - 1rem); }
+  .advancement-rule dl, .admin-facts { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+  .audit-change { grid-template-columns: 1fr; }
+  .audit-timeline article > header { align-items: start; flex-direction: column; }
 }
 
 @media (prefers-reduced-motion: no-preference) {
@@ -223,7 +252,8 @@ body:has(.official-meet-shell) .brand-header { position: relative; }
   .meet-toolbar, .bracket-index, .mobile-bracket-picker, .race-control, .schedule-lab, .keyboard-hint { display: none !important; }
   .workbook-layout { display: block; }
   .workbook-content { padding: 0; }
-  .progression-panel, .meet-results { break-inside: avoid; box-shadow: none; }
+  .progression-panel, .meet-results, .advancement-rule, .audit-timeline article, .admin-dashboard { break-inside: avoid; box-shadow: none; }
+  .advancement-panel, .audit-timeline, .admin-dashboard { box-shadow: none; }
   .bracket-sheet, .sheet-panel { break-inside: auto; box-shadow: none; }
   .bracket-sheet { content-visibility: visible; contain-intrinsic-size: auto; margin-bottom: .5rem; }
   .sheet-summary { min-height: auto; }

@@ -1,11 +1,11 @@
-import { useCallback, useEffect, useMemo, useRef, useState, type FormEvent } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState, type ComponentProps, type FormEvent } from "react";
 import type { MeetStateV1 } from "@rr3/meet-domain";
 import { AuthBoundary, useMeetSession, type AuthPort } from "./AuthBoundary";
 import { MeetProviders } from "./MeetProviders";
 import { AuthPanel } from "../features/auth/AuthPanel";
 import { TeamDrawer, type TeamActions } from "../features/team/TeamDrawer";
 import { createDemoRepository } from "../data/demoRepository";
-import { createRequestId, type CommandReceipt, type MeetRepository, type MeetSummary, type OrganisationRole, type OrganisationSummary, type TeamMember } from "../data/meetRepository";
+import { createRequestId, type AdminOverview, type CommandReceipt, type MeetRepository, type MeetSummary, type OrganisationRole, type OrganisationSummary, type SecurityEventPageItem, type TeamMember } from "../data/meetRepository";
 import { useMeetStore } from "../state/MeetStore";
 import { WorkbookWorkspace, type WorkbookActions, type WorkbookActionResult } from "../features/workbook/WorkbookWorkspace";
 import { finishCommittedWorkbookAction } from "../features/workbook/workbookActionResult";
@@ -138,6 +138,8 @@ function OfficialWorkspace({ repository, organisation, organisations, onSelect, 
   const [loadingMeet, setLoadingMeet] = useState(true);
   const [invitation, setInvitation] = useState<{ id: string; code: string } | null>(null);
   const [notice, setNotice] = useState<string | null>(null);
+  const [adminOverview, setAdminOverview] = useState<AdminOverview | null>(null);
+  const [securityEvents, setSecurityEvents] = useState<SecurityEventPageItem[]>([]);
   const requestIds = useRef(new Map<string, string>());
   const { runCommand, dispatch, capabilities, state } = useMeetStore();
   const run = async <T,>(key: string, command: (requestId: string) => Promise<CommandReceipt<T>>) => {
@@ -166,14 +168,14 @@ function OfficialWorkspace({ repository, organisation, organisations, onSelect, 
     }).catch(() => { if (active) { setNotice("Meet list could not be loaded safely."); setLoadingMeet(false); } });
     return () => { active = false; };
   }, [dispatch, organisation.id, repository]);
-  const reloadMeet = useCallback(async (meetId = selectedMeetId) => {
+  const reloadMeet = useCallback(async (meetId = selectedMeetId, showLoading = true) => {
     if (!meetId) return false;
-    setLoadingMeet(true);
+    if (showLoading) setLoadingMeet(true);
     const receipt = await repository.loadMeet(organisation.id, meetId);
-    if (!receipt.ok) { setNotice(receipt.message); setLoadingMeet(false); return false; }
+    if (!receipt.ok) { setNotice(receipt.message); if (showLoading) setLoadingMeet(false); return false; }
     dispatch({ type: "meet.selected", meetId });
     dispatch({ type: "bundle.loaded", bundle: receipt.value, syncedAt: new Date().toISOString() });
-    setLoadingMeet(false);
+    if (showLoading) setLoadingMeet(false);
     return true;
   }, [dispatch, organisation.id, repository, selectedMeetId]);
   useEffect(() => { if (selectedMeetId) void reloadMeet(selectedMeetId); }, [reloadMeet, selectedMeetId]);
@@ -183,11 +185,17 @@ function OfficialWorkspace({ repository, organisation, organisations, onSelect, 
       bracketIds: state.snapshot.brackets.map((bracket) => bracket.id),
       onBundle: (bundle, syncedAt) => dispatch({ type: "realtime.bundle", bundle, syncedAt }),
       onStatus: (status) => dispatch({ type: "connection.changed", status }),
-      isDirty: () => state.formDirty,
-      onDirtyUpdate: () => dispatch({ type: "form.dirty", dirty: true }),
+      isDirty: () => state.dirtySources.length > 0,
+      onDirtyUpdate: () => undefined,
       onError: (message) => setNotice(message),
     });
-  }, [dispatch, organisation.id, repository, selectedMeetId, state.formDirty, state.snapshot]);
+  }, [dispatch, organisation.id, repository, selectedMeetId, state.dirtySources, state.snapshot]);
+  useEffect(() => {
+    if (organisation.role !== "owner" && organisation.role !== "admin") { setAdminOverview(null); setSecurityEvents([]); return; }
+    let active = true;
+    void Promise.all([repository.loadAdminOverview(organisation.id), repository.listSecurityEvents(organisation.id)]).then(([overview, events]) => { if (active) { setAdminOverview(overview); setSecurityEvents(events); } }).catch(() => { if (active) setNotice("Admin activity is temporarily unavailable."); });
+    return () => { active = false; };
+  }, [organisation.id, organisation.role, repository, state.lastSyncedAt]);
   const teamActions = useMemo<TeamActions>(() => ({
     createInvitation: async (role) => {
       const expiresAt = new Date(Date.now() + 7 * 86_400_000).toISOString();
@@ -224,14 +232,15 @@ function OfficialWorkspace({ repository, organisation, organisations, onSelect, 
     activateSchedule: ({ bracketId, expectedVersion, candidate, replacementReason }) => asAction(`schedule:${bracketId}`, (requestId) => repository.activateBracketSchedule(bracketId, expectedVersion, candidate, replacementReason, requestId)),
     confirmWinner: ({ heatId, winnerId, laneTimes, expectedVersion }) => asAction(`winner:${heatId}`, (requestId) => repository.confirmHeatWinnerMs(heatId, winnerId, laneTimes, expectedVersion, requestId)),
     correctWinner: ({ heatId, winnerId, laneTimes, expectedVersion, reason }) => asAction(`correction:${heatId}`, (requestId) => repository.correctHeatWinnerMs(heatId, winnerId, laneTimes, expectedVersion, reason, requestId)),
+    confirmAdvancement: ({ ruleId, sourceResultVersion, expectedVersion, selections, reason }) => asAction(`advancement:${ruleId}`, (requestId) => repository.confirmAdvancement(ruleId, sourceResultVersion, expectedVersion, selections, reason, requestId)),
+    replaceAdvancement: ({ ruleId, sourceResultVersion, expectedVersion, selections, reason }) => asAction(`advancement:${ruleId}`, (requestId) => repository.replaceAdvancement(ruleId, sourceResultVersion, expectedVersion, selections, reason ?? "", requestId)),
   }), [asAction, organisation.id, reloadMeet, repository, runCommand, selectedMeetId]);
   const reviewAuthoritative = async () => {
     if (state.queuedRemoteBundle) {
       dispatch({ type: "remote-update.accepted" });
       return;
     }
-    dispatch({ type: "form.dirty", dirty: false });
-    await reloadMeet();
+    await reloadMeet(selectedMeetId, false);
   };
   return (
     <section className="official-meet-shell" aria-labelledby="workspace-heading">
@@ -247,9 +256,13 @@ function OfficialWorkspace({ repository, organisation, organisations, onSelect, 
       {notice ? <p role="status" className="safe-notice">{notice}</p> : null}
       {state.conflict ? <OperatorConflictNotice message={state.conflict.message} onKeepDraft={() => dispatch({ type: "remote-update.discarded" })} onReloadAuthoritative={() => void reviewAuthoritative()} /> : null}
       {teamOpen ? <TeamDrawer role={organisation.role} members={members} actions={teamActions} /> : null}
-      {loadingMeet ? <section className="center-card"><p role="status">Loading the authorised Meet workbook…</p></section> : state.snapshot ? <WorkbookWorkspace meet={state.snapshot} heatVersions={state.bundle?.heatVersions ?? {}} role={organisation.role} readOnly={organisation.role === "viewer"} actions={workbookActions} onFormDirtyChange={(dirty) => dispatch({ type: "form.dirty", dirty })} /> : <section className="workbook-placeholder"><h3>Meet unavailable</h3><p>The current view was preserved. Retry after the hosted service reconnects.</p></section>}
+      {loadingMeet ? <section className="center-card"><p role="status">Loading the authorised Meet workbook…</p></section> : state.snapshot ? <AuthoritativeWorkbook draftEpoch={state.draftEpoch} meet={state.snapshot} heatVersions={state.bundle?.heatVersions ?? {}} advancementHistory={state.bundle?.history} adminOverview={adminOverview} securityEvents={securityEvents} role={organisation.role} readOnly={organisation.role === "viewer"} actions={workbookActions} onFormDirtyChange={(source, dirty) => dispatch({ type: "form.dirty", source, dirty })} /> : <section className="workbook-placeholder"><h3>Meet unavailable</h3><p>The current view was preserved. Retry after the hosted service reconnects.</p></section>}
     </section>
   );
+}
+
+export function AuthoritativeWorkbook({ draftEpoch, ...props }: ComponentProps<typeof WorkbookWorkspace> & { draftEpoch: number }) {
+  return <WorkbookWorkspace key={`${props.meet.meet.id}:${draftEpoch}`} {...props} />;
 }
 
 export function OperatorConflictNotice({ message, onKeepDraft, onReloadAuthoritative }: { message: string; onKeepDraft(): void; onReloadAuthoritative(): void }) {
@@ -284,7 +297,7 @@ function starterMeet(): MeetStateV1 {
 
 function readOnlyWorkbookActions(): WorkbookActions {
   const denied = async () => ({ ok: false, message: "Demo mode is read-only." });
-  return { saveSetup: denied, saveRegistration: denied, activateSchedule: denied, confirmWinner: denied, correctWinner: denied };
+  return { saveSetup: denied, saveRegistration: denied, activateSchedule: denied, confirmWinner: denied, correctWinner: denied, confirmAdvancement: denied, replaceAdvancement: denied };
 }
 
 function BrandHeader({ badge }: { badge: string }) {

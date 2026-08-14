@@ -9,7 +9,18 @@ test.describe("Meet workbook root workspace", () => {
     await expect(page).toHaveURL(/\/$/);
     await expect(page.getByRole("main")).toHaveCSS("overflow-x", /visible|clip|hidden/);
     await expect(page.getByText("Made by Cesar Lacsamana and Ahsan Ali").first()).toBeVisible();
+    await expect(page.getByRole("heading", { name: /^advancement$/i })).toBeVisible();
+    await expect(page.getByRole("heading", { name: /audit timeline/i })).toBeVisible();
+    await expect(page.getByRole("status", { name: /workspace status/i })).toContainText(/offline|connected|reconnecting/i);
     expect(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth)).toBe(true);
+  });
+
+  test("keeps advancement and accountability summaries in the printable workbook", async ({ page }) => {
+    await page.goto(meetUrl);
+    await page.getByRole("button", { name: /explore read-only demo/i }).click();
+    await page.emulateMedia({ media: "print" });
+    await expect(page.getByRole("heading", { name: /^advancement$/i })).toBeVisible();
+    await expect(page.getByRole("heading", { name: /audit timeline/i })).toBeVisible();
   });
 
   for (const size of [{ name: "mobile", width: 320, height: 740 }, { name: "tablet", width: 768, height: 900 }, { name: "desktop", width: 1440, height: 900 }]) {

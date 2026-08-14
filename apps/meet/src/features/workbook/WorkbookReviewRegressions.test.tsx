@@ -13,9 +13,11 @@ const actionSet = (): WorkbookActions => ({
   activateSchedule: vi.fn(async () => ({ ok: true, message: "saved" })),
   confirmWinner: vi.fn(async () => ({ ok: true, message: "saved" })),
   correctWinner: vi.fn(async () => ({ ok: true, message: "saved" })),
+  confirmAdvancement: vi.fn(async () => ({ ok: true, message: "saved" })),
+  replaceAdvancement: vi.fn(async () => ({ ok: true, message: "saved" })),
 });
 
-function mount(meet = withSchedule(makeMeet(2, 3)), actions = actionSet(), onFormDirtyChange?: (dirty: boolean) => void) {
+function mount(meet = withSchedule(makeMeet(2, 3)), actions = actionSet(), onFormDirtyChange?: (source: string, dirty: boolean) => void) {
   render(<MeetProviders selected={{ id: "org", name: "Club", slug: "club", role: "owner", version: 1 }}><WorkbookWorkspace meet={meet} role="owner" readOnly={false} actions={actions} onFormDirtyChange={onFormDirtyChange} /></MeetProviders>);
   return actions;
 }
@@ -74,24 +76,25 @@ describe("reviewed workbook interactions", () => {
 
   it("marks setup, registration and schedule drafts dirty and clears only on explicit cancel or success", async () => {
     const dirty = vi.fn();
-    mount(makeMeet(1, 3), actionSet(), dirty);
+    const meet = makeMeet(1, 3);
+    mount(meet, actionSet(), dirty);
 
     await userEvent.click(screen.getByRole("button", { name: /meet setup/i }));
     await userEvent.type(screen.getByLabelText(/meet name/i), " revised");
-    expect(dirty).toHaveBeenLastCalledWith(true);
+    expect(dirty).toHaveBeenLastCalledWith("setup", true);
     await userEvent.click(screen.getByRole("button", { name: /^cancel$/i }));
-    expect(dirty).toHaveBeenLastCalledWith(false);
+    expect(dirty).toHaveBeenLastCalledWith("setup", false);
 
     await userEvent.click(screen.getByRole("button", { name: /registration/i }));
     await userEvent.type(screen.getByLabelText(/car 1 participant/i), " revised");
-    expect(dirty).toHaveBeenLastCalledWith(true);
+    expect(dirty).toHaveBeenLastCalledWith(`registration:${meet.brackets[0]!.id}`, true);
     await userEvent.click(screen.getByRole("button", { name: /^cancel$/i }));
-    expect(dirty).toHaveBeenLastCalledWith(false);
+    expect(dirty).toHaveBeenLastCalledWith(`registration:${meet.brackets[0]!.id}`, false);
 
     await userEvent.click(screen.getByRole("button", { name: /generate candidate/i }));
-    expect(dirty).toHaveBeenLastCalledWith(true);
+    expect(dirty).toHaveBeenLastCalledWith(`schedule:${meet.brackets[0]!.id}`, true);
     await userEvent.click(screen.getByRole("button", { name: /activate schedule/i }));
-    expect(dirty).toHaveBeenLastCalledWith(false);
+    expect(dirty).toHaveBeenLastCalledWith(`schedule:${meet.brackets[0]!.id}`, false);
   });
 
   it("keeps a failed correction draft dirty and clears it after explicit cancel", async () => {
@@ -106,11 +109,11 @@ describe("reviewed workbook interactions", () => {
 
     await userEvent.click(screen.getByRole("button", { name: /correct result/i }));
     await userEvent.type(screen.getByLabelText(/^reason$/i), "Camera review");
-    expect(dirty).toHaveBeenLastCalledWith(true);
+    expect(dirty).toHaveBeenLastCalledWith(`correction:${heat.id}`, true);
     await userEvent.click(screen.getByRole("button", { name: /save correction/i }));
-    expect(dirty).toHaveBeenLastCalledWith(true);
+    expect(dirty).toHaveBeenLastCalledWith(`correction:${heat.id}`, true);
     await userEvent.click(screen.getByRole("button", { name: /^cancel$/i }));
-    expect(dirty).toHaveBeenLastCalledWith(false);
+    expect(dirty).toHaveBeenLastCalledWith(`correction:${heat.id}`, false);
   });
 
   it("requires an official replacement reason and shows the full quality certificate", async () => {
