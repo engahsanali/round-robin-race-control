@@ -1,7 +1,7 @@
 import { describe, expect, test } from "vitest";
 import type { Heat } from "@rr3/domain";
 import { bracket, state } from "./test-fixtures";
-import { confirmAdvancementPure, parseMeetJson, prepareAdvancementSelections, serializeMeet, validateMeetState } from "./index";
+import { confirmAdvancementPure, parseMeetJson, prepareAdvancementSelections, prepareReplacementAdvancementSelections, serializeMeet, validateMeetState } from "./index";
 
 function completed(id: string, count = 3) {
   const cars = Array.from({ length: count }, (_, index) => ({ id: `${id}-${index + 1}`, number: index + 1 }));
@@ -14,8 +14,17 @@ function completed(id: string, count = 3) {
   return result;
 }
 
-function rule(id: string, source: string, destinations: string[], topN: number) {
-  return { id, sourceBracketId: source, destinationBracketIds: destinations, destinationOrder: destinations, topN, destinationCapacity: 6, status: "active" as const, version: 1 };
+function rule(id: string, source: string, destinations: string[], topN: number, destinationCapacity = 6) {
+  return { id, sourceBracketId: source, destinationBracketIds: destinations, destinationOrder: destinations, topN, destinationCapacity, status: "active" as const, version: 1 };
+}
+
+function tiedQualifier(id: string) {
+  const source = completed(id, 3);
+  source.event.matches = [
+    { id: `${id}-h1`, phase: "preliminary", matchNumber: 1, heatNumber: 1, lanes: [`${id}-1`, `${id}-2`, null], status: "completed", winnerEntryId: `${id}-1`, laneTimesMs: [1000, 1100, null], notes: "" },
+    { id: `${id}-h2`, phase: "preliminary", matchNumber: 2, heatNumber: 1, lanes: [`${id}-1`, `${id}-3`, null], status: "completed", winnerEntryId: `${id}-1`, laneTimesMs: [1000, 1100, null], notes: "" },
+  ];
+  return source;
 }
 
 describe("Meet advancement core contract", () => {
@@ -70,5 +79,53 @@ describe("Meet advancement core contract", () => {
         { sourceCarId: "q1-3", destinationBracketId: "s1", rank: 3 },
       ],
     });
+  });
+
+  test("prepares same or different tied choices by excluding only the current snapshot", () => {
+    const meet = state([tiedQualifier("q"), bracket("f", "final")]);
+    meet.advancementRules = [rule("q-f", "q", ["f"], 2, 2)];
+    const confirmed = confirmAdvancementPure(meet, "q-f", { actorId: "organiser", confirmedAt: "2026-08-14T10:00:00Z", selectedCarIds: ["q-1", "q-2"], reason: "Cutoff decision" });
+    const snapshotId = confirmed.advancementSnapshots[0]!.id;
+
+    expect(prepareReplacementAdvancementSelections(confirmed, "q-f", ["q-1", "q-2"], snapshotId).map((selection) => selection.sourceCarId)).toEqual(["q-1", "q-2"]);
+    expect(prepareReplacementAdvancementSelections(confirmed, "q-f", ["q-1", "q-3"], snapshotId).map((selection) => selection.sourceCarId)).toEqual(["q-1", "q-3"]);
+    expect(() => prepareAdvancementSelections(confirmed, "q-f", ["q-1", "q-2"])).toThrow(/already active|capacity/i);
+  });
+
+  test("counts unrelated occupancy and rejects a duplicate created by another rule", () => {
+    const meet = state([tiedQualifier("q"), bracket("f", "final"), bracket("other", "final")]);
+    meet.advancementRules = [rule("q-f", "q", ["f"], 2, 2), rule("q-other", "q", ["other"], 1, 2)];
+    const confirmed = confirmAdvancementPure(meet, "q-f", { actorId: "organiser", confirmedAt: "2026-08-14T10:00:00Z", selectedCarIds: ["q-1", "q-2"], reason: "Cutoff decision" });
+    const snapshotId = confirmed.advancementSnapshots[0]!.id;
+    const occupied = structuredClone(confirmed);
+    occupied.brackets.find((item) => item.id === "f")!.event.participants.push({ id: "unrelated-person", name: "Unrelated", email: "", phone: "", notes: "" });
+    occupied.brackets.find((item) => item.id === "f")!.event.entries.push({ id: "unrelated-car", participantId: "unrelated-person", carNumber: 99, name: "Unrelated", categoryId: "f", quantity: 1, active: true });
+    expect(() => prepareReplacementAdvancementSelections(occupied, "q-f", ["q-1", "q-2"], snapshotId)).toThrow(/capacity/i);
+
+    const duplicated = structuredClone(confirmed);
+    duplicated.brackets.find((item) => item.id === "other")!.lineage.push({ sourceBracketId: "q", sourceCarId: "q-3", ruleId: "q-other", snapshotId: "other-snapshot" });
+    expect(() => prepareReplacementAdvancementSelections(duplicated, "q-f", ["q-1", "q-3"], snapshotId)).toThrow(/already active/i);
+  });
+
+  test("rejects unknown, wrong-rule and superseded snapshots", () => {
+    const meet = state([tiedQualifier("q"), bracket("f", "final"), bracket("other", "final")]);
+    meet.advancementRules = [rule("q-f", "q", ["f"], 2), rule("q-other", "q", ["other"], 1)];
+    const confirmed = confirmAdvancementPure(meet, "q-f", { actorId: "organiser", confirmedAt: "2026-08-14T10:00:00Z", selectedCarIds: ["q-1", "q-2"], reason: "Cutoff decision" });
+    const snapshotId = confirmed.advancementSnapshots[0]!.id;
+    expect(() => prepareReplacementAdvancementSelections(confirmed, "q-f", ["q-1", "q-2"], "missing")).toThrow(/unknown/i);
+    expect(() => prepareReplacementAdvancementSelections(confirmed, "q-other", ["q-1"], snapshotId)).toThrow(/wrong rule/i);
+    const superseded = { ...confirmed, advancementSnapshots: [...confirmed.advancementSnapshots, { ...confirmed.advancementSnapshots[0]!, id: "newer-snapshot" }] };
+    expect(() => prepareReplacementAdvancementSelections(superseded, "q-f", ["q-1", "q-2"], snapshotId)).toThrow(/superseded/i);
+  });
+
+  test("keeps four-to-two replacement allocation balanced at six cars per semifinal", () => {
+    let meet = state([completed("q1"), completed("q2"), completed("q3"), completed("q4"), bracket("s1", "semifinal"), bracket("s2", "semifinal")]);
+    meet.advancementRules = ["q1", "q2", "q3", "q4"].map((source) => rule(`${source}-semis`, source, ["s1", "s2"], 3));
+    for (const source of ["q1", "q2", "q3", "q4"]) meet = confirmAdvancementPure(meet, `${source}-semis`, { actorId: "organiser", confirmedAt: `2026-08-14T0${source.slice(1)}:00:00Z` });
+    const snapshotId = meet.advancementSnapshots.find((snapshot) => snapshot.ruleId === "q1-semis")!.id;
+    const replacement = prepareReplacementAdvancementSelections(meet, "q1-semis", ["q1-1", "q1-2", "q1-3"], snapshotId);
+    const retained = meet.brackets.map((destination) => ({ id: destination.id, count: destination.event.entries.filter((entry) => entry.active).length - destination.lineage.filter((lineage) => lineage.snapshotId === snapshotId).length }));
+    expect(retained.find((item) => item.id === "s1")!.count + replacement.filter((selection) => selection.destinationBracketId === "s1").length).toBe(6);
+    expect(retained.find((item) => item.id === "s2")!.count + replacement.filter((selection) => selection.destinationBracketId === "s2").length).toBe(6);
   });
 });

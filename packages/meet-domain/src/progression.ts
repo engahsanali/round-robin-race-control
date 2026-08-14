@@ -39,6 +39,27 @@ export function eligibleAdvancementSelections(state: MeetStateV1, ruleId: string
  * authoritative PostgreSQL transaction.
  */
 export function prepareAdvancementSelections(state: MeetStateV1, ruleId: string, selectedIds: readonly string[]): AdvancementPreview["selected"] {
+  return prepareSelections(state, ruleId, selectedIds);
+}
+
+/**
+ * Prepares a replacement while treating only the named current snapshot's
+ * generated lineage as removable. Every unrelated active car and lineage
+ * continues to participate in duplicate and destination-capacity checks.
+ */
+export function prepareReplacementAdvancementSelections(state: MeetStateV1, ruleId: string, selectedIds: readonly string[], currentSnapshotId: string): AdvancementPreview["selected"] {
+  const snapshotIndex = state.advancementSnapshots.findIndex((snapshot) => snapshot.id === currentSnapshotId);
+  if (snapshotIndex < 0) throw new Error(`Unknown advancement snapshot: ${currentSnapshotId}`);
+  const snapshot = state.advancementSnapshots[snapshotIndex]!;
+  if (snapshot.ruleId !== ruleId) throw new Error("Advancement snapshot belongs to the wrong rule");
+  if (state.advancementSnapshots.slice(snapshotIndex + 1).some((candidate) => candidate.ruleId === ruleId)
+      || snapshot.selections.some((selection) => !state.brackets.some((destination) => destination.id === selection.destinationBracketId && destination.lineage.some((lineage) => lineage.snapshotId === currentSnapshotId && lineage.sourceCarId === selection.sourceCarId && lineage.ruleId === ruleId)))) {
+    throw new Error("Advancement snapshot has been superseded");
+  }
+  return prepareSelections(state, ruleId, selectedIds, currentSnapshotId);
+}
+
+function prepareSelections(state: MeetStateV1, ruleId: string, selectedIds: readonly string[], ignoredSnapshotId?: string): AdvancementPreview["selected"] {
   const rule = ruleFor(state, ruleId);
   const preview = previewAdvancement(state, ruleId);
   if (rule.status !== "active" || preview.staleSource) throw new Error("Advancement preview cannot be confirmed");
@@ -52,16 +73,20 @@ export function prepareAdvancementSelections(state: MeetStateV1, ruleId: string,
   const candidates = selectedIds.map((sourceCarId) => {
     const selection = eligible.get(sourceCarId);
     if (!selection) throw new Error(`Advancement selection contains an ineligible car: ${sourceCarId}`);
-    if (isDuplicate(state, preview.sourceBracketId, sourceCarId)) throw new Error(`Advancement selection is already active: ${sourceCarId}`);
+    if (isDuplicate(state, preview.sourceBracketId, sourceCarId, ignoredSnapshotId)) throw new Error(`Advancement selection is already active: ${sourceCarId}`);
     return selection;
   }).sort((left, right) => left.rank - right.rank || compareCodeUnits(left.sourceCarId, right.sourceCarId));
-  const allocated = allocateSelections(state, rule, candidates);
-  if (capacityIssuesFor(state, rule, allocated).length > 0) throw new Error("Advancement destination capacity is exceeded");
+  const allocated = allocateSelectionsInternal(state, rule, candidates, ignoredSnapshotId);
+  if (capacityIssuesFor(state, rule, allocated, ignoredSnapshotId).length > 0) throw new Error("Advancement destination capacity is exceeded");
   return allocated;
 }
 
 export function allocateSelections(state: MeetStateV1, rule: AdvancementRule, candidates: ReadonlyArray<{ carId: string; rank: number | null }> | ReadonlyArray<{ sourceCarId: string; rank: number }>): AdvancementPreview["selected"] {
-  const counts = new Map(rule.destinationOrder.map((id) => [id, bracketFor(state, id).event.entries.filter((entry) => entry.active).length]));
+  return allocateSelectionsInternal(state, rule, candidates);
+}
+
+function allocateSelectionsInternal(state: MeetStateV1, rule: AdvancementRule, candidates: ReadonlyArray<{ carId: string; rank: number | null }> | ReadonlyArray<{ sourceCarId: string; rank: number }>, ignoredSnapshotId?: string): AdvancementPreview["selected"] {
+  const counts = new Map(rule.destinationOrder.map((id) => [id, destinationOccupancy(state, id, ignoredSnapshotId)]));
   return candidates.map((candidate) => {
     const sourceCarId = "carId" in candidate ? candidate.carId : candidate.sourceCarId;
     const rank = candidate.rank ?? rule.topN;
@@ -101,7 +126,7 @@ function rankGroups(rankings: readonly RankingRow[]): Array<{ start: number; end
     return { start, end: start + ordered.length - 1, rows: ordered };
   }).sort((left, right) => left.start - right.start || compareCodeUnits(left.rows[0]!.carId, right.rows[0]!.carId));
 }
-function isDuplicate(state: MeetStateV1, sourceBracketId: string, sourceCarId: string): boolean { return state.brackets.some((bracket) => bracket.lineage.some((lineage) => lineage.sourceBracketId === sourceBracketId && lineage.sourceCarId === sourceCarId)); }
+function isDuplicate(state: MeetStateV1, sourceBracketId: string, sourceCarId: string, ignoredSnapshotId?: string): boolean { return state.brackets.some((bracket) => bracket.lineage.some((lineage) => lineage.snapshotId !== ignoredSnapshotId && lineage.sourceBracketId === sourceBracketId && lineage.sourceCarId === sourceCarId)); }
 
 export function ruleFor(state: MeetStateV1, ruleId: string): AdvancementRule {
   const rule = state.advancementRules.find((item) => item.id === ruleId);
@@ -115,11 +140,19 @@ export function bracketFor(state: MeetStateV1, bracketId: string) {
   return bracket;
 }
 
-function capacityIssuesFor(state: MeetStateV1, rule: AdvancementRule, selected: AdvancementPreview["selected"]): AdvancementPreview["capacityIssues"] {
+function capacityIssuesFor(state: MeetStateV1, rule: AdvancementRule, selected: AdvancementPreview["selected"], ignoredSnapshotId?: string): AdvancementPreview["capacityIssues"] {
   return rule.destinationOrder.flatMap((destinationBracketId) => {
     const bracket = bracketFor(state, destinationBracketId);
     const required = selected.filter((selection) => selection.destinationBracketId === destinationBracketId).length;
-    const available = rule.destinationCapacity - bracket.event.entries.filter((entry) => entry.active).length;
+    const available = rule.destinationCapacity - destinationOccupancy(state, bracket.id, ignoredSnapshotId);
     return required > available ? [{ destinationBracketId, available: Math.max(0, available), required }] : [];
   });
+}
+
+function destinationOccupancy(state: MeetStateV1, destinationBracketId: string, ignoredSnapshotId?: string): number {
+  const bracket = bracketFor(state, destinationBracketId);
+  const active = bracket.event.entries.filter((entry) => entry.active).length;
+  if (!ignoredSnapshotId) return active;
+  const removable = bracket.lineage.filter((lineage) => lineage.snapshotId === ignoredSnapshotId).length;
+  return Math.max(0, active - removable);
 }
