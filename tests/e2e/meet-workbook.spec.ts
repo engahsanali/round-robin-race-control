@@ -5,7 +5,7 @@ test.describe("Meet workbook root workspace", () => {
 
   test("keeps one document route, contained overflow and keyboard race controls", async ({ page }) => {
     await page.goto(meetUrl);
-    await page.getByRole("button", { name: /explore read-only demo/i }).click();
+    await page.getByRole("button", { name: /explore local read-only demo/i }).click();
     await expect(page).toHaveURL(/\/$/);
     await expect(page.getByRole("main")).toHaveCSS("overflow-x", /visible|clip|hidden/);
     await expect(page.getByText("Made by Cesar Lacsamana and Ahsan Ali").first()).toBeVisible();
@@ -17,7 +17,7 @@ test.describe("Meet workbook root workspace", () => {
 
   test("keeps advancement and accountability summaries in the printable workbook", async ({ page }) => {
     await page.goto(meetUrl);
-    await page.getByRole("button", { name: /explore read-only demo/i }).click();
+    await page.getByRole("button", { name: /explore local read-only demo/i }).click();
     await page.emulateMedia({ media: "print" });
     await expect(page.getByRole("heading", { name: /^advancement$/i })).toBeVisible();
     await expect(page.getByRole("heading", { name: /audit timeline/i })).toBeVisible();
@@ -42,15 +42,19 @@ test.describe("Meet workbook root workspace", () => {
     test(`has no whole-document overflow at ${size.name} size`, async ({ page }) => {
       await page.setViewportSize({ width: size.width, height: size.height });
       await page.goto(meetUrl);
-      await page.getByRole("button", { name: /explore read-only demo/i }).click();
+      await page.getByRole("button", { name: /explore local read-only demo/i }).click();
       expect(await page.evaluate(() => ({ document: document.documentElement.scrollWidth, viewport: innerWidth }))).toEqual({ document: size.width, viewport: size.width });
       if (size.width <= 768) await expect(page.getByLabel("Active bracket")).toBeVisible();
       else await expect(page.getByRole("complementary", { name: /bracket and stage index/i })).toBeVisible();
       const printTarget = page.getByRole("button", { name: /print selected/i });
       const target = await printTarget.boundingBox();
       expect(target?.height ?? 0).toBeGreaterThanOrEqual(44);
-      await page.getByRole("link", { name: /qualifier 2/i }).focus();
-      await page.keyboard.press("Enter");
+      if (size.width <= 768) {
+        await page.getByLabel("Active bracket").selectOption({ label: "Qualifier 2 · qualifier" });
+      } else {
+        await page.getByRole("complementary", { name: /bracket and stage index/i }).getByRole("link", { name: /qualifier 2/i }).focus();
+        await page.keyboard.press("Enter");
+      }
       await expect(page).toHaveURL(/\/$/);
     });
   }

@@ -23,8 +23,8 @@ api_url = "http://127.0.0.1"
 
 [auth]
 enabled = true
-site_url = "http://127.0.0.1:5173"
-additional_redirect_urls = ["http://localhost:5173"]
+site_url = "http://127.0.0.1:4399"
+additional_redirect_urls = ["http://localhost:4399", "http://127.0.0.1:5173", "http://localhost:5173"]
 jwt_expiry = 3600
 enable_signup = true
 enable_anonymous_sign_ins = false

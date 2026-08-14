@@ -1,16 +1,18 @@
 # Round Robin Race Control
 
-An offline-first, three-lane round-robin race event suite with two editions:
+An accessible three-lane round-robin race event suite with three editions:
 
 - **Solo** — one self-contained `index.html` with no runtime dependencies.
 - **Pro** — an installable React PWA with local event history, a visual Schedule Lab, live race command, spectator presentation, standings, insights, finals, exports, and recovery.
+- **Meet** — a hosted, account-ready multi-bracket workbook with advancement, realtime collaboration, audit history, recovery, reports, and a zero-network read-only demo.
 
-Both editions keep event data on the current device and include deterministic scheduling designed to minimise repeated opponents while balancing appearances and lanes.
+All editions use deterministic scheduling designed to minimise repeated opponents while balancing appearances and lanes. Solo and Pro keep event data on the current device; Meet adds an organisation-isolated Supabase backend for authorised officials.
 
 ## Play online
 
 - [Solo — one self-contained HTML file](https://round-robin-race-control-solo.netlify.app/)
 - [Pro — installable advanced PWA](https://round-robin-race-control-pro.netlify.app/)
+- [Meet — hosted multi-bracket workbook](https://round-robin-race-control-meet.netlify.app/)
 
 ## Highlights
 
@@ -41,6 +43,20 @@ pnpm test:pro:e2e
 
 The production output is written to `apps/pro/dist`.
 
+### Meet
+
+```bash
+pnpm install
+pnpm --filter @rr3/meet test
+pnpm --filter @rr3/meet build
+node scripts/verify-meet-build.mjs
+pnpm test:meet:e2e
+```
+
+The deterministic default E2E gate builds and verifies Meet, starts an owned localhost-only production server on `127.0.0.1:4399`, and runs the zero-network demo in Chromium. Live Supabase and deployed Netlify suites are explicit opt-ins through `RR3_MEET_LIVE_E2E=1` and `RR3_MEET_DEPLOYED_E2E=1`.
+
+Meet's Netlify project uses `apps/meet` as its base, runs `pnpm build`, and publishes `dist`. Only `VITE_SUPABASE_URL` and `VITE_SUPABASE_PUBLISHABLE_KEY` are browser-visible environment settings; privileged keys must never be configured for the frontend.
+
 ## Verification
 
 ```bash
@@ -48,11 +64,13 @@ pnpm check
 node scripts/verify-single-file.mjs
 node scripts/verify-pro-build.mjs
 node --test scripts/verify-pro-build.test.mjs
+node --test scripts/verify-meet-build.test.mjs scripts/serve-meet-build.test.mjs
+node scripts/verify-meet-migrations.mjs
 ```
 
 ## Privacy and operation
 
-There is no account, backend, telemetry, or cross-device sync. Official event state is stored locally in the browser. Use the JSON export and Event Pack for portable backups.
+Solo and Pro have no account, backend, telemetry, or cross-device sync. Meet's official workspace uses Supabase Auth, organisation-isolated Postgres/RLS and Realtime; its local demo constructs no Supabase client and sends no production traffic. No edition includes advertising trackers. Use validated JSON backups and Event Packs for portable recovery and reporting.
 
 ## Credits
 

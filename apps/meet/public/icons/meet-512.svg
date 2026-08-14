@@ -1,0 +1,9 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512" role="img" aria-labelledby="title">
+  <title id="title">RR 3 Meet Edition</title>
+  <rect width="512" height="512" rx="112" fill="#08121b"/>
+  <path d="M88 154h336M88 256h336M88 358h336" stroke="#23d8c0" stroke-width="28" stroke-linecap="round"/>
+  <circle cx="154" cy="154" r="38" fill="#ffb454"/>
+  <circle cx="282" cy="256" r="38" fill="#ffb454"/>
+  <circle cx="378" cy="358" r="38" fill="#ffb454"/>
+  <text x="256" y="474" fill="#f5fbff" font-family="Arial, sans-serif" font-size="64" font-weight="700" text-anchor="middle">RR · 3</text>
+</svg>
