@@ -46,4 +46,18 @@ describe("TeamDrawer", () => {
     expect(screen.queryByRole("dialog")).toBeNull();
     expect(trigger).toBe(document.activeElement);
   });
+
+  it("traps forward and reverse Tab focus inside the removal dialog", async () => {
+    render(<TeamDrawer role="owner" members={members} actions={actions()} />);
+    await userEvent.click(screen.getByRole("button", { name: /remove viewer two/i }));
+    const reason = screen.getByLabelText(/reason/i);
+    const cancel = screen.getByRole("button", { name: /cancel/i });
+    expect(reason).toBe(document.activeElement);
+    await userEvent.tab();
+    expect(cancel).toBe(document.activeElement);
+    await userEvent.tab();
+    expect(reason).toBe(document.activeElement);
+    await userEvent.tab({ shift: true });
+    expect(cancel).toBe(document.activeElement);
+  });
 });

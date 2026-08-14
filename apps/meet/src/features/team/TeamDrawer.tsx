@@ -1,4 +1,4 @@
-import { useMemo, useRef, useState } from "react";
+import { useMemo, useRef, useState, type KeyboardEvent } from "react";
 import type { OrganisationRole, TeamMember } from "../../data/meetRepository";
 
 export type TeamActions = {
@@ -23,6 +23,25 @@ export function TeamDrawer({ role, members, actions }: { role: OrganisationRole;
     setRemoving(null);
     setReason("");
     removalTrigger.current?.focus();
+  };
+  const handleDialogKeyDown = (event: KeyboardEvent<HTMLElement>) => {
+    if (event.key === "Escape") {
+      event.preventDefault();
+      closeRemoval();
+      return;
+    }
+    if (event.key !== "Tab") return;
+    const focusable = Array.from(event.currentTarget.querySelectorAll<HTMLElement>("textarea, button:not([disabled]), input:not([disabled]), select:not([disabled]), [tabindex]:not([tabindex='-1'])"));
+    const first = focusable[0];
+    const last = focusable.at(-1);
+    if (!first || !last) return;
+    if (event.shiftKey && document.activeElement === first) {
+      event.preventDefault();
+      last.focus();
+    } else if (!event.shiftKey && document.activeElement === last) {
+      event.preventDefault();
+      first.focus();
+    }
   };
 
   return (
@@ -58,7 +77,7 @@ export function TeamDrawer({ role, members, actions }: { role: OrganisationRole;
         </ul>
       </div>
       {removing ? (
-        <section className="remove-confirmation" role="dialog" aria-modal="true" aria-labelledby="remove-heading" onKeyDown={(event) => { if (event.key === "Escape") { event.preventDefault(); closeRemoval(); } }}>
+        <section className="remove-confirmation" role="dialog" aria-modal="true" aria-labelledby="remove-heading" onKeyDown={handleDialogKeyDown}>
           <h3 id="remove-heading">Remove {removing.displayName}?</h3>
           <p>The server will prevent removal of the final owner.</p>
           <label>

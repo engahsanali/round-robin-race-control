@@ -144,7 +144,7 @@ export function AuthBoundary({ auth, children }: { auth: AuthPort; children: Rea
       if (!active) return;
       setSession(nextSession);
       if (event === "PASSWORD_RECOVERY") setRecoveryMode(true);
-      if (event === "SIGNED_OUT") setRecoveryMode(false);
+      if (event === "SIGNED_OUT" || event === "USER_UPDATED") setRecoveryMode(false);
     });
     const bootstrap = async () => {
       if (!callbackStarted.current) {
