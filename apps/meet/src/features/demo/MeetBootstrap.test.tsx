@@ -4,6 +4,14 @@ import { describe, expect, it, vi } from "vitest";
 import { MeetBootstrap } from "./MeetBootstrap";
 
 describe("MeetBootstrap", () => {
+  it("keeps the official runtime at zero calls when demo is chosen explicitly", async () => {
+    const loadOfficialRuntime = vi.fn(async () => { throw new Error("official runtime must stay unloaded"); });
+    render(<MeetBootstrap search="" loadOfficialRuntime={loadOfficialRuntime} />);
+    await userEvent.click(screen.getByRole("button", { name: /explore local read-only demo/i }));
+    expect(await screen.findByRole("heading", { name: /demo championship meet/i })).not.toBeNull();
+    expect(loadOfficialRuntime).not.toHaveBeenCalled();
+  });
+
   it("opens query-string demo without loading official Auth, Supabase or repositories", async () => {
     const loadOfficialRuntime = vi.fn(async () => { throw new Error("official runtime must stay unloaded"); });
     render(<MeetBootstrap search="?demo=1" loadOfficialRuntime={loadOfficialRuntime} />);

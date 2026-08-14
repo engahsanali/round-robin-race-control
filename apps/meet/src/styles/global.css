@@ -200,6 +200,16 @@ body:has(.official-meet-shell) .brand-header { position: relative; }
 .advancement-rule dl div, .admin-facts div { min-width: 0; padding: .45rem; border: 1px solid var(--line); border-radius: .45rem; }
 .advancement-rule dt, .admin-facts dt { color: var(--muted); font-size: .65rem; text-transform: uppercase; }
 .advancement-rule dd, .admin-facts dd { margin: .15rem 0 0; font-weight: 900; overflow-wrap: anywhere; }
+.advancement-history-summary { margin-block: .75rem; padding: .65rem; border: 1px solid var(--line); border-radius: .6rem; background: rgb(5 12 17 / 45%); }
+.advancement-history-summary h5 { margin: 0 0 .45rem; }
+.advancement-history-summary > ol { display: grid; gap: .5rem; margin: 0; padding: 0; list-style: none; }
+.advancement-history-summary > ol > li { padding: .55rem; border-left: 3px solid var(--cyan); background: var(--surface-soft); }
+.advancement-history-summary header { display: flex; flex-wrap: wrap; gap: .5rem; justify-content: space-between; }
+.advancement-history-summary p, .advancement-history-summary ul { margin: .3rem 0 0; font-size: .78rem; overflow-wrap: anywhere; }
+.revision-manifest { display: grid; grid-template-columns: repeat(auto-fit, minmax(8rem, 1fr)); gap: .4rem; }
+.revision-manifest div { padding: .45rem; border: 1px solid var(--line); border-radius: .45rem; }
+.revision-manifest dt { color: var(--muted); font-size: .68rem; text-transform: uppercase; }
+.revision-manifest dd { margin: .2rem 0 0; font-weight: 850; }
 .advancement-state { padding: .3rem .5rem; border: 1px solid var(--cyan); border-radius: 999px; color: var(--cyan); font-size: .72rem; font-weight: 900; white-space: nowrap; }
 .state-upstream-stale .advancement-state, .state-capacity-conflict .advancement-state, .state-conflict .advancement-state { border-color: var(--danger); color: var(--danger); }
 .advancement-rule[class*="state-tie-decision"] .advancement-state { border-color: var(--warning); color: var(--warning); }

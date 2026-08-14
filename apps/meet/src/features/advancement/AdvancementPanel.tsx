@@ -49,6 +49,7 @@ export function AdvancementPanel({ meet, history, canManage, onCommit, onNavigat
         <header><div><h4>{source.name}</h4><a href={`#bracket-${source.id}`} onClick={(event) => { if (onNavigateBracket) { event.preventDefault(); onNavigateBracket(source.id); } }}>Open {source.name}</a></div><span className="advancement-state">{status}</span></header>
         <p>Top {rule.topN} → {rule.destinationOrder.map((id) => byId.get(id)?.name ?? "Unknown").join(", ")}</p>
         <dl><div><dt>Source version</dt><dd>{source.version}</dd></div><div><dt>Rule version</dt><dd>{rule.version ?? 1}</dd></div><div><dt>Automatic</dt><dd>{preview.selected.length}</dd></div><div><dt>Cutoff tie</dt><dd>{preview.tiedCarIds.length}</dd></div></dl>
+        <AdvancementHistorySummary meet={meet} history={history} ruleId={rule.id} sourceName={source.name} currentSnapshotId={current?.id ?? null} />
         {preview.capacityIssues.map((issue) => <p role="alert" key={issue.destinationBracketId}>{byId.get(issue.destinationBracketId)?.name}: {issue.required} required, {issue.available} available.</p>)}
         {staleDependency ? <p role="alert"><strong>{staleDependency.name}</strong> has stale upstream advancement lineage. <a href={`#bracket-${staleDependency.id}`} onClick={(event) => { if (onNavigateBracket) { event.preventDefault(); onNavigateBracket(staleDependency.id); } }}>Open {staleDependency.name}</a>, then refresh and reconfirm its upstream advancement first.</p> : null}
         <button type="button" disabled={blocked || pending.current.has(rule.id)} onClick={() => setActiveRuleId(rule.id)}>{current ? "Review and reconfirm" : "Review advancement"}</button>
@@ -64,6 +65,19 @@ export function AdvancementPanel({ meet, history, canManage, onCommit, onNavigat
       if (result.ok) setActiveRuleId(null);
     }} /> : null}
   </section>;
+}
+
+function AdvancementHistorySummary({ meet, history, ruleId, sourceName, currentSnapshotId }: { meet: MeetStateV1; history: AdvancementHistory; ruleId: string; sourceName: string; currentSnapshotId: string | null }) {
+  const snapshots = history.snapshots.filter((snapshot) => snapshot.ruleId === ruleId);
+  if (snapshots.length === 0) return null;
+  const entries = new Map(meet.brackets.flatMap((bracket) => bracket.event.entries.map((entry) => [entry.id, entry] as const)));
+  const brackets = new Map(meet.brackets.map((bracket) => [bracket.id, bracket]));
+  const inferredCurrent = currentSnapshotId ?? snapshots.slice().reverse().find((snapshot) => !snapshot.replacedBySnapshotId && !snapshot.stale)?.id ?? null;
+  return <section role="region" aria-label={`${sourceName} advancement history`} className="advancement-history-summary"><h5>Authoritative history</h5><ol>{snapshots.slice().reverse().map((snapshot) => {
+    const labels = [snapshot.id === inferredCurrent ? "Current" : null, snapshot.replacedBySnapshotId ? "Superseded" : null, snapshot.stale ? "stale" : null].filter(Boolean);
+    const selections = history.selections.filter((selection) => selection.snapshotId === snapshot.id);
+    return <li key={snapshot.id}><header><strong>{labels.join(" · ") || "Historical"}</strong><time dateTime={snapshot.confirmedAt}>{snapshot.confirmedAt}</time></header><p>Source {sourceName} · version {snapshot.sourceResultVersion}</p><p>Reason: {snapshot.reason || "No reason recorded"}</p>{selections.length ? <ul>{selections.map((selection) => { const car = entries.get(selection.sourceCarId); return <li key={selection.id}>{sourceName} · #{car?.carNumber ?? "?"} {car?.name ?? "Unknown car"} · rank {selection.rank} → {brackets.get(selection.destinationBracketId)?.name ?? "Unknown destination"}</li>; })}</ul> : <p>No placement selections recorded.</p>}</li>;
+  })}</ol></section>;
 }
 
 function findStaleDependency(meet: MeetStateV1, sourceBracketId: string): { id: string; name: string } | null {

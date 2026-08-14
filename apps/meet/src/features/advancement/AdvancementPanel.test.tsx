@@ -27,6 +27,31 @@ function progression(topN = 3, destinations = 1) {
 const emptyHistory: AdvancementHistory = { snapshots: [], selections: [] };
 
 describe("AdvancementPanel", () => {
+  it("shows safe read-only current, superseded and stale advancement history with placements", () => {
+    const meet = progression(3);
+    const source = meet.brackets[0]!;
+    const destination = meet.brackets[1]!;
+    const selected = source.event.entries[0]!;
+    const history: AdvancementHistory = {
+      snapshots: [
+        { id: "snapshot-old", ruleId: "rule-source", sourceBracketId: source.id, sourceResultVersion: 1, stale: true, replacedBySnapshotId: "snapshot-current", confirmedBy: "official-1", reason: "Result appealed <script>alert(1)</script>", confirmedAt: "2026-08-14T09:00:00Z" },
+        { id: "snapshot-current", ruleId: "rule-source", sourceBracketId: source.id, sourceResultVersion: 2, stale: false, replacedBySnapshotId: null, confirmedBy: "official-2", reason: "Finish-line review", confirmedAt: "2026-08-14T10:00:00Z" },
+      ],
+      selections: [
+        { id: "selection-old", snapshotId: "snapshot-old", ruleId: "rule-source", sourceBracketId: source.id, sourceCarId: selected.id, destinationBracketId: destination.id, destinationCarId: null, rank: 1 },
+        { id: "selection-current", snapshotId: "snapshot-current", ruleId: "rule-source", sourceBracketId: source.id, sourceCarId: selected.id, destinationBracketId: destination.id, destinationCarId: null, rank: 1 },
+      ],
+    };
+    render(<AdvancementPanel meet={meet} history={history} canManage={false} onCommit={async () => ({ ok: false, message: "Read-only" })} />);
+
+    const summary = screen.getByRole("region", { name: /qualifier 1 advancement history/i });
+    expect(summary.textContent).toMatch(/Current.*Finish-line review/i);
+    expect(summary.textContent).toMatch(/Superseded.*stale.*Result appealed <script>alert\(1\)<\/script>/i);
+    expect(summary.textContent).toMatch(/Qualifier 1.*#1.*Car 1.*rank 1.*Final 1/i);
+    expect(document.querySelector("script")).toBeNull();
+    expect(screen.queryByRole("dialog")).toBeNull();
+  });
+
   it("shows a versioned automatic preview and explicitly confirms balanced destination placements", async () => {
     const meet = progression(3, 2);
     const commits: AdvancementCommitInput[] = [];
