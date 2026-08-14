@@ -10,6 +10,7 @@ const REQUIRED_FILES = [
   "202608140005_meet_ranking_and_access_hardening.sql",
   "202608140006_meet_preliminary_and_identity_hardening.sql",
   "202608140007_meet_workbook_commands.sql",
+  "202608140008_registration_audit_reassignment.sql",
 ];
 
 const OWNED_TABLES = [
@@ -136,6 +137,12 @@ export function verifyWorkbookCommandInvariant(source) {
       && snapshotLoad >= 0 && capacitySimulation > snapshotLoad,
     "workbook_lifecycle_break", "post-advancement lifecycle",
     "Metadata saves after advancement must not double-allocate capacity, and deleted brackets must retain organisation-owned audit history",
+  );
+  requireMarker(
+    /--\s*REGISTRATION AUDIT REASSIGNMENT FIX V8/i.test(latest)
+      && /left\s+join\s+public\.cars\s+existing_car\s+on\s+existing_car\.id\s*=\s*\(row_value->>'carId'\)::uuid[\s\S]*?left\s+join\s+public\.participants\s+previous_participant\s+on\s+previous_participant\.id\s*=\s*existing_car\.participant_id/i.test(latest),
+    "registration_audit_reassignment", "save_registration_batch audit",
+    "Registration reassignment audits must resolve the prior participant through the existing car, never the incoming participant ID",
   );
   for (const rpc of ["save_meet_workbook", "save_registration_batch", "activate_bracket_schedule"]) {
     requireMarker(

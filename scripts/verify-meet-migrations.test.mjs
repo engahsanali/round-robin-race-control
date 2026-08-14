@@ -28,7 +28,7 @@ test("accepts the checked-in Meet migration security contract", async () => {
   const result = await verifier.verifyMeetMigrations(migrationsDir);
   assert.deepEqual(result.issues, []);
   assert.equal(result.ok, true);
-  assert.equal(result.schemaVersion, 7);
+  assert.equal(result.schemaVersion, 8);
 });
 
 for (const fixture of fixtures) {
@@ -43,6 +43,7 @@ for (const fixture of fixtures) {
         "202608140005_meet_ranking_and_access_hardening.sql",
         "202608140006_meet_preliminary_and_identity_hardening.sql",
         "202608140007_meet_workbook_commands.sql",
+        "202608140008_registration_audit_reassignment.sql",
       ]) {
         const original = await readFile(path.join(migrationsDir, fileName), "utf8");
         const mutated = fileName === fixture.file

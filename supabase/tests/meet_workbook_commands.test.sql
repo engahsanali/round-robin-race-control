@@ -1,7 +1,7 @@
 begin;
 
 create extension if not exists pgtap with schema extensions;
-select plan(61);
+select plan(65);
 
 insert into auth.users (id, instance_id, aud, role, email, encrypted_password, email_confirmed_at, created_at, updated_at)
 values
@@ -201,6 +201,42 @@ select throws_ok(
   'MEET_CONFIRMED_RESULTS_EXIST', 'confirmed results can never be silently replaced'
 );
 select is((select count(*) from public.heats where status = 'confirmed' and bracket_id = '72000000-0000-0000-0000-000000000001'), 1::bigint, 'confirmed result guard preserves the official heat');
+
+reset role;
+insert into public.brackets (id, organisation_id, meet_id, name, stage, display_order)
+select '7a000000-0000-0000-0000-000000000001', '71000000-0000-0000-0000-000000000001',
+  (payload->>'meet_id')::uuid, 'Audit reassignment fixture', 'qualifier', 4
+from workbook_result;
+insert into public.participants (id, organisation_id, bracket_id, name)
+values
+  ('7a000000-0000-0000-0000-000000000002', '71000000-0000-0000-0000-000000000001', '7a000000-0000-0000-0000-000000000001', 'Participant A'),
+  ('7a000000-0000-0000-0000-000000000003', '71000000-0000-0000-0000-000000000001', '7a000000-0000-0000-0000-000000000001', 'Participant B');
+insert into public.cars (id, organisation_id, bracket_id, participant_id, car_number, name)
+values ('7a000000-0000-0000-0000-000000000004', '71000000-0000-0000-0000-000000000001',
+  '7a000000-0000-0000-0000-000000000001', '7a000000-0000-0000-0000-000000000002', 42, 'Reassigned car');
+set local role authenticated;
+set local request.jwt.claim.sub = '70000000-0000-0000-0000-000000000002';
+select public.save_registration_batch(
+  '7a000000-0000-0000-0000-000000000001', 1,
+  '[{"participantId":"7a000000-0000-0000-0000-000000000003","participantName":"Participant B","email":"","phone":"","notes":"","carId":"7a000000-0000-0000-0000-000000000004","carNumber":42,"carName":"Reassigned car","active":true}]'::jsonb,
+  '7a000000-0000-0000-0000-000000000005'
+);
+select is((select before_state->'participant'->>'id' from public.audit_events
+  where request_id = '7a000000-0000-0000-0000-000000000005'
+    and action = 'registration.row_saved.7a000000-0000-0000-0000-000000000004'),
+  '7a000000-0000-0000-0000-000000000002', 'reassignment audit before participant is participant A');
+select is((select before_state->'car'->>'participant_id' from public.audit_events
+  where request_id = '7a000000-0000-0000-0000-000000000005'
+    and action = 'registration.row_saved.7a000000-0000-0000-0000-000000000004'),
+  '7a000000-0000-0000-0000-000000000002', 'reassignment audit before car still belongs to participant A');
+select is((select after_state->'participant'->>'id' from public.audit_events
+  where request_id = '7a000000-0000-0000-0000-000000000005'
+    and action = 'registration.row_saved.7a000000-0000-0000-0000-000000000004'),
+  '7a000000-0000-0000-0000-000000000003', 'reassignment audit after participant is participant B');
+select is((select after_state->'car'->>'participant_id' from public.audit_events
+  where request_id = '7a000000-0000-0000-0000-000000000005'
+    and action = 'registration.row_saved.7a000000-0000-0000-0000-000000000004'),
+  '7a000000-0000-0000-0000-000000000003', 'reassignment audit after car belongs to participant B');
 
 reset role;
 select ok(exists (

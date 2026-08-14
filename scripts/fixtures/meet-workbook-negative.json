@@ -48,5 +48,10 @@
     "name": "post-advancement metadata save or audit retention is broken",
     "expectedCode": "workbook_lifecycle_break",
     "sql": "-- WORKBOOK COMMANDS V7\nalter table public.audit_events drop constraint audit_events_bracket_id_fkey;\nraise exception using message = 'MEET_WORKBOOK_IN_USE';"
+  },
+  {
+    "name": "registration reassignment audits incoming participant as prior participant",
+    "expectedCode": "registration_audit_reassignment",
+    "sql": "-- WORKBOOK COMMANDS V7\nselect row_value->>'participantId' as prior_participant;"
   }
 ]
