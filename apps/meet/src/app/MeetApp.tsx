@@ -8,6 +8,7 @@ import { createDemoRepository } from "../data/demoRepository";
 import { createRequestId, type CommandReceipt, type MeetRepository, type MeetSummary, type OrganisationRole, type OrganisationSummary, type TeamMember } from "../data/meetRepository";
 import { useMeetStore } from "../state/MeetStore";
 import { WorkbookWorkspace, type WorkbookActions, type WorkbookActionResult } from "../features/workbook/WorkbookWorkspace";
+import { finishCommittedWorkbookAction } from "../features/workbook/workbookActionResult";
 
 const CREATOR_CREDIT = "Made by Cesar Lacsamana and Ahsan Ali";
 
@@ -209,9 +210,7 @@ function OfficialWorkspace({ repository, organisation, organisations, onSelect, 
   }), [organisation.id, repository, runCommand]);
   const asAction = useCallback(async <T,>(key: string, command: (requestId: string) => Promise<CommandReceipt<T>>, refresh = true): Promise<WorkbookActionResult> => {
     const receipt = await run(key, command);
-    if (!receipt.ok) return { ok: false, message: receipt.message };
-    if (refresh) await reloadMeet();
-    return { ok: true, message: receipt.advisory?.message ?? "Saved with an official audit receipt." };
+    return finishCommittedWorkbookAction(receipt, refresh ? () => reloadMeet() : null);
   }, [reloadMeet, runCommand]);
   const workbookActions = useMemo<WorkbookActions>(() => ({
     saveSetup: async (snapshot) => {
@@ -221,8 +220,7 @@ function OfficialWorkspace({ repository, organisation, organisations, onSelect, 
       const meetId = receipt.value.meet_id;
       setSelectedMeetId(meetId);
       setMeets((current) => current.some((meet) => meet.id === meetId) ? current : [...current, { id: meetId, organisationId: organisation.id, name: snapshot.meet.name, venue: snapshot.meet.venue, date: snapshot.meet.date, status: snapshot.meet.status, version: receipt.value.version }]);
-      await reloadMeet(meetId);
-      return { ok: true, message: "Meet workbook saved atomically." };
+      return finishCommittedWorkbookAction(receipt, () => reloadMeet(meetId), "Meet workbook saved atomically.");
     },
     saveRegistration: ({ bracketId, expectedVersion, rows }) => asAction(`registration:${bracketId}`, (requestId) => repository.saveRegistrationBatch(bracketId, expectedVersion, rows, requestId)),
     activateSchedule: ({ bracketId, expectedVersion, candidate, replacementReason }) => asAction(`schedule:${bracketId}`, (requestId) => repository.activateBracketSchedule(bracketId, expectedVersion, candidate, replacementReason, requestId)),

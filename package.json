@@ -9,7 +9,8 @@
     "test:watch": "vitest",
     "typecheck": "tsc -b --pretty false",
     "check": "pnpm typecheck && pnpm test",
-    "test:pro:e2e": "cross-env RR3_PRO_GATE=1 RR3_PRO_URL=http://127.0.0.1:4387 RR3_PRO_PORT=4387 playwright test pro- --project=chromium --workers=1"
+    "test:pro:e2e": "cross-env RR3_PRO_GATE=1 RR3_PRO_URL=http://127.0.0.1:4387 RR3_PRO_PORT=4387 playwright test pro- --project=chromium --workers=1",
+    "test:meet:workbook:e2e": "cross-env RR3_MEET_WORKBOOK_GATE=1 RR3_MEET_URL=http://127.0.0.1:4399 RR3_MEET_PORT=4399 playwright test meet-workbook --project=chromium --workers=1"
   },
   "devDependencies": {
     "@playwright/test": "^1.55.0",

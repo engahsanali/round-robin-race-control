@@ -106,11 +106,12 @@ body:has(.official-meet-shell) .brand-header { position: relative; }
 .panel-heading { display: flex; min-width: 0; gap: 1rem; align-items: center; justify-content: space-between; }
 .panel-heading h3, .panel-heading h4 { margin: 0; }
 .panel-heading > span { color: var(--muted); font-size: .8rem; }
-.progression-visual { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: .75rem; margin: .9rem 0; }
-.stage-column { position: relative; display: flex; min-width: 0; flex-wrap: wrap; gap: .4rem; align-content: start; padding: .75rem; border: 1px solid var(--line); border-radius: .7rem; background: var(--surface-soft); }
-.stage-column strong { width: 100%; color: var(--lime); font-size: .72rem; letter-spacing: .1em; text-transform: uppercase; }
-.stage-column span { max-width: 100%; padding: .3rem .45rem; border-radius: .35rem; background: var(--surface-raised); font-size: .75rem; overflow-wrap: anywhere; }
-.stage-column b { position: absolute; z-index: 1; right: -.85rem; top: 50%; color: var(--cyan); }
+.progression-visual { display: block; width: 100%; min-height: 10rem; margin: .9rem 0; }
+.progression-visual rect { fill: var(--surface-soft); stroke: var(--line); stroke-width: 2; }
+.progression-visual text { fill: var(--ink); font-size: 12px; }
+.progression-visual .stage-title { fill: var(--lime); font-size: 14px; font-weight: 900; text-transform: uppercase; }
+.progression-visual .progression-edge { fill: none; stroke: var(--cyan); stroke-width: 4; }
+.progression-visual marker path { fill: var(--cyan); }
 .table-scroll { width: 100%; min-width: 0; max-width: 100%; overflow-x: auto; overscroll-behavior-inline: contain; border: 1px solid var(--line); border-radius: .7rem; }
 .table-scroll table { width: 100%; min-width: 42rem; border-collapse: separate; border-spacing: 0; text-align: left; }
 .table-scroll th, .table-scroll td { padding: .65rem .7rem; border-right: 1px solid rgb(45 83 105 / 55%); border-bottom: 1px solid rgb(45 83 105 / 55%); white-space: nowrap; }
@@ -145,6 +146,9 @@ body:has(.official-meet-shell) .brand-header { position: relative; }
 .sheet-panel h4 { margin-bottom: .75rem; }
 .sheet-panel.full-width { width: 100%; }
 .sheet-panel .panel-heading label { max-width: 14rem; }
+.registration-filters { display: flex; flex-wrap: wrap; gap: .5rem; align-items: end; }
+.registration-editor { display: grid; gap: .75rem; margin-block: 1rem; }
+.registration-editor fieldset, .setup-brackets fieldset { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: .6rem; min-width: 0; padding: .8rem; border: 1px solid var(--line); border-radius: .7rem; }
 .schedule-form { display: grid; grid-template-columns: minmax(0, 1fr) 6rem auto; gap: .5rem; align-items: end; }
 .quality-grid { display: grid; grid-template-columns: repeat(5, minmax(0, 1fr)); gap: .35rem; margin: .8rem 0; }
 .quality-grid div { min-width: 0; padding: .45rem; border: 1px solid var(--line); border-radius: .45rem; }
@@ -165,7 +169,7 @@ body:has(.official-meet-shell) .brand-header { position: relative; }
 .dialog-title button { font-size: 1.5rem; }
 .dialog-grid { display: grid; grid-template-columns: 2fr 1fr 1fr; gap: .75rem; margin: 1rem 0; }
 .setup-brackets { display: grid; gap: .5rem; }
-.setup-brackets > div { display: grid; grid-template-columns: 2fr 1fr; gap: .5rem; }
+.setup-brackets fieldset { grid-template-columns: 2fr 1fr .7fr 1fr auto; align-items: end; }
 .setup-section-heading { display: flex; gap: 1rem; align-items: center; justify-content: space-between; margin-top: 1rem; }
 .setup-section-heading h3 { margin: 0; }
 .setup-rules { display: grid; gap: .6rem; }
@@ -191,8 +195,7 @@ body:has(.official-meet-shell) .brand-header { position: relative; }
   .workbook-layout { display: block; }
   .bracket-index { display: none; }
   .workbook-content { padding: .65rem; }
-  .progression-visual { grid-template-columns: 1fr; }
-  .stage-column b { display: none; }
+  .progression-visual { min-height: 7rem; }
   .sheet-summary { grid-template-columns: auto minmax(0, 1fr); }
   .sheet-summary dl { grid-column: 1 / -1; flex-wrap: wrap; }
   .summary-copy, .sheet-summary progress { grid-column: 1 / -1; }
@@ -201,7 +204,7 @@ body:has(.official-meet-shell) .brand-header { position: relative; }
   .schedule-form { grid-template-columns: 1fr; }
   .quality-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); }
   .dialog-grid { grid-template-columns: 1fr; }
-  .setup-brackets > div { grid-template-columns: 1fr; }
+  .setup-brackets fieldset, .registration-editor fieldset { grid-template-columns: 1fr; }
   .setup-rules fieldset { grid-template-columns: 1fr; }
   .workbook-dialog { max-height: calc(100dvh - 1rem); }
 }
@@ -220,13 +223,14 @@ body:has(.official-meet-shell) .brand-header { position: relative; }
   .meet-toolbar, .bracket-index, .mobile-bracket-picker, .race-control, .schedule-lab, .keyboard-hint { display: none !important; }
   .workbook-layout { display: block; }
   .workbook-content { padding: 0; }
-  .progression-panel, .bracket-sheet, .meet-results, .sheet-panel { break-inside: avoid; box-shadow: none; }
+  .progression-panel, .meet-results { break-inside: avoid; box-shadow: none; }
+  .bracket-sheet, .sheet-panel { break-inside: auto; box-shadow: none; }
   .bracket-sheet { content-visibility: visible; contain-intrinsic-size: auto; margin-bottom: .5rem; }
   .sheet-summary { min-height: auto; }
   .table-scroll { overflow: visible; }
   .table-scroll table { min-width: 0; font-size: 9pt; }
   .table-scroll thead { display: table-header-group; }
-  .table-scroll tr { break-inside: avoid; }
+  .table-scroll tr, .sheet-summary, .sheet-footer-grid section { break-inside: avoid; }
   .table-scroll thead th, .table-scroll tbody th { position: static; background: #fff; color: #000; }
   .print-selected .bracket-sheet:not(.active) { display: none; }
   .print-credit { color: #000; font-weight: 700; }

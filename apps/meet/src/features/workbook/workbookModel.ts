@@ -8,7 +8,7 @@ import {
   type ScheduleQualityReport,
 } from "@rr3/domain";
 import { generateCustomSchedule } from "@rr3/scheduler";
-import type { BracketState } from "@rr3/meet-domain";
+import type { BracketState, MeetStateV1 } from "@rr3/meet-domain";
 
 export type RegistrationDraft = {
   participantId: string;
@@ -33,6 +33,10 @@ export type ScheduleCandidate = {
     gap: number;
     maxPairFrequency: number;
     maxCarRepeatBurden: number;
+    appearanceMinimum: number;
+    appearanceMaximum: number;
+    totalByes: number;
+    maximumByes: number;
     laneSpread: number;
     provenOptimal: boolean;
     status: ScheduleQualityReport["status"];
@@ -63,6 +67,7 @@ export function parseRegistrationPaste(value: string): RegistrationParse {
   const rows: RegistrationDraft[] = [];
   const errors: string[] = [];
   const numbers = new Set<number>();
+  const participants = new Map<string, { id: string; name: string; email: string; phone: string; notes: string }>();
   lines.forEach((line, index) => {
     const [numberText = "", participantName = "", carName = "", email = "", phone = "", notes = ""] = line.split("\t").map((cell) => cell.trim());
     const carNumber = Number(numberText);
@@ -71,9 +76,22 @@ export function parseRegistrationPaste(value: string): RegistrationParse {
     if (!carName) errors.push(`Row ${index + 1}: car name is required.`);
     if (numbers.has(carNumber)) errors.push(`Row ${index + 1}: duplicate car number ${carNumber} in this bracket.`);
     numbers.add(carNumber);
+    const identity = (email || participantName).trim().toLocaleLowerCase();
+    const existing = participants.get(identity);
+    if (existing && (existing.name !== participantName || existing.email !== email || existing.phone !== phone || existing.notes !== notes)) {
+      errors.push(`Row ${index + 1}: participant identity conflicts with an earlier row.`);
+    }
+    const participant = existing ?? {
+      id: deterministicUuid(`participant:${identity}`),
+      name: participantName,
+      email,
+      phone,
+      notes,
+    };
+    participants.set(identity, participant);
     rows.push({
-      participantId: crypto.randomUUID(), participantName, email, phone, notes,
-      carId: crypto.randomUUID(), carNumber, carName, active: true,
+      participantId: participant.id, participantName, email, phone, notes,
+      carId: deterministicUuid(`car:${identity}:${carNumber}:${carName.toLocaleLowerCase()}`), carNumber, carName, active: true,
     });
   });
   return errors.length > 0 || rows.length === 0
@@ -82,16 +100,60 @@ export function parseRegistrationPaste(value: string): RegistrationParse {
 }
 
 function qualityView(quality: ScheduleQualityReport): ScheduleCandidate["quality"] {
+  const appearances = Object.values(quality.appearances);
+  const byes = Object.values(quality.byeCounts);
   return {
     opponentRepeatExcess: quality.repeatedOpponentCount,
     lowerBound: quality.repeatExcessLowerBound,
     gap: quality.repeatExcessGap,
     maxPairFrequency: quality.maximumPairFrequency,
     maxCarRepeatBurden: quality.worstPerCarRepeatBurden,
+    appearanceMinimum: appearances.length ? Math.min(...appearances) : 0,
+    appearanceMaximum: appearances.length ? Math.max(...appearances) : 0,
+    totalByes: byes.reduce((total, count) => total + count, 0),
+    maximumByes: byes.length ? Math.max(...byes) : 0,
     laneSpread: quality.maximumLaneSpread,
     provenOptimal: quality.opponentQualityStatus === "certified-optimal",
     status: quality.status,
   };
+}
+
+const STAGE_ORDER: Readonly<Record<BracketState["stage"], number>> = { qualifier: 0, semifinal: 1, final: 2 };
+
+export function validateSetupGraph(meet: MeetStateV1): string[] {
+  const errors: string[] = [];
+  if (meet.brackets.length < 1 || meet.brackets.length > 15) errors.push("A meet must contain between 1 and 15 brackets.");
+  const byId = new Map(meet.brackets.map((bracket) => [bracket.id, bracket]));
+  const graph = new Map<string, string[]>();
+  for (const rule of meet.advancementRules) {
+    const source = byId.get(rule.sourceBracketId);
+    if (!source) { errors.push("Every progression rule needs a valid source bracket."); continue; }
+    if (!Number.isSafeInteger(rule.topN) || rule.topN < 1) errors.push(`${source.name}: top N must be a positive whole number.`);
+    if (!Number.isSafeInteger(rule.destinationCapacity) || rule.destinationCapacity < rule.topN) errors.push(`${source.name}: destination capacity must be at least top N.`);
+    if (!rule.destinationBracketIds.length) errors.push(`${source.name}: select at least one destination bracket.`);
+    if (new Set(rule.destinationBracketIds).size !== rule.destinationBracketIds.length) errors.push(`${source.name}: destination brackets must be unique.`);
+    if (rule.destinationOrder.length !== rule.destinationBracketIds.length || rule.destinationOrder.some((id) => !rule.destinationBracketIds.includes(id))) errors.push(`${source.name}: destination order must contain each destination once.`);
+    for (const destinationId of rule.destinationBracketIds) {
+      const destination = byId.get(destinationId);
+      if (destinationId === source.id) errors.push(`${source.name} cannot advance to itself.`);
+      else if (!destination) errors.push(`${source.name}: destination bracket is invalid.`);
+      else if (STAGE_ORDER[destination.stage] <= STAGE_ORDER[source.stage]) errors.push(`${source.name} progression must move forward to a later stage.`);
+    }
+    graph.set(source.id, [...(graph.get(source.id) ?? []), ...rule.destinationBracketIds]);
+  }
+  const visiting = new Set<string>();
+  const visited = new Set<string>();
+  const visit = (id: string): boolean => {
+    if (visiting.has(id)) return true;
+    if (visited.has(id)) return false;
+    visiting.add(id);
+    const cyclic = (graph.get(id) ?? []).some(visit);
+    visiting.delete(id);
+    visited.add(id);
+    return cyclic;
+  };
+  if (meet.brackets.some((bracket) => visit(bracket.id))) errors.push("Progression rules contain a cycle.");
+  return errors;
 }
 
 export function buildScheduleCandidate(bracket: BracketState, options: { seed: string; rounds: number }): ScheduleCandidate {

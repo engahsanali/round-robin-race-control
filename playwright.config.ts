@@ -1,17 +1,25 @@
 import { defineConfig, devices } from '@playwright/test';
 
 const proGateUrl = process.env.RR3_PRO_URL ?? 'http://127.0.0.1:4387';
+const meetGateUrl = process.env.RR3_MEET_URL ?? 'http://127.0.0.1:4399';
+const meetGate = process.env.RR3_MEET_WORKBOOK_GATE === '1';
+const proGate = process.env.RR3_PRO_GATE === '1';
 
 export default defineConfig({
   testDir: './tests/e2e',
   timeout: 60_000,
   fullyParallel: true,
-  workers: process.env.RR3_PRO_GATE === '1' ? 1 : undefined,
+  workers: meetGate || proGate ? 1 : undefined,
   reporter: 'line',
   use: {
     trace: 'retain-on-failure',
   },
-  webServer: process.env.RR3_PRO_GATE === '1' ? {
+  webServer: meetGate ? {
+    command: 'pnpm --filter @rr3/meet build && node scripts/serve-meet-build.mjs',
+    url: meetGateUrl,
+    reuseExistingServer: false,
+    timeout: 120_000,
+  } : proGate ? {
     command: 'pnpm --filter @rr3/pro build && node scripts/serve-pro-build.mjs',
     url: proGateUrl,
     reuseExistingServer: false,
