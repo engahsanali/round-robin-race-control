@@ -43,6 +43,11 @@ export function RaceCommandPage() {
   const announcer = useAnnouncer();
   const wakeLock = useWakeLock();
 
+  useEffect(() => {
+    window.dispatchEvent(new CustomEvent("rr3:result-dirty", { detail: pendingLane !== null || times.some(Boolean) || Boolean(correctionReason.trim()) }));
+    return () => { window.dispatchEvent(new CustomEvent("rr3:result-dirty", { detail: false })); };
+  }, [correctionReason, pendingLane, times]);
+
   eventRef.current = event;
   const heats = useMemo(() => orderedHeats(event), [event]);
   const firstRunnable = useMemo(

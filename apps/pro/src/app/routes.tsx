@@ -7,6 +7,8 @@ import { PresentationPage } from "../features/presentation/PresentationPage";
 import { StandingsPage } from "../features/standings/StandingsPage";
 import { FinalsPage } from "../features/finals/FinalsPage";
 import { ReportsPage } from "../features/reports/ReportsPage";
+import { SettingsPage } from "../features/settings/SettingsPage";
+import { DiagnosticsPage } from "../features/diagnostics/DiagnosticsPage";
 
 export const operatorDestinations = [
   { label: "Dashboard", path: "/" },
@@ -19,26 +21,6 @@ export const operatorDestinations = [
   { label: "Settings", path: "/settings" },
   { label: "Diagnostics", path: "/diagnostics" },
 ] as const;
-
-type PlaceholderPageProps = {
-  eyebrow: string;
-  heading: string;
-  description: string;
-};
-
-function PlaceholderPage({ eyebrow, heading, description }: PlaceholderPageProps) {
-  return (
-    <section className="page-frame" aria-labelledby="page-title">
-      <p className="eyebrow">{eyebrow}</p>
-      <h2 id="page-title">{heading}</h2>
-      <p className="page-intro">{description}</p>
-      <div className="empty-panel">
-        <strong>Ready for event data</strong>
-        <p>This workspace is intentionally empty until you create or load an event.</p>
-      </div>
-    </section>
-  );
-}
 
 function NotFoundPage() {
   return (
@@ -60,26 +42,8 @@ export function AppRoutes() {
       <Route path="/standings" element={<StandingsPage />} />
       <Route path="/finals" element={<FinalsPage />} />
       <Route path="/reports" element={<ReportsPage />} />
-      <Route
-        path="/settings"
-        element={
-          <PlaceholderPage
-            eyebrow="Race policy"
-            heading="Settings"
-            description="Competition, timing, finals, presentation, and appearance controls will live here."
-          />
-        }
-      />
-      <Route
-        path="/diagnostics"
-        element={
-          <PlaceholderPage
-            eyebrow="Local health"
-            heading="Diagnostics"
-            description="Storage, offline, version, and sanitized error checks will live here."
-          />
-        }
-      />
+      <Route path="/settings" element={<SettingsPage />} />
+      <Route path="/diagnostics" element={<DiagnosticsPage />} />
       <Route path="/present" element={<PresentationPage />} />
       <Route path="*" element={<NotFoundPage />} />
     </Routes>

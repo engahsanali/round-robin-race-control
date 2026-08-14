@@ -4,6 +4,8 @@ import { NavLink } from "react-router-dom";
 import { useRegisterSW } from "virtual:pwa-register/react";
 import { AppRoutes, operatorDestinations } from "./routes";
 import { RehearsalWorkspaceProvider } from "../state/RehearsalWorkspace";
+import { useOptionalEventState } from "../state/EventProvider";
+import { installGlobalDiagnostics, type SanitizedDiagnostic } from "./diagnostics";
 
 const THEME_STORAGE_KEY = "rr3.pro.theme";
 const CREATOR_CREDIT = "Made by Cesar Lacsamana and Ahsan Ali";
@@ -140,14 +142,23 @@ export function App({ updateSafety = idleUpdateSafety }: AppProps) {
 }
 
 function AppShell({ updateSafety }: { updateSafety: UpdateSafety }) {
+  const eventState = useOptionalEventState();
   const [theme, setTheme] = useState<ThemePreference>(readThemePreference);
   const [aboutOpen, setAboutOpen] = useState(false);
+  const [isResultDirty, setIsResultDirty] = useState(false);
   const isReducedMotion = useReducedMotionPreference();
   const commandDialog = useRef<HTMLDialogElement>(null);
   const aboutDialog = useRef<HTMLDialogElement>(null);
   const mainContent = useRef<HTMLElement>(null);
   const commandTrigger = useRef<HTMLButtonElement>(null);
   const aboutTrigger = useRef<HTMLButtonElement>(null);
+  const [diagnostic, setDiagnostic] = useState<SanitizedDiagnostic | null>(null);
+  const event = eventState?.state ?? null;
+  const isRehearsal = Boolean(event?.event.id.startsWith("demo-rehearsal-") || event?.event.id.startsWith("event-demo-"));
+  const derivedSafety: UpdateSafety = {
+    isRaceRunning: event?.event.status === "running" || updateSafety.isRaceRunning,
+    isOfficialResultDirty: isResultDirty || updateSafety.isOfficialResultDirty,
+  };
 
   useEffect(() => {
     document.documentElement.dataset.theme = theme;
@@ -157,6 +168,14 @@ function AppShell({ updateSafety }: { updateSafety: UpdateSafety }) {
       // Appearance still applies for this session when browser storage is unavailable.
     }
   }, [theme]);
+
+  useEffect(() => installGlobalDiagnostics(setDiagnostic), []);
+
+  useEffect(() => {
+    const updateDirtyState = (event: Event) => setIsResultDirty(Boolean((event as CustomEvent<unknown>).detail));
+    window.addEventListener("rr3:result-dirty", updateDirtyState);
+    return () => window.removeEventListener("rr3:result-dirty", updateDirtyState);
+  }, []);
 
   const openAbout = () => {
     setAboutOpen(true);
@@ -210,15 +229,15 @@ function AppShell({ updateSafety }: { updateSafety: UpdateSafety }) {
           <dl>
             <div>
               <dt>Event</dt>
-              <dd><span className="status-dot status-empty" aria-hidden="true" /> Empty real event</dd>
+              <dd><span className={`status-dot ${event ? "status-safe" : "status-empty"}`} aria-hidden="true" /> {event ? `${event.event.name} — ${isRehearsal ? "demo" : "local"}` : "Empty real event"}</dd>
             </div>
             <div>
               <dt>Race</dt>
-              <dd><span className="status-dot status-safe" aria-hidden="true" /> Not running</dd>
+              <dd><span className={`status-dot ${event?.event.status === "running" ? "status-warn" : "status-safe"}`} aria-hidden="true" /> {event ? capitalize(event.event.status) : "Not running"}</dd>
             </div>
             <div className="recovery-indicator">
               <dt>Recovery</dt>
-              <dd><span className="status-dot status-warn" aria-hidden="true" /> No local save yet</dd>
+              <dd><span className={`status-dot ${event && !isRehearsal ? "status-safe" : "status-warn"}`} aria-hidden="true" /> {isRehearsal ? "Demo rehearsal — not saved" : event ? `${eventState?.snapshots.length ?? 0} local revision${eventState?.snapshots.length === 1 ? "" : "s"}` : "No local save yet"}</dd>
             </div>
             <div>
               <dt>Motion</dt>
@@ -248,8 +267,8 @@ function AppShell({ updateSafety }: { updateSafety: UpdateSafety }) {
           <AppRoutes />
         </main>
 
-        <UpdatePrompt updateSafety={updateSafety} />
-        <p className="error-region" role="alert" aria-label="Application errors" aria-atomic="true" />
+        <UpdatePrompt updateSafety={derivedSafety} />
+        <p className="error-region" role="alert" aria-label="Application errors" aria-atomic="true">{diagnostic ? `A sanitized diagnostic was recorded: ${diagnostic.message}` : ""}</p>
 
         <footer>
           <p>{CREATOR_CREDIT}</p>
@@ -312,4 +331,8 @@ function AppShell({ updateSafety }: { updateSafety: UpdateSafety }) {
       </dialog>
     </MotionConfig>
   );
+}
+
+function capitalize(value: string): string {
+  return value.charAt(0).toUpperCase() + value.slice(1);
 }
