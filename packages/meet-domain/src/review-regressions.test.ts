@@ -99,6 +99,21 @@ describe("review regressions", () => {
     if (!result.success) expect(result.issues.some((issue: { code: string }) => issue.code === "duplicate_cross_snapshot_advancement")).toBe(true);
   });
 
+  test("rejects advancing one source car through different rules in imported state", async () => {
+    const domain = await meetDomain(); expect(domain).not.toBeNull(); if (!domain) return;
+    const meet = state([finishedBracket("shared-source", "qualifier"), bracket("first-destination", "final"), bracket("second-destination", "final")]) as any;
+    meet.advancementRules = [rule("first-rule", "shared-source", ["first-destination"], 1), rule("second-rule", "shared-source", ["second-destination"], 1)];
+    meet.advancementSnapshots = [
+      { id: "first-snapshot", ruleId: "first-rule", sourceBracketId: "shared-source", sourceResultVersion: 1, selections: [{ sourceCarId: "shared-source-1", destinationBracketId: "first-destination", rank: 1 }], confirmedBy: "organiser", reason: null, confirmedAt: "2026-08-14T01:00:00Z", stale: false },
+      { id: "second-snapshot", ruleId: "second-rule", sourceBracketId: "shared-source", sourceResultVersion: 1, selections: [{ sourceCarId: "shared-source-1", destinationBracketId: "second-destination", rank: 1 }], confirmedBy: "organiser", reason: null, confirmedAt: "2026-08-14T01:00:00Z", stale: false }
+    ];
+    meet.brackets[1].lineage = [{ sourceBracketId: "shared-source", sourceCarId: "shared-source-1", ruleId: "first-rule", snapshotId: "first-snapshot" }];
+    meet.brackets[2].lineage = [{ sourceBracketId: "shared-source", sourceCarId: "shared-source-1", ruleId: "second-rule", snapshotId: "second-snapshot" }];
+    const result = domain.validateMeetState(meet);
+    expect(result.success).toBe(false);
+    if (!result.success) expect(result.issues.some((issue: { code: string }) => issue.code === "duplicate_cross_snapshot_advancement")).toBe(true);
+  });
+
   test("uses code-unit ordering for Unicode report rows", async () => {
     const domain = await meetDomain(); expect(domain).not.toBeNull(); if (!domain) return;
     const meet = state([bracket("ä", "qualifier"), bracket("z", "qualifier")]);

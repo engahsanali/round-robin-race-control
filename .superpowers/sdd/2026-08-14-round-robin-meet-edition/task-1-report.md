@@ -72,3 +72,12 @@
 
 - Manual confirmation checks disabled, stale, duplicate, and capacity gates against its exact selected cars, while automatic confirmation remains blocked by unresolved cutoff ties.
 - Schema rejects a repeated `(ruleId, sourceBracketId, sourceCarId)` across snapshots and their corresponding lineages.
+
+## Review-fix round 3
+
+### RED/GREEN evidence
+
+- `pnpm vitest run packages/meet-domain/src/review-regressions.test.ts` — 1/9 failed before the fix: imported state accepted one source car advanced through two separate rules.
+- The same command passed 9/9 after removing `ruleId` from the imported-state advancement uniqueness key.
+- `pnpm vitest run packages/meet-domain/src` — 5 files, 22 tests passed.
+- `pnpm typecheck` and `git diff --check` — passed.

@@ -142,7 +142,7 @@ function validateSnapshotAndLineageGraph(state: MeetStateV1, brackets: Map<strin
       const selectionPath = ["advancementSnapshots", snapshotIndex, "selections", selectionIndex];
       if (selected.has(selection.sourceCarId)) context.addIssue(custom("duplicate_snapshot_selection", selectionPath, "A source car may appear only once in a snapshot"));
       selected.add(selection.sourceCarId);
-      const advancementKey = `${snapshot.ruleId}\u0000${snapshot.sourceBracketId}\u0000${selection.sourceCarId}`;
+      const advancementKey = `${snapshot.sourceBracketId}\u0000${selection.sourceCarId}`;
       const previousSnapshot = advancedSourceSnapshots.get(advancementKey);
       if (previousSnapshot !== undefined && previousSnapshot !== snapshot.id) context.addIssue(custom("duplicate_cross_snapshot_advancement", selectionPath, "A source car may not advance more than once for the same rule and source"));
       advancedSourceSnapshots.set(advancementKey, snapshot.id);
