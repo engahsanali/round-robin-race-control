@@ -40,6 +40,21 @@ async function safeFiles(directory) {
   try { return await filesWithin(directory); } catch { return []; }
 }
 
+const environmentScanExcludedDirectories = new Set([".git", "node_modules", "dist", "build", "vendor"]);
+
+async function environmentFilesWithin(directory, repositoryRoot = directory) {
+  const files = [];
+  for (const entry of await readdir(directory, { withFileTypes: true })) {
+    const path = join(directory, entry.name);
+    if (entry.isDirectory()) {
+      if (!environmentScanExcludedDirectories.has(entry.name)) files.push(...await environmentFilesWithin(path, repositoryRoot));
+    } else if (entry.isFile() && /^\.env(?:\.|$)/i.test(entry.name)) {
+      files.push(relative(repositoryRoot, path).replaceAll("\\", "/"));
+    }
+  }
+  return files;
+}
+
 export async function verifyMeetBuild(repositoryRoot = resolve(dirname(fileURLToPath(import.meta.url)), "..")) {
   const meetRoot = join(repositoryRoot, "apps", "meet");
   const distRoot = join(meetRoot, "dist");
@@ -113,14 +128,12 @@ export async function verifyMeetBuild(repositoryRoot = resolve(dirname(fileURLTo
   const repositoryMeetFiles = await safeFiles(meetRoot);
   for (const path of repositoryMeetFiles) {
     const rel = relative(meetRoot, path).replaceAll("\\", "/");
-    if (!rel.startsWith("dist/") && (/(^|\/)\.env(?:\.|$)/i.test(rel) || /(^|\/)\.netlify\//i.test(rel) || /(^|\/)(?:tmp|temp)\//i.test(rel))) failures.push(`Committed environment or temporary artifact is forbidden: apps/meet/${rel}.`);
+    if (!rel.startsWith("dist/") && (/(^|\/)\.netlify\//i.test(rel) || /(^|\/)(?:tmp|temp)\//i.test(rel))) failures.push(`Committed environment or temporary artifact is forbidden: apps/meet/${rel}.`);
   }
   try {
-    for (const entry of await readdir(repositoryRoot, { withFileTypes: true })) {
-      if (entry.isFile() && /^\.env(?:\.|$)/i.test(entry.name)) failures.push(`Committed environment or temporary artifact is forbidden: ${entry.name}.`);
-    }
+    for (const rel of await environmentFilesWithin(repositoryRoot)) failures.push(`Committed environment or temporary artifact is forbidden: ${rel}.`);
   } catch (cause) {
-    failures.push(`Repository root environment scan could not complete: ${cause instanceof Error ? cause.message : String(cause)}.`);
+    failures.push(`Repository environment scan could not complete: ${cause instanceof Error ? cause.message : String(cause)}.`);
   }
   let releaseFiles;
   let gitAvailable = false;

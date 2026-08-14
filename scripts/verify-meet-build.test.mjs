@@ -71,6 +71,7 @@ describe("Meet production verifier", () => {
     ["database password", async ({ root }) => writeFile(join(root, "database.env.example"), `SUPABASE_DB_PASSWORD=${"d".repeat(32)}`), /repository.*secret|credential/i],
     ["service-role JWT", async ({ root }) => writeFile(join(root, "service-jwt"), serviceRoleJwt()), /repository.*secret|credential/i],
     ["ignored root environment", async ({ root }) => writeFile(join(root, ".env.production"), "SAFE_LOOKING=value"), /environment|\.env/i],
+    ["ignored nested environment", async ({ root }) => { const nested = join(root, "packages", "fixture"); await mkdir(nested, { recursive: true }); await writeFile(join(nested, ".env.production"), "SAFE_LOOKING=value"); }, /environment|\.env/i],
     ["committed environment", async ({ meet }) => writeFile(join(meet, ".env.production"), "VITE_SECRET=x"), /environment|\.env/i],
     ["missing security headers", async ({ meet }) => writeFile(join(meet, "netlify.toml"), `[[redirects]]\nfrom="/*"\nto="/index.html"\nstatus=200`), /content-security-policy|header/i],
     ["missing resource isolation", async ({ meet }) => writeFile(join(meet, "netlify.toml"), (netlifyBuild + headers).replace('Cross-Origin-Resource-Policy = "same-origin"', "")), /Cross-Origin-Resource-Policy/i],
