@@ -4,8 +4,9 @@ import { AuthBoundary, useMeetSession, type AuthPort } from "./AuthBoundary";
 import { MeetProviders } from "./MeetProviders";
 import { AuthPanel } from "../features/auth/AuthPanel";
 import { TeamDrawer, type TeamActions } from "../features/team/TeamDrawer";
-import { createDemoRepository } from "../data/demoRepository";
 import { createRequestId, type AdminOverview, type CommandReceipt, type MeetRepository, type MeetSummary, type OrganisationRole, type OrganisationSummary, type SecurityEventPageItem, type TeamMember } from "../data/meetRepository";
+import type { MeetBackupRepository } from "../data/meetBackupRepository";
+import { DemoWorkspace } from "../features/demo/DemoWorkspace";
 import { useMeetStore } from "../state/MeetStore";
 import { WorkbookWorkspace, type WorkbookActions, type WorkbookActionResult } from "../features/workbook/WorkbookWorkspace";
 import { finishCommittedWorkbookAction } from "../features/workbook/workbookActionResult";
@@ -15,10 +16,12 @@ const CREATOR_CREDIT = "Made by Cesar Lacsamana and Ahsan Ali";
 export function MeetApp({
   productionRepository,
   auth,
+  backupRepository = null,
   initialMode = "welcome",
 }: {
   productionRepository: MeetRepository | null;
   auth: AuthPort | null;
+  backupRepository?: MeetBackupRepository | null;
   initialMode?: "welcome" | "demo";
 }) {
   const [demo, setDemo] = useState(initialMode === "demo");
@@ -29,7 +32,7 @@ export function MeetApp({
       <main id="main-content" tabIndex={-1}>
         {auth && productionRepository ? (
           <AuthBoundary auth={auth}>
-            <OfficialGate repository={productionRepository} />
+            <OfficialGate repository={productionRepository} backupRepository={backupRepository} />
           </AuthBoundary>
         ) : (
           <section className="welcome-grid">
@@ -51,7 +54,7 @@ export function MeetApp({
   );
 }
 
-function OfficialGate({ repository }: { repository: MeetRepository }) {
+function OfficialGate({ repository, backupRepository }: { repository: MeetRepository; backupRepository: MeetBackupRepository | null }) {
   const authState = useMeetSession();
   const [organisations, setOrganisations] = useState<OrganisationSummary[]>([]);
   const [selectedId, setSelectedId] = useState<string | null>(null);
@@ -85,7 +88,7 @@ function OfficialGate({ repository }: { repository: MeetRepository }) {
   return (
     <MeetProviders organisations={organisations} selected={selected}>
       {loadingMemberships ? <section className="center-card"><p role="status">Loading authorised organisations…</p></section> : selected ? (
-        <OfficialWorkspace repository={repository} organisation={selected} organisations={organisations} onSelect={setSelectedId} onSignOut={() => authState.controller.signOut()} />
+        <OfficialWorkspace repository={repository} backupRepository={backupRepository} organisation={selected} organisations={organisations} onSelect={setSelectedId} onSignOut={() => authState.controller.signOut()} />
       ) : (
         <OrganisationOnboarding repository={repository} onJoined={() => void refresh()} onSignOut={() => authState.controller.signOut()} error={membershipError} />
       )}
@@ -130,7 +133,7 @@ function OrganisationOnboarding({ repository, onJoined, onSignOut, error }: { re
   );
 }
 
-function OfficialWorkspace({ repository, organisation, organisations, onSelect, onSignOut }: { repository: MeetRepository; organisation: OrganisationSummary; organisations: readonly OrganisationSummary[]; onSelect(id: string): void; onSignOut(): Promise<void> }) {
+function OfficialWorkspace({ repository, backupRepository, organisation, organisations, onSelect, onSignOut }: { repository: MeetRepository; backupRepository: MeetBackupRepository | null; organisation: OrganisationSummary; organisations: readonly OrganisationSummary[]; onSelect(id: string): void; onSignOut(): Promise<void> }) {
   const [teamOpen, setTeamOpen] = useState(false);
   const [members, setMembers] = useState<TeamMember[]>([]);
   const [meets, setMeets] = useState<MeetSummary[]>([]);
@@ -241,6 +244,9 @@ function OfficialWorkspace({ repository, organisation, organisations, onSelect, 
     }
     await reloadMeet(selectedMeetId, false);
   };
+  const openImportedMeet = useCallback((meetId: string) => {
+    void repository.listMeets(organisation.id).then((values) => { setMeets(values); setSelectedMeetId(meetId); }).catch(() => { setSelectedMeetId(meetId); setNotice("The import committed, but the meet list could not refresh. Opening the new meet directly."); });
+  }, [organisation.id, repository]);
   return (
     <section className="official-meet-shell" aria-labelledby="workspace-heading">
       <div className="workspace-toolbar organisation-toolbar">
@@ -255,7 +261,7 @@ function OfficialWorkspace({ repository, organisation, organisations, onSelect, 
       {notice ? <p role="status" className="safe-notice">{notice}</p> : null}
       {state.conflict ? <OperatorConflictNotice message={state.conflict.message} onKeepDraft={() => dispatch({ type: "remote-update.discarded" })} onReloadAuthoritative={() => void reviewAuthoritative()} /> : null}
       {teamOpen ? <TeamDrawer role={organisation.role} members={members} actions={teamActions} /> : null}
-      {loadingMeet ? <section className="center-card"><p role="status">Loading the authorised Meet workbook…</p></section> : state.snapshot ? <AuthoritativeWorkbook draftEpoch={state.draftEpoch} meet={state.snapshot} heatVersions={state.bundle?.heatVersions ?? {}} advancementHistory={state.bundle?.history} adminOverview={adminOverview} securityEvents={securityEvents} role={organisation.role} readOnly={organisation.role === "viewer"} actions={workbookActions} onFormDirtyChange={(source, dirty) => dispatch({ type: "form.dirty", source, dirty })} /> : <section className="workbook-placeholder"><h3>Meet unavailable</h3><p>The current view was preserved. Retry after the hosted service reconnects.</p></section>}
+      {loadingMeet ? <section className="center-card"><p role="status">Loading the authorised Meet workbook…</p></section> : state.snapshot ? <AuthoritativeWorkbook draftEpoch={state.draftEpoch} meet={state.snapshot} heatVersions={state.bundle?.heatVersions ?? {}} advancementHistory={state.bundle?.history} reportBundle={state.bundle ?? undefined} backupControls={state.bundle && backupRepository && organisation.role !== "viewer" && organisation.role !== "marshal" ? { organisationId: organisation.id, repository: backupRepository, onImported: openImportedMeet } : undefined} adminOverview={adminOverview} securityEvents={securityEvents} role={organisation.role} readOnly={organisation.role === "viewer"} actions={workbookActions} onFormDirtyChange={(source, dirty) => dispatch({ type: "form.dirty", source, dirty })} /> : <section className="workbook-placeholder"><h3>Meet unavailable</h3><p>The current view was preserved. Retry after the hosted service reconnects.</p></section>}
     </section>
   );
 }
@@ -266,18 +272,6 @@ export function AuthoritativeWorkbook({ draftEpoch, ...props }: ComponentProps<t
 
 export function OperatorConflictNotice({ message, onKeepDraft, onReloadAuthoritative }: { message: string; onKeepDraft(): void; onReloadAuthoritative(): void }) {
   return <section role="alert" className="safe-notice"><strong>Authoritative data changed.</strong> {message}<div className="dialog-actions"><button type="button" className="quiet-action" onClick={onKeepDraft}>Keep my draft</button><button type="button" onClick={onReloadAuthoritative}>Review/reload authoritative</button></div></section>;
-}
-
-function DemoWorkspace({ onExit }: { onExit(): void }) {
-  const demo = useMemo(createDemoRepository, []);
-  const meet = useMemo(() => demo.load(), [demo]);
-  return (
-    <div className="meet-app demo-mode">
-      <BrandHeader badge="Demo workspace · read-only" />
-      <main id="main-content" className="demo-workspace"><MeetProviders workspace="demo" selected={{ id: "demo", name: "Demo organisation", slug: "demo", role: "viewer", version: 1 }}><WorkbookWorkspace meet={meet} role="viewer" readOnly actions={readOnlyWorkbookActions()} onSignOut={onExit} /></MeetProviders></main>
-      <Footer />
-    </div>
-  );
 }
 
 function workbookPayload(snapshot: MeetStateV1): Record<string, unknown> {
@@ -292,11 +286,6 @@ function starterMeet(): MeetStateV1 {
   const now = new Date().toISOString();
   const bracketId = crypto.randomUUID();
   return { version: 1, meet: { id: crypto.randomUUID(), name: "New race meeting", venue: "", date: now.slice(0, 10), status: "setup", createdAt: now, updatedAt: now, version: 1 }, brackets: [{ id: bracketId, name: "Qualifier 1", stage: "qualifier", displayOrder: 1, status: "setup", version: 1, lineage: [], event: { version: 1, event: { id: bracketId, name: "Qualifier 1", date: now.slice(0, 10), venue: "", organizer: "Meet officials", laneCount: 3, status: "setup", createdAt: now, updatedAt: now, resultSeal: "draft" }, settings: { scheduleMode: "custom", seed: "meet-schedule", rankingMode: "competition", allowSharedRanks: true, tieBreakOrder: ["totalWins"], finalistCount: 3, autoSave: true, confirmWinnerChanges: true, enableTiming: true, prices: {} }, participants: [], entries: [], matches: [], finals: [], payments: [], auditLog: [] } }], advancementRules: [], advancementSnapshots: [], auditLog: [] };
-}
-
-function readOnlyWorkbookActions(): WorkbookActions {
-  const denied = async () => ({ ok: false, message: "Demo mode is read-only." });
-  return { saveSetup: denied, saveRegistration: denied, activateSchedule: denied, confirmWinner: denied, correctWinner: denied, confirmAdvancement: denied, replaceAdvancement: denied };
 }
 
 function BrandHeader({ badge }: { badge: string }) {

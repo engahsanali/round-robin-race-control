@@ -23,6 +23,21 @@ test.describe("Meet workbook root workspace", () => {
     await expect(page.getByRole("heading", { name: /audit timeline/i })).toBeVisible();
   });
 
+  test("runs the populated demo and public Event Pack without any Supabase traffic", async ({ page }) => {
+    const supabaseRequests: string[] = [];
+    page.on("request", (request) => { if (/supabase\.co|\/auth\/v1|\/rest\/v1|\/realtime\/v1/i.test(request.url())) supabaseRequests.push(request.url()); });
+    await page.setViewportSize({ width: 320, height: 740 });
+    await page.goto(`${meetUrl}?demo=1`);
+    await expect(page.getByTestId("bracket-sheet")).toHaveCount(7);
+    await expect(page.getByText(/tie decision scenario/i)).toBeVisible();
+    await page.getByRole("button", { name: /reports & event pack/i }).click();
+    await page.getByRole("radio", { name: /public pack/i }).click();
+    await page.getByRole("button", { name: /build public event pack/i }).click();
+    await expect(page.getByRole("button", { name: /download 12 public files/i })).toBeVisible();
+    expect(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth)).toBe(true);
+    expect(supabaseRequests).toEqual([]);
+  });
+
   for (const size of [{ name: "mobile", width: 320, height: 740 }, { name: "tablet", width: 768, height: 900 }, { name: "desktop", width: 1440, height: 900 }]) {
     test(`has no whole-document overflow at ${size.name} size`, async ({ page }) => {
       await page.setViewportSize({ width: size.width, height: size.height });

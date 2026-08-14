@@ -1,13 +1,16 @@
-import { memo, useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState, type FormEvent, type ReactNode } from "react";
-import { createPortal } from "react-dom";
-import type { BracketState, MeetStateV1 } from "@rr3/meet-domain";
+import { memo, useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState, type FormEvent } from "react";
+import type { BracketState, MeetStateV1, PortableHostedMeetBundle } from "@rr3/meet-domain";
 import type { OrganisationRole } from "../../data/meetRepository";
 import type { AdminOverview, AdvancementHistory, SecurityEventPageItem } from "../../data/meetRepository";
+import type { MeetBackupRepository } from "../../data/meetBackupRepository";
 import { useMeetStore } from "../../state/MeetStore";
 import { AdvancementPanel, type AdvancementCommitInput } from "../advancement/AdvancementPanel";
 import { AuditTimeline } from "../audit/AuditTimeline";
 import { AdminDashboard } from "../admin/AdminDashboard";
 import { SaveStatus } from "../status/SaveStatus";
+import { BackupDrawer } from "../backup/BackupDrawer";
+import { MeetReports } from "../reports/MeetReports";
+import { WorkbookDialog } from "./WorkbookDialog";
 import {
   buildScheduleCandidate,
   parseRegistrationPaste,
@@ -32,12 +35,14 @@ export type WorkbookActions = {
 
 const CREATOR_CREDIT = "Made by Cesar Lacsamana and Ahsan Ali";
 
-export function WorkbookWorkspace({ meet, role, readOnly, actions, heatVersions = {}, advancementHistory = { snapshots: [], selections: [] }, adminOverview = null, securityEvents = [], onSignOut, onFormDirtyChange }: { meet: MeetStateV1; role: OrganisationRole; readOnly: boolean; actions: WorkbookActions; heatVersions?: Readonly<Record<string, number>>; advancementHistory?: AdvancementHistory; adminOverview?: AdminOverview | null; securityEvents?: readonly SecurityEventPageItem[]; onSignOut?(): void; onFormDirtyChange?(source: string, dirty: boolean): void }) {
+export function WorkbookWorkspace({ meet, role, readOnly, actions, heatVersions = {}, advancementHistory = { snapshots: [], selections: [] }, adminOverview = null, securityEvents = [], reportBundle, backupControls, onSignOut, onFormDirtyChange }: { meet: MeetStateV1; role: OrganisationRole; readOnly: boolean; actions: WorkbookActions; heatVersions?: Readonly<Record<string, number>>; advancementHistory?: AdvancementHistory; adminOverview?: AdminOverview | null; securityEvents?: readonly SecurityEventPageItem[]; reportBundle?: PortableHostedMeetBundle; backupControls?: { organisationId: string; repository: MeetBackupRepository; onImported(meetId: string): void }; onSignOut?(): void; onFormDirtyChange?(source: string, dirty: boolean): void }) {
   const ordered = useMemo(() => meet.brackets.slice().sort((a, b) => a.displayOrder - b.displayOrder || a.id.localeCompare(b.id)), [meet.brackets]);
   const [selectedId, setSelectedId] = useState(ordered[0]?.id ?? "");
   const [expanded, setExpanded] = useState(() => new Set<string>(ordered[0] ? [ordered[0].id] : []));
   const [setupOpen, setSetupOpen] = useState(false);
   const [registrationOpen, setRegistrationOpen] = useState(false);
+  const [backupOpen, setBackupOpen] = useState(false);
+  const [reportsOpen, setReportsOpen] = useState(false);
   const [pendingFocusId, setPendingFocusId] = useState<string | null>(null);
   const [printAll, setPrintAll] = useState(false);
   const [printRequest, setPrintRequest] = useState<"selected" | "all" | null>(null);
@@ -97,6 +102,8 @@ export function WorkbookWorkspace({ meet, role, readOnly, actions, heatVersions 
         <div className="status-cluster" aria-label="Connection and save status"><StatusChip label={readOnly ? "Read-only Viewer" : `Role: ${role}`} tone="neutral" /><SaveStatus connection={store.state.connectionStatus} save={store.state.saveStatus} pendingCount={store.state.pendingRequestIds.length} dirtyCount={store.state.dirtySources.length} queued={store.state.queuedRemoteBundle !== null} conflict={store.state.conflict?.message ?? null} advisory={store.state.advisory} lastSyncedAt={store.state.lastSyncedAt} /></div>
         <nav className="toolbar-actions" aria-label="Workbook actions">
           {!readOnly ? <><button type="button" onClick={() => setSetupOpen(true)}>Meet setup</button><button type="button" onClick={() => setRegistrationOpen(true)}>Registration</button></> : null}
+          {!readOnly && reportBundle && backupControls ? <button type="button" onClick={() => setBackupOpen(true)}>Backup &amp; restore</button> : null}
+          {reportBundle ? <button type="button" onClick={() => setReportsOpen(true)}>Reports &amp; Event Pack</button> : null}
           <button type="button" className="quiet-action" onClick={expandAll}>Expand all</button>
           <button type="button" className="quiet-action" onClick={collapseAll}>Collapse all</button>
           <button type="button" className="quiet-action" onClick={() => print(false)}>Print selected</button>
@@ -143,6 +150,8 @@ export function WorkbookWorkspace({ meet, role, readOnly, actions, heatVersions 
       <p className="print-credit">{CREATOR_CREDIT}</p>
       {setupOpen ? <SetupDialog meet={meet} actions={actions} onResult={announce} onDirtyChange={(dirty) => onFormDirtyChange?.("setup", dirty)} onClose={() => { onFormDirtyChange?.("setup", false); setSetupOpen(false); }} /> : null}
       {registrationOpen && selected ? <RegistrationDialog bracket={selected} actions={actions} onResult={announce} onDirtyChange={(dirty) => onFormDirtyChange?.(`registration:${selected.id}`, dirty)} onClose={() => { onFormDirtyChange?.(`registration:${selected.id}`, false); setRegistrationOpen(false); }} /> : null}
+      {backupOpen && reportBundle && backupControls ? <BackupDrawer open organisationId={backupControls.organisationId} bundle={reportBundle} repository={backupControls.repository} onImported={backupControls.onImported} onDirtyChange={onFormDirtyChange} onClose={() => setBackupOpen(false)} /> : null}
+      {reportsOpen && reportBundle ? <MeetReports open bundle={reportBundle} onClose={() => setReportsOpen(false)} /> : null}
     </section>
   );
 }
@@ -360,38 +369,6 @@ function CorrectionDialog({ heats, bracket, actions, heatVersions, announce, onD
   const heat = heats.find((candidate) => candidate.id === heatId) ?? heats[0]!;
   const save = async () => { const winnerId = heat.lanes[lane - 1]; if (!winnerId || !reason.trim()) return; const result = await actions.correctWinner({ heatId: heat.id, winnerId, lane, laneTimes: {}, expectedVersion: heatVersions[heat.id] ?? 1, reason: reason.trim() }); announce(result); if (result.ok) { onDirtyChange(heat.id, false); onClose(); } };
   return <WorkbookDialog title="Correct official result" onClose={onClose}><label>Completed heat<select autoFocus data-initial-focus value={heat.id} onChange={(event) => { onDirtyChange(heat.id, false); setHeatId(event.target.value); setLane(1); onDirtyChange(event.target.value, true); }}>{heats.map((candidate) => <option key={candidate.id} value={candidate.id}>Round {candidate.matchNumber} · Heat {candidate.heatNumber}</option>)}</select></label><label>Winning lane<select value={lane} onChange={(event) => { setLane(Number(event.target.value)); onDirtyChange(heat.id, true); }}>{heat.lanes.map((carId, index) => carId ? <option key={carId} value={index + 1}>Lane {index + 1} · #{bracket.event.entries.find((entry) => entry.id === carId)?.carNumber}</option> : null)}</select></label><label>Reason<textarea required maxLength={500} value={reason} onChange={(event) => { setReason(event.target.value); onDirtyChange(heat.id, true); }} /></label><div className="dialog-actions"><button type="button" disabled={!reason.trim()} onClick={() => void save()}>Save correction</button><button type="button" className="quiet-action" onClick={onClose}>Cancel</button></div></WorkbookDialog>;
-}
-
-function WorkbookDialog({ title, onClose, children, role = "dialog" }: { title: string; onClose(): void; children: ReactNode; role?: "dialog" | "alertdialog" }) {
-  const ref = useRef<HTMLDivElement>(null);
-  const returnFocus = useRef(document.activeElement as HTMLElement | null);
-  const [portalRoot] = useState(() => { const root = document.createElement("div"); root.dataset.workbookPortal = "true"; return root; });
-  const [titleId] = useState(() => `workbook-dialog-${crypto.randomUUID()}`);
-  useLayoutEffect(() => {
-    const node = ref.current;
-    if (!portalRoot.isConnected) document.body.append(portalRoot);
-    const inertTargets = [...document.body.children].filter((child): child is HTMLElement => child instanceof HTMLElement && child !== portalRoot);
-    const priorInert = new Map(inertTargets.map((target) => [target, { value: target.inert, attribute: target.hasAttribute("inert") }]));
-    for (const target of inertTargets) { target.inert = true; target.setAttribute("inert", ""); }
-    node?.querySelector<HTMLElement>("[data-initial-focus], input, select, textarea, button")?.focus();
-    const focusable = () => node ? [...node.querySelectorAll<HTMLElement>('button:not(:disabled), input:not(:disabled), select:not(:disabled), textarea:not(:disabled), a[href], summary, [contenteditable]:not([contenteditable="false"]), [tabindex]:not([tabindex="-1"])')].filter((item) => !item.hasAttribute("hidden")) : [];
-    const recoverFocus = () => focusable()[0]?.focus();
-    const onKey = (event: KeyboardEvent) => {
-      if (portalRoot.inert) return;
-      if (event.key === "Escape") { event.preventDefault(); onClose(); return; }
-      if (event.key !== "Tab" || !node) return;
-      const items = focusable();
-      if (!items.length) return;
-      const first = items[0]!; const last = items.at(-1)!;
-      if (event.shiftKey && document.activeElement === first) { event.preventDefault(); last.focus(); }
-      else if (!event.shiftKey && document.activeElement === last) { event.preventDefault(); first.focus(); }
-    };
-    const onFocus = (event: FocusEvent) => { if (!portalRoot.inert && node && event.target instanceof Node && !node.contains(event.target)) recoverFocus(); };
-    document.addEventListener("keydown", onKey, true);
-    document.addEventListener("focusin", onFocus, true);
-    return () => { document.removeEventListener("keydown", onKey, true); document.removeEventListener("focusin", onFocus, true); for (const target of inertTargets) { const prior = priorInert.get(target); target.inert = prior?.value ?? false; if (!prior?.attribute) target.removeAttribute("inert"); } portalRoot.remove(); returnFocus.current?.focus(); };
-  }, [onClose, portalRoot]);
-  return createPortal(<div className="dialog-backdrop"><div ref={ref} role={role} aria-modal="true" aria-labelledby={titleId} className="workbook-dialog"><div className="dialog-title"><h2 id={titleId}>{title}</h2><button type="button" className="quiet-action" aria-label={`Close ${title}`} onClick={onClose}>×</button></div>{children}</div></div>, portalRoot);
 }
 
 function FinalResults({ meet }: { meet: MeetStateV1 }) {
