@@ -15,6 +15,7 @@ const REQUIRED_FILES = [
   "202608140010_advancement_review_fixes.sql",
   "202608140011_meet_backup_recovery.sql",
   "202608140012_meet_backup_review_fixes.sql",
+  "202608140013_meet_backup_canonical_progression.sql",
 ];
 
 const OWNED_TABLES = [
@@ -152,6 +153,29 @@ export function verifyBackupReviewFixInvariant(source) {
   for (const name of ["import_meet_backup", "restore_meet_revision_copy"]) {
     requireMarker(new RegExp(`function\\s+public\\.${name}[\\s\\S]*?security\\s+definer[\\s\\S]*?set\\s+search_path\\s*=\\s*''`, "i").test(sql), "backup_review_unsafe_definer", name, `${name} must remain a fixed-search-path definer`);
   }
+  return issues;
+}
+
+export function verifyBackupCanonicalProgressionInvariant(source) {
+  const sql = normalize(source ?? "");
+  const issues = [];
+  const requireMarker = (condition, code, target, message) => { if (!condition) issues.push(issue(code, target, message)); };
+  requireMarker(
+    /-- CANONICAL CURRENT HISTORY EQUALITY/i.test(sql)
+      && /private_meet\.canonical_json\(current_projection\)\s*<>\s*private_meet\.canonical_json\(history_projection\)/i.test(sql),
+    "backup_current_history_not_exact", "current advancement", "Current snapshots and selections must exactly equal the current history projection",
+  );
+  requireMarker(
+    /-- LINEAGE BIJECTION/i.test(sql)
+      && /private_meet\.canonical_json\(actual_lineage\)\s*<>\s*private_meet\.canonical_json\(expected_lineage\)/i.test(sql),
+    "backup_lineage_not_bijective", "advancement lineage", "Destination lineage must be a unique, exact projection of current advancement selections",
+  );
+  requireMarker(
+    /function\s+private_meet\.validate_hosted_bundle_v13/i.test(sql)
+      && /function\s+private_meet\.validate_portable_backup_v13/i.test(sql)
+      && (sql.match(/private_meet\.validate_(?:portable_backup|hosted_bundle)_v13/gi) ?? []).length >= 4,
+    "backup_v13_not_enforced", "import/restore", "Public import and restore must enforce canonical progression validation",
+  );
   return issues;
 }
 
@@ -630,6 +654,7 @@ export async function verifyMeetMigrations(migrationsDirectory) {
   issues.push(...verifyAdvancementReviewFixInvariant(sources.get(REQUIRED_FILES[9])));
   issues.push(...verifyBackupInvariant(sources.get(REQUIRED_FILES[10])));
   issues.push(...verifyBackupReviewFixInvariant(sources.get(REQUIRED_FILES[11])));
+  issues.push(...verifyBackupCanonicalProgressionInvariant(sources.get(REQUIRED_FILES[12])));
   return { ok: issues.length === 0, issues, schemaVersion: REQUIRED_FILES.length };
 }
 

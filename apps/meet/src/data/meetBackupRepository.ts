@@ -82,7 +82,11 @@ export class MeetBackupRepository {
   private async call<T>(name: string, args: Record<string, unknown>, mutationRequestId?: string): Promise<BackupReceipt<T>> {
     try {
       const response = await this.port.rpc<T>(name, args);
-      if (response.error || response.data === null) return failure(mapError(response.error), safeMessage(response.error), mutationRequestId);
+      if (response.error || response.data === null) {
+        const kind = mapError(response.error);
+        if (mutationRequestId && (kind === "network" || kind === "offline")) return uncertainFailure(kind, "The recovery request may have committed before the transport error. Retry only with the same request ID.", mutationRequestId);
+        return failure(kind, safeMessage(response.error), mutationRequestId);
+      }
       return { ok: true, value: response.data };
     } catch {
       if (mutationRequestId) return uncertainFailure("network", "The recovery request may have committed before the connection was lost. Retry only with the same request ID.", mutationRequestId);

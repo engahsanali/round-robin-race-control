@@ -118,4 +118,16 @@ describe("Meet backup repository", () => {
     expect(resolved).toMatchObject({ ok: true, requestId: REQUEST, value: { meetId: "restored-meet" } });
     expect(port.calls.map((call) => call.args.request_id)).toEqual([REQUEST, REQUEST]);
   });
+
+  it.each([
+    { code: "NETWORK_ERROR", message: "TypeError: Failed to fetch" },
+    { code: "OFFLINE", message: "The client is offline" },
+  ])("treats a production-shaped $code mutation error result as uncertain", async (error) => {
+    const port = new FakePort();
+    port.error = error;
+    const receipt = await new MeetBackupRepository(port).restoreRevisionAsNewMeet(ORG, REVISION, "Restore for rerun", true, REQUEST);
+
+    expect(receipt).toEqual(expect.objectContaining({ ok: false, committed: "unknown", requestId: REQUEST, retry: { requestId: REQUEST } }));
+    expect(receipt).not.toHaveProperty("statePreserved");
+  });
 });

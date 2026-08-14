@@ -28,7 +28,7 @@ test("accepts the checked-in Meet migration security contract", async () => {
   const result = await verifier.verifyMeetMigrations(migrationsDir);
   assert.deepEqual(result.issues, []);
   assert.equal(result.ok, true);
-  assert.equal(result.schemaVersion, 12);
+  assert.equal(result.schemaVersion, 13);
 });
 
 test("backup invariant requires forced RLS, consistent graph export and guarded new-meet recovery", async () => {
@@ -52,6 +52,24 @@ for (const fixture of [
   test(`backup review invariant rejects when ${fixture.name}`, async () => {
     const source = await readFile(path.join(migrationsDir, "202608140012_meet_backup_review_fixes.sql"), "utf8");
     const issues = verifier.verifyBackupReviewFixInvariant(source.replace(fixture.find, fixture.replace));
+    assert.ok(issues.some((issue) => issue.code === fixture.code), `${fixture.name} should report ${fixture.code}; got ${JSON.stringify(issues)}`);
+  });
+}
+
+test("backup canonical progression invariant requires exact current history and lineage", async () => {
+  assert.equal(typeof verifier.verifyBackupCanonicalProgressionInvariant, "function");
+  const source = await readFile(path.join(migrationsDir, "202608140013_meet_backup_canonical_progression.sql"), "utf8");
+  assert.deepEqual(verifier.verifyBackupCanonicalProgressionInvariant(source), []);
+});
+
+for (const fixture of [
+  { name: "current history is only one-way membership", find: "-- CANONICAL CURRENT HISTORY EQUALITY", replace: "-- one way membership only", code: "backup_current_history_not_exact" },
+  { name: "lineage allows extras or omissions", find: "-- LINEAGE BIJECTION", replace: "-- lineage membership only", code: "backup_lineage_not_bijective" },
+  { name: "public wrappers keep the v12 validator", find: "validate_portable_backup_v13", replace: "validate_portable_backup_v12", code: "backup_v13_not_enforced" },
+]) {
+  test(`backup canonical invariant rejects when ${fixture.name}`, async () => {
+    const source = await readFile(path.join(migrationsDir, "202608140013_meet_backup_canonical_progression.sql"), "utf8");
+    const issues = verifier.verifyBackupCanonicalProgressionInvariant(source.replaceAll(fixture.find, fixture.replace));
     assert.ok(issues.some((issue) => issue.code === fixture.code), `${fixture.name} should report ${fixture.code}; got ${JSON.stringify(issues)}`);
   });
 }
@@ -118,6 +136,7 @@ for (const fixture of fixtures) {
         "202608140010_advancement_review_fixes.sql",
         "202608140011_meet_backup_recovery.sql",
         "202608140012_meet_backup_review_fixes.sql",
+        "202608140013_meet_backup_canonical_progression.sql",
       ]) {
         const original = await readFile(path.join(migrationsDir, fileName), "utf8");
         const mutated = fileName === fixture.file
