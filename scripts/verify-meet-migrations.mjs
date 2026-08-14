@@ -8,6 +8,7 @@ const REQUIRED_FILES = [
   "202608140003_meet_commands.sql",
   "202608140004_meet_review_hardening.sql",
   "202608140005_meet_ranking_and_access_hardening.sql",
+  "202608140006_meet_preliminary_and_identity_hardening.sql",
 ];
 
 const OWNED_TABLES = [
@@ -93,6 +94,31 @@ export function verifyReviewRound2Invariant(source) {
       && /alter\s+publication\s+supabase_realtime\s+add\s+table\s+public\.organisation_invitations/i.test(sql),
     "missing_access_realtime", "supabase_realtime",
     "Organisation, membership and invitation changes must use authorised RLS-backed Realtime",
+  );
+  return issues;
+}
+
+export function verifyReviewRound3Invariant(source) {
+  const sql = normalize(source);
+  const latest = lastMigrationV6(sql);
+  const issues = [];
+  const requireMarker = (condition, code, target, message) => {
+    if (!condition) issues.push(issue(code, target, message));
+  };
+  requireMarker(
+    /function\s+private_meet\.advancement_ranking/i.test(latest)
+      && (latest.match(/heat\.phase\s*=\s*'preliminary'/gi) ?? []).length >= 8
+      && /function\s+private_meet\.preliminary_source_is_complete/i.test(latest)
+      && /MEET_V6_ADVANCEMENT_PATCH_NOT_APPLIED/i.test(latest),
+    "non_preliminary_advancement_results", "advancement results",
+    "Ranking metrics and source completeness must use only preliminary-phase heats",
+  );
+  requireMarker(
+    /'Member\s+'\s*\|\|\s*left\(replace\(membership\.user_id::text\s*,\s*'-'\s*,\s*''\)\s*,\s*8\)/i.test(latest)
+      && /identity\.raw_user_meta_data->>'display_name'/i.test(latest)
+      && !/split_part\(identity\.email/i.test(latest),
+    "member_label_email_leak", "member directory",
+    "Non-admin display labels must use bounded explicit metadata or a neutral stable-ID label, never email text",
   );
   return issues;
 }
@@ -303,6 +329,7 @@ export async function verifyMeetMigrations(migrationsDirectory) {
 
   issues.push(...verifyReviewInvariant(allMigrations));
   issues.push(...verifyReviewRound2Invariant(allMigrations));
+  issues.push(...verifyReviewRound3Invariant(allMigrations));
   return { ok: issues.length === 0, issues, schemaVersion: REQUIRED_FILES.length };
 }
 
@@ -322,6 +349,12 @@ function lastMigration(source) {
 
 function lastMigrationV5(source) {
   const marker = "-- REVIEW HARDENING V5";
+  const index = source.lastIndexOf(marker);
+  return index === -1 ? source : source.slice(index);
+}
+
+function lastMigrationV6(source) {
+  const marker = "-- REVIEW HARDENING V6";
   const index = source.lastIndexOf(marker);
   return index === -1 ? source : source.slice(index);
 }
