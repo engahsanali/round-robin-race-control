@@ -4,8 +4,6 @@ import { useOptionalEventState } from "../../state/EventProvider";
 
 type SettingsDraft = {
   enableTiming: boolean;
-  confirmWinnerChanges: boolean;
-  autoSave: boolean;
   finalistCount: string;
   rankingMode: EventStateV1["settings"]["rankingMode"];
 };
@@ -13,8 +11,6 @@ type SettingsDraft = {
 function draftFromEvent(event: EventStateV1 | null): SettingsDraft {
   return {
     enableTiming: event?.settings.enableTiming ?? false,
-    confirmWinnerChanges: event?.settings.confirmWinnerChanges ?? true,
-    autoSave: event?.settings.autoSave ?? true,
     finalistCount: String(event?.settings.finalistCount ?? 3),
     rankingMode: event?.settings.rankingMode ?? "competition",
   };
@@ -47,8 +43,6 @@ export function SettingsPage() {
       candidate.settings = {
         ...candidate.settings,
         enableTiming: draft.enableTiming,
-        confirmWinnerChanges: draft.confirmWinnerChanges,
-        autoSave: draft.autoSave,
         finalistCount,
         rankingMode: draft.rankingMode,
         allowSharedRanks: draft.rankingMode !== "ordinal",
@@ -89,8 +83,6 @@ export function SettingsPage() {
               <input type="number" min="1" max="100" inputMode="numeric" value={draft.finalistCount} onChange={(change) => setDraft((value) => ({ ...value, finalistCount: change.target.value }))} />
             </label>
             <label className="checkbox-control"><input type="checkbox" checked={draft.enableTiming} onChange={(change) => setDraft((value) => ({ ...value, enableTiming: change.target.checked }))} /> Record lane times</label>
-            <label className="checkbox-control"><input type="checkbox" checked={draft.confirmWinnerChanges} onChange={(change) => setDraft((value) => ({ ...value, confirmWinnerChanges: change.target.checked }))} /> Require confirmation for winner changes</label>
-            <label className="checkbox-control"><input type="checkbox" checked={draft.autoSave} onChange={(change) => setDraft((value) => ({ ...value, autoSave: change.target.checked }))} /> Save each official command locally</label>
             <button type="button" onClick={() => void save()} disabled={pending}>Save competition settings</button>
           </div>
         )}

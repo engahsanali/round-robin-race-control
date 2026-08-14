@@ -16,6 +16,7 @@ test("runs a keyboard result and mirrors only a same-browser read-only spectator
   await expect(spectator.getByText(/same browser and device.*not cloud or cross-device/i)).toBeVisible();
   const pause = spectator.getByRole("button", { name: "Pause rotation" });
   await pause.focus();
+  await expect(spectator.getByRole("table", { name: "Live standings" })).toContainText("Car 1");
 
   await operator.keyboard.press("2");
   await expect(operator.getByRole("status", { name: "Pending result" })).toContainText("Car 6");

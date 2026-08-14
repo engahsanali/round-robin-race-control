@@ -76,7 +76,7 @@ export function DiagnosticsPage() {
         ) : <p>No unexpected application failures recorded this session.</p>}
       </section>
 
-      <p className="feature-note">Local event data stays on this device. This page performs no network diagnostics or telemetry.</p>
+      <p className="feature-note">Local event data stays on this device. This page checks only the same-origin app manifest for shell availability and sends no telemetry.</p>
     </section>
   );
 }
