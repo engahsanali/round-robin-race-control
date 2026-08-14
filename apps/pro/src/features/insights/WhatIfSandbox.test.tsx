@@ -48,4 +48,26 @@ describe("WhatIfSandbox", () => {
     await user.click(screen.getByRole("button", { name: "Reset what-if" }));
     expect(screen.queryByRole("region", { name: "What-if — not official" })).toBeNull();
   });
+
+  it("keeps an ordinal simulation usable when hypothetical results leave unresolved ties", async () => {
+    const ordinal = fixture();
+    ordinal.settings.rankingMode = "ordinal";
+    ordinal.settings.tieBreakOrder = ["totalWins", "playoff"];
+    await repository.save(ordinal, {
+      commandId: `what-if-ordinal-${sequence}`,
+      timestamp: "2026-08-14T08:01:00.000Z",
+      summary: "Ordinal fixture",
+    });
+    const user = userEvent.setup();
+
+    render(<EventProvider repository={repository}><WhatIfSandbox /></EventProvider>);
+    await screen.findByRole("heading", { name: "What-if Sandbox" });
+    await user.selectOptions(screen.getByRole("combobox", { name: "Hypothetical heat" }), "pre-m02-h03");
+    await user.selectOptions(screen.getByRole("combobox", { name: "Hypothetical winner" }), "car-06");
+    await user.click(screen.getByRole("button", { name: "Run what-if" }));
+
+    const result = screen.getByRole("region", { name: "What-if — not official" });
+    expect(within(result).getByRole("status").textContent).toMatch(/ordinal ranks are withheld.*unresolved tie/i);
+    expect(within(result).getByRole("table", { name: "What-if standings" })).toBeTruthy();
+  });
 });

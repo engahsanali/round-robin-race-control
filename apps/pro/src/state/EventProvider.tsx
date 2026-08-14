@@ -156,7 +156,7 @@ export function EventProvider({
         setError(failure.message);
         throw failure;
       }
-      return dispatchEventCommand({ type: "event.replace", event: parsed.data, summary });
+      return dispatchEventCommand({ type: "event.import-compatible", event: parsed.data, summary });
     },
     [dispatchEventCommand],
   );

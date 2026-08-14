@@ -365,6 +365,50 @@ function ProviderProbe() {
 }
 
 describe("EventProvider", () => {
+  it("imports compatible JSON byte-equivalently while publishing one committed receipt", async () => {
+    const existing = eventFixture();
+    existing.event.name = "Event being replaced";
+    await repository.save(existing, bootstrapRevision());
+    const importedText = serializeEvent(eventFixture());
+    const published = vi.fn();
+    let importEventJson: ReturnType<typeof useEventState>["importEventJson"] | undefined;
+
+    function CaptureImport() {
+      importEventJson = useEventState().importEventJson;
+      return null;
+    }
+
+    render(
+      <EventProvider
+        repository={repository}
+        now={() => "2026-08-14T01:00:00.000Z"}
+        createId={() => "provider-exact-import"}
+        publishCommittedEvent={published}
+      >
+        <CaptureImport />
+      </EventProvider>,
+    );
+    await waitFor(() => expect(importEventJson).toBeTypeOf("function"));
+
+    let receipt: CommandReceipt | undefined;
+    await act(async () => {
+      receipt = await importEventJson!(importedText, "Imported exact Solo event");
+    });
+
+    expect(receipt).toMatchObject({
+      commandId: "provider-exact-import",
+      summary: "Imported exact Solo event",
+      undoUntil: null,
+    });
+    expect(serializeEvent((await repository.load())!)).toBe(importedText);
+    expect(published).toHaveBeenCalledTimes(1);
+    expect(serializeEvent(published.mock.calls[0]![0])).toBe(importedText);
+    expect((await repository.listSnapshots())[0]).toMatchObject({
+      id: "provider-exact-import",
+      summary: "Imported exact Solo event",
+    });
+  });
+
   it("loads local state, publishes only committed commands, and exposes persistence status", async () => {
     await repository.save(eventFixture(), bootstrapRevision());
     const persist = vi.fn(async () => true);

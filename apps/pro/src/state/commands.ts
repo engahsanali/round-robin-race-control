@@ -22,6 +22,7 @@ export type CommandReceipt = {
 
 export type EventCommand =
   | { type: "event.replace"; event: EventStateV1; summary: string }
+  | { type: "event.import-compatible"; event: EventStateV1; summary: string }
   | {
       type: "result.record-winner";
       heatId: string;
@@ -187,6 +188,18 @@ function applyCommand(
   commandId: string,
   timestamp: string,
 ): AppliedCommand {
+  if (command.type === "event.import-compatible") {
+    const validated = validateEventState(command.event);
+    if (!validated.success) throw new Error("Imported event is invalid");
+    const candidate = structuredClone(validated.data);
+    return {
+      event: candidate,
+      affectedCarIds: candidate.entries.map(({ id }) => id),
+      summary: requireSummary(command.summary),
+      undoable: false,
+    };
+  }
+
   if (command.type === "event.replace") {
     const validated = validateEventState(command.event);
     if (!validated.success) throw new Error("Replacement event is invalid");
@@ -243,7 +256,7 @@ function rankingPhaseForCommand(
   current: EventStateV1 | null,
   command: EventCommand,
 ): "preliminary" | "final" {
-  if (!current || command.type === "event.replace") return "preliminary";
+  if (!current || command.type === "event.replace" || command.type === "event.import-compatible") return "preliminary";
   return requireHeat(current, command.heatId).phase;
 }
 

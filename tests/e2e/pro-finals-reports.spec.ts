@@ -26,7 +26,10 @@ test("explores official standings, isolated what-if, finals decisions, and porta
   await page.getByRole("link", { name: "Reports", exact: true }).click();
   await expect(page.getByRole("heading", { name: "Reports" })).toBeFocused();
   await page.getByRole("button", { name: "Prepare Event Pack" }).click();
-  await expect(page.getByRole("list", { name: "Event Pack files" }).getByRole("listitem")).toHaveCount(8);
+  const eventPackFiles = page.getByRole("list", { name: "Event Pack files" }).getByRole("listitem");
+  await expect(eventPackFiles).toHaveCount(10);
+  await expect(eventPackFiles.filter({ hasText: "schedule.csv" })).toHaveCount(1);
+  await expect(eventPackFiles.filter({ hasText: "printable-report.html" })).toHaveCount(1);
   await expect(page.getByRole("region", { name: "Share card preview" })).toContainText("Nine-Car Community Demo");
   expect(await page.evaluate(() => document.documentElement.scrollWidth <= document.documentElement.clientWidth)).toBe(true);
 });
