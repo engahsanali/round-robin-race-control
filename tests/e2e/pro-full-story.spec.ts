@@ -54,6 +54,12 @@ test("runs a clean local event from setup through payment, racing, finals, trans
   await page.getByRole("button", { name: "Seal official champion" }).click();
   await expect(page.getByText(/Official champion:/)).toBeVisible();
 
+  await page.goto(`${proUrl}/present`);
+  await expect(page.getByRole("heading", { name: "Spectator Board" })).toBeVisible();
+  await expect(page.getByRole("heading", { name: "Clean release race" })).toBeVisible();
+  await expect(page.getByText("Official", { exact: true })).toBeVisible();
+  await expect(page.getByRole("table", { name: "Live standings" })).toContainText("Release Driver");
+
   await page.getByRole("link", { name: "Reports", exact: true }).click();
   const downloadPromise = page.waitForEvent("download");
   await page.getByRole("button", { name: "Prepare Event Pack" }).click();
@@ -98,6 +104,8 @@ test("serves the configured CSP without blocking runtime styles", async ({ page 
 });
 
 test("announces a real waiting service-worker update, blocks unsafe reloads, and applies when safe", async ({ page }) => {
+  const setupDemo = JSON.parse(await readFile("fixtures/demo-event.json", "utf8")) as { event: { status: string } };
+  setupDemo.event.status = "setup";
   await page.goto(proUrl);
   await page.evaluate(() => navigator.serviceWorker.ready);
   await page.evaluate(async () => {
@@ -110,13 +118,37 @@ test("announces a real waiting service-worker update, blocks unsafe reloads, and
   await page.getByRole("button", { name: "Load demo rehearsal" }).click();
   await expect(apply).toBeDisabled();
   await expect(page.getByRole("status", { name: "Application updates" })).toContainText("Update held");
-  await page.getByRole("button", { name: "Return to empty official workspace" }).click();
+
+  await page.getByRole("link", { name: "Reports", exact: true }).click();
+  await page.getByLabel("Compatible event JSON").fill(JSON.stringify(setupDemo));
+  await page.getByRole("button", { name: "Import compatible event" }).click();
+  await expect(page.getByText("Imported compatible event JSON atomically.")).toBeVisible();
+  await page.getByRole("link", { name: "Race Command", exact: true }).click();
   await expect(apply).toBeEnabled();
-  await page.evaluate(() => window.dispatchEvent(new CustomEvent("rr3:result-dirty", { detail: true })));
+  await page.getByRole("button", { name: /Lane 1 · Car .* wins/ }).click();
   await expect(apply).toBeDisabled();
   await expect(page.getByRole("status", { name: "Application updates" })).toContainText("Update held");
-  await page.evaluate(() => window.dispatchEvent(new CustomEvent("rr3:result-dirty", { detail: false })));
+  await page.getByRole("button", { name: "Confirm result" }).click();
+  await expect(page.getByRole("status", { name: "Command status" })).toContainText("Official result committed");
   await expect(apply).toBeEnabled();
   await apply.click();
   await expect(page.getByRole("status", { name: "Application updates" })).toContainText("Update requested");
+});
+
+test("reports unavailable optional browser APIs without blocking race control", async ({ page }) => {
+  await page.addInitScript(() => {
+    Object.defineProperty(navigator, "wakeLock", { configurable: true, value: undefined });
+    Object.defineProperty(window, "speechSynthesis", { configurable: true, value: undefined });
+    Object.defineProperty(window, "SpeechSynthesisUtterance", { configurable: true, value: undefined });
+  });
+  await page.goto(proUrl);
+  await page.getByRole("button", { name: "Load demo rehearsal" }).click();
+  await page.getByRole("link", { name: "Race Command", exact: true }).click();
+
+  await expect(page.getByRole("button", { name: "Enable announcer" })).toBeDisabled();
+  await page.getByRole("button", { name: "Enable wake lock" }).click();
+  await expect(page.getByRole("status", { name: "Wake lock status" })).toHaveText("Wake lock unavailable");
+  await page.getByRole("button", { name: /Lane 1 · Car .* wins/ }).click();
+  await page.getByRole("button", { name: "Confirm result" }).click();
+  await expect(page.getByRole("status", { name: "Command status" })).toContainText("Official result committed");
 });

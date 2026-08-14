@@ -1,3 +1,4 @@
+import { readFile } from "node:fs/promises";
 import { expect, test } from "@playwright/test";
 
 const proUrl = process.env.RR3_PRO_URL ?? "http://127.0.0.1:4174";
@@ -31,5 +32,12 @@ test("explores official standings, isolated what-if, finals decisions, and porta
   await expect(eventPackFiles.filter({ hasText: "schedule.csv" })).toHaveCount(1);
   await expect(eventPackFiles.filter({ hasText: "printable-report.html" })).toHaveCount(1);
   await expect(page.getByRole("region", { name: "Share card preview" })).toContainText("Nine-Car Community Demo");
+  const importedDemo = JSON.parse(await readFile("fixtures/demo-event.json", "utf8")) as { event: { name: string } };
+  importedDemo.event.name = "Imported demo rehearsal";
+  await page.getByLabel("Compatible event JSON").fill(JSON.stringify(importedDemo));
+  await page.getByRole("button", { name: "Import compatible event" }).click();
+  await expect(page.getByText("Imported compatible event JSON atomically.")).toBeVisible();
+  await expect(page.getByRole("region", { name: "Share card preview" })).toContainText("Imported demo rehearsal");
+  await expect(page.getByRole("region", { name: "Replay timeline" })).toContainText("Exit rehearsal to inspect or restore official history");
   expect(await page.evaluate(() => document.documentElement.scrollWidth <= document.documentElement.clientWidth)).toBe(true);
 });

@@ -13,6 +13,9 @@ export function PresentationPage() {
   const snapshotRef = useRef(snapshot);
   snapshotRef.current = snapshot;
 
+  useEffect(() => {
+    if (official?.state) setSnapshot(createSpectatorSnapshot(official.state));
+  }, [official?.state]);
   useEffect(() => subscribeToSpectatorSnapshots(setSnapshot), []);
   useEffect(() => {
     if (paused) return undefined;
