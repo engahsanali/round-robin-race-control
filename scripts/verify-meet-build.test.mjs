@@ -1,11 +1,14 @@
 import assert from "node:assert/strict";
+import { execFile } from "node:child_process";
 import { mkdtemp, mkdir, readFile, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+import { promisify } from "node:util";
 import { afterEach, describe, it } from "node:test";
 import { verifyMeetBuild } from "./verify-meet-build.mjs";
 
 const roots = [];
+const execute = promisify(execFile);
 afterEach(async () => Promise.all(roots.splice(0).map((root) => rm(root, { recursive: true, force: true }))));
 
 const netlifyBuild = `[build]\ncommand = "pnpm build"\npublish = "dist"\n\n`;
@@ -54,6 +57,7 @@ describe("Meet production verifier", () => {
     ["unsafe API", async ({ dist }) => writeFile(join(dist, "assets", "unsafe.js"), "document.write('bad')"), /unsafe runtime/i],
     ["inline handler", async ({ dist }) => writeFile(join(dist, "unsafe.html"), `<button onclick="bad()">bad</button>`), /inline event/i],
     ["credential", async ({ dist }) => writeFile(join(dist, "assets", "leak.js"), `ghp_${"1".repeat(36)}`), /secret|credential/i],
+    ["credential in repository migration", async ({ root }) => writeFile(join(root, "supabase", "migrations", "leak.sql"), `select 'ghp_${"2".repeat(36)}';`), /repository.*secret|credential/i],
     ["committed environment", async ({ meet }) => writeFile(join(meet, ".env.production"), "VITE_SECRET=x"), /environment|\.env/i],
     ["missing security headers", async ({ meet }) => writeFile(join(meet, "netlify.toml"), `[[redirects]]\nfrom="/*"\nto="/index.html"\nstatus=200`), /content-security-policy|header/i],
     ["missing resource isolation", async ({ meet }) => writeFile(join(meet, "netlify.toml"), (netlifyBuild + headers).replace('Cross-Origin-Resource-Policy = "same-origin"', "")), /Cross-Origin-Resource-Policy/i],
@@ -68,4 +72,19 @@ describe("Meet production verifier", () => {
       assert.match((await verifyMeetBuild(paths.root)).failures.join("\n"), expected);
     });
   }
+
+  it("rejects a credential removed from the worktree but retained in Git history", async () => {
+    const paths = await fixture();
+    await execute("git", ["init"], { cwd: paths.root });
+    await execute("git", ["config", "user.email", "release-test@example.invalid"], { cwd: paths.root });
+    await execute("git", ["config", "user.name", "Release verifier"], { cwd: paths.root });
+    await writeFile(join(paths.root, "history-secret.txt"), `ghp_${"3".repeat(36)}`);
+    await execute("git", ["add", "."], { cwd: paths.root });
+    await execute("git", ["commit", "-m", "fixture secret"], { cwd: paths.root });
+    await rm(join(paths.root, "history-secret.txt"));
+    await execute("git", ["add", "-u"], { cwd: paths.root });
+    await execute("git", ["commit", "-m", "remove fixture secret"], { cwd: paths.root });
+
+    assert.match((await verifyMeetBuild(paths.root)).failures.join("\n"), /history.*secret|credential/i);
+  });
 });
