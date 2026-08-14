@@ -176,8 +176,10 @@ select lives_ok(
         perform public.confirm_advancement(fixture_row.rule_id, 1, 1,
           jsonb_build_array(
             jsonb_build_object('sourceCarId', fixture_row.car_ids[1], 'destinationBracketId', first_destination, 'rank', 1),
-            jsonb_build_object('sourceCarId', fixture_row.car_ids[2], 'destinationBracketId', second_destination, 'rank', 2),
-            jsonb_build_object('sourceCarId', fixture_row.car_ids[3], 'destinationBracketId', first_destination, 'rank', 2)),
+            jsonb_build_object('sourceCarId', fixture_row.car_ids[2], 'destinationBracketId',
+              case when fixture_row.car_ids[2] < fixture_row.car_ids[3] then second_destination else first_destination end, 'rank', 2),
+            jsonb_build_object('sourceCarId', fixture_row.car_ids[3], 'destinationBracketId',
+              case when fixture_row.car_ids[3] < fixture_row.car_ids[2] then second_destination else first_destination end, 'rank', 2)),
           null, extensions.gen_random_uuid());
       end loop;
     end $inner$;$$,

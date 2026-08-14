@@ -7,6 +7,7 @@ const REQUIRED_FILES = [
   "202608140002_meet_rls.sql",
   "202608140003_meet_commands.sql",
   "202608140004_meet_review_hardening.sql",
+  "202608140005_meet_ranking_and_access_hardening.sql",
 ];
 
 const OWNED_TABLES = [
@@ -37,7 +38,64 @@ const REQUIRED_RPCS = [
   "confirm_advancement",
   "replace_advancement",
   "record_security_event",
+  "revoke_invitation",
+  "list_organisation_members",
 ];
+
+export function verifyReviewRound2Invariant(source) {
+  const sql = normalize(source);
+  const issues = [];
+  const requireMarker = (condition, code, target, message) => {
+    if (!condition) issues.push(issue(code, target, message));
+  };
+  requireMarker(
+    /function\s+private_meet\.advancement_ranking/i.test(sql)
+      && /ranking_mode[\s\S]*(?:competition|dense)[\s\S]*ordinal/i.test(sql)
+      && /totalwins[\s\S]*headtohead[\s\S]*matcheswon[\s\S]*averagetime[\s\S]*besttime[\s\S]*lanebalance[\s\S]*carnumber[\s\S]*playoff/i.test(sql)
+      && /MEET_ORDINAL_TIE_UNRESOLVED/i.test(sql),
+    "ranking_policy_mismatch", "advancement ranking",
+    "Database advancement ranks must reproduce stored Meet domain ranking mode and configured tie-break order",
+  );
+  requireMarker(
+    /order\s+by\s+ranking\.competitive_rank\s*,\s*ranking\.source_car_id/i.test(sql)
+      && !/order\s+by\s+ranking\.competitive_rank\s*,\s*(?:source_car\.)?car_number/i.test(lastMigrationV5(sql)),
+    "unstable_equal_rank_allocation", "advancement allocation",
+    "Equal-rank candidates must allocate in locale-independent stable source-ID order",
+  );
+  requireMarker(
+    /revoke\s+insert\s+on\s+public\.cars\s+from\s+authenticated/i.test(sql)
+      && /grant\s+insert\s*\(organisation_id\s*,\s*bracket_id\s*,\s*participant_id\s*,\s*car_number\s*,\s*name\)\s+on\s+public\.cars\s+to\s+authenticated/i.test(sql),
+    "unsafe_car_lineage_insert", "cars",
+    "Direct registration INSERT must not grant advancement lineage columns",
+  );
+  requireMarker(
+    /invitation_role\s*=\s*'owner'[\s\S]*array\s*\[\s*'owner'\s*\]/i.test(sql),
+    "owner_invitation_escalation", "create_invitation",
+    "Only an owner may create an owner-role invitation",
+  );
+  requireMarker(
+    /function\s+public\.revoke_invitation/i.test(sql)
+      && /invitation\.revoked/i.test(sql)
+      && /grant\s+execute\s+on\s+function\s+public\.revoke_invitation/i.test(sql),
+    "missing_revoke_invitation_rpc", "organisation_invitations",
+    "Invitation revocation must be role-scoped, audited, idempotent and RPC-only",
+  );
+  requireMarker(
+    /function\s+public\.list_organisation_members/i.test(sql)
+      && /case\s+when\s+private_meet\.has_org_role[\s\S]*then\s+identity\.email\s+else\s+null/i.test(sql)
+      && !/grant\s+select\s+on\s+(?:table\s+)?auth\.users\s+to\s+authenticated/i.test(sql),
+    "unsafe_member_identity_access", "member identity",
+    "Member identity must use a same-organisation least-privilege RPC without broad auth.users access",
+  );
+  requireMarker(
+    /alter\s+publication\s+supabase_realtime\s+add\s+table\s+public\.organisations/i.test(sql)
+      && /alter\s+publication\s+supabase_realtime\s+add\s+table\s+public\.organisation_memberships/i.test(sql)
+      && /alter\s+publication\s+supabase_realtime\s+add\s+table\s+public\.organisation_invitations/i.test(sql),
+    "missing_access_realtime", "supabase_realtime",
+    "Organisation, membership and invitation changes must use authorised RLS-backed Realtime",
+  );
+  return issues;
+}
 
 export function verifyReviewInvariant(source) {
   const sql = normalize(source);
@@ -244,6 +302,7 @@ export async function verifyMeetMigrations(migrationsDirectory) {
   }
 
   issues.push(...verifyReviewInvariant(allMigrations));
+  issues.push(...verifyReviewRound2Invariant(allMigrations));
   return { ok: issues.length === 0, issues, schemaVersion: REQUIRED_FILES.length };
 }
 
@@ -257,6 +316,12 @@ function issue(code, target, message) {
 
 function lastMigration(source) {
   const marker = "-- REVIEW HARDENING V4";
+  const index = source.lastIndexOf(marker);
+  return index === -1 ? source : source.slice(index);
+}
+
+function lastMigrationV5(source) {
+  const marker = "-- REVIEW HARDENING V5";
   const index = source.lastIndexOf(marker);
   return index === -1 ? source : source.slice(index);
 }

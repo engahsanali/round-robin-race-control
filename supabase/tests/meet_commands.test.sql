@@ -187,7 +187,7 @@ select throws_ok(
 select is((select count(*) from public.advancement_snapshots), 0::bigint, 'invalid advancement leaves no partial snapshot');
 
 select lives_ok(
-  $$select public.confirm_advancement('31000000-0000-0000-0005-000000000001', 3, 1, '[{"sourceCarId":"31000000-0000-0000-0003-000000000001","destinationBracketId":"31000000-0000-0000-0001-000000000002","rank":1},{"sourceCarId":"31000000-0000-0000-0003-000000000002","destinationBracketId":"31000000-0000-0000-0001-000000000002","rank":2}]', 'Resolved published standings', '30000000-0000-0000-0001-000000000012')$$,
+  $$select public.confirm_advancement('31000000-0000-0000-0005-000000000001', 3, 1, '[{"sourceCarId":"31000000-0000-0000-0003-000000000002","destinationBracketId":"31000000-0000-0000-0001-000000000002","rank":1},{"sourceCarId":"31000000-0000-0000-0003-000000000001","destinationBracketId":"31000000-0000-0000-0001-000000000002","rank":2}]', 'Resolved published standings', '30000000-0000-0000-0001-000000000012')$$,
   'organiser confirms exact advancement in one transaction'
 );
 select is((select count(*) from public.advancement_selections), 2::bigint, 'advancement stores immutable source selections');

@@ -14,12 +14,15 @@ const fixtures = JSON.parse(
 const reviewFixtures = JSON.parse(
   await readFile(path.join(import.meta.dirname, "fixtures", "meet-review-negative.json"), "utf8"),
 );
+const reviewRound2Fixtures = JSON.parse(
+  await readFile(path.join(import.meta.dirname, "fixtures", "meet-review-round2-negative.json"), "utf8"),
+);
 
 test("accepts the checked-in Meet migration security contract", async () => {
   const result = await verifier.verifyMeetMigrations(migrationsDir);
   assert.deepEqual(result.issues, []);
   assert.equal(result.ok, true);
-  assert.equal(result.schemaVersion, 4);
+  assert.equal(result.schemaVersion, 5);
 });
 
 for (const fixture of fixtures) {
@@ -31,6 +34,7 @@ for (const fixture of fixtures) {
         "202608140002_meet_rls.sql",
         "202608140003_meet_commands.sql",
         "202608140004_meet_review_hardening.sql",
+        "202608140005_meet_ranking_and_access_hardening.sql",
       ]) {
         const original = await readFile(path.join(migrationsDir, fileName), "utf8");
         const mutated = fileName === fixture.file
@@ -55,6 +59,17 @@ for (const fixture of reviewFixtures) {
   test(`review invariant rejects ${fixture.name}`, () => {
     assert.equal(typeof verifier.verifyReviewInvariant, "function", "review invariant verifier must be exported");
     const issues = verifier.verifyReviewInvariant(fixture.sql);
+    assert.ok(
+      issues.some((issue) => issue.code === fixture.expectedCode),
+      `${fixture.name} should report ${fixture.expectedCode}; got ${JSON.stringify(issues)}`,
+    );
+  });
+}
+
+for (const fixture of reviewRound2Fixtures) {
+  test(`review round 2 invariant rejects ${fixture.name}`, () => {
+    assert.equal(typeof verifier.verifyReviewRound2Invariant, "function", "review round 2 verifier must be exported");
+    const issues = verifier.verifyReviewRound2Invariant(fixture.sql);
     assert.ok(
       issues.some((issue) => issue.code === fixture.expectedCode),
       `${fixture.name} should report ${fixture.expectedCode}; got ${JSON.stringify(issues)}`,
