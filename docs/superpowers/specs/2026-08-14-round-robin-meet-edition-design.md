@@ -41,7 +41,7 @@ tests/e2e/
   meet-*.spec.ts           auth, workbook, progression, concurrency, deployment
 ```
 
-The browser uses `@supabase/supabase-js` with only `VITE_SUPABASE_URL` and the publishable/anon key. Important writes use PostgreSQL RPC functions, not direct client-side table composition. The database uses `auth.uid()`, RLS, role checks, version columns, unique constraints, and transactions. No service-role credential is shipped or required by the browser.
+The browser uses `@supabase/supabase-js` with only `VITE_SUPABASE_URL` and `VITE_SUPABASE_PUBLISHABLE_KEY`. Important writes use PostgreSQL RPC functions, not direct client-side table composition. The database uses `auth.uid()`, RLS, role checks, version columns, unique constraints, and transactions. No secret/service-role credential is shipped or required by the browser. The legacy anon-key name is not used for a new 2026 project.
 
 ## 3. Meet domain model
 
@@ -171,7 +171,7 @@ Meet's Netlify build runs from repository root:
 - Build: `pnpm --filter @rr3/meet build`
 - Publish: `apps/meet/dist`
 - Functions: none required for core operation; authenticated database RPCs own important mutations.
-- Public environment: `VITE_SUPABASE_URL`, `VITE_SUPABASE_ANON_KEY`.
+- Public environment: `VITE_SUPABASE_URL`, `VITE_SUPABASE_PUBLISHABLE_KEY`.
 
 The Meet site connects to `main` for continuous deployment. Existing Solo and Pro Netlify projects are not relinked, reconfigured or redeployed except for final read-only HTTP verification.
 

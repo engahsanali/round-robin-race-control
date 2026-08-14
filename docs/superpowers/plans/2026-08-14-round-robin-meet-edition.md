@@ -93,7 +93,7 @@
 
 **Interfaces:**
 - Produces `useMeetSession`, `useOrganisation`, `useMeetStore`, `MeetRepository`, command receipts and explicit connection/save states.
-- Reads only `VITE_SUPABASE_URL` and `VITE_SUPABASE_ANON_KEY`; demo repository remains in-memory.
+- Reads only `VITE_SUPABASE_URL` and `VITE_SUPABASE_PUBLISHABLE_KEY`; demo repository remains in-memory.
 
 - [ ] Add failing tests for signup, email verification state, login, logout, recovery, safe callback handling, organisation creation/join and role-rendered controls.
 - [ ] Add failing repository tests for authorised load/save, outsider rejection, optimistic conflicts, realtime update merge and offline/error states using a typed fake Supabase boundary.
@@ -209,7 +209,7 @@
 
 - [ ] Authenticate the official Supabase CLI/plugin; create/link the production project without exposing credentials.
 - [ ] Apply migrations, enable email Auth/verification and Realtime, then create two test users/two organisations and prove RLS isolation plus authorised collaboration.
-- [ ] Set `VITE_SUPABASE_URL` and `VITE_SUPABASE_ANON_KEY` in the Meet Netlify project environment.
+- [ ] Set `VITE_SUPABASE_URL` and `VITE_SUPABASE_PUBLISHABLE_KEY` in the Meet Netlify project environment.
 - [ ] Commit final verified changes, scan staged diff, push branch/main as authorised and verify GitHub commit parity.
 - [ ] Create/link `round-robin-race-control-meet` to the same GitHub repository with continuous deployment from `main`; build from root and publish `apps/meet/dist`.
 - [ ] Verify Meet live account/progression/concurrency flows and public HTTP 200 at mobile/tablet/desktop sizes.
