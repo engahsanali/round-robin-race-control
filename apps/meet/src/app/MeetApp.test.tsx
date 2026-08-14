@@ -1,7 +1,7 @@
 import { render, screen } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { describe, expect, it, vi } from "vitest";
-import { MeetApp } from "./MeetApp";
+import { MeetApp, OperatorConflictNotice } from "./MeetApp";
 import type { MeetRepository } from "../data/meetRepository";
 
 describe("Meet application shell", () => {
@@ -17,5 +17,18 @@ describe("Meet application shell", () => {
     render(<MeetApp productionRepository={null} auth={null} initialMode="welcome" />);
     expect(screen.getByRole("heading", { name: /sign in to meet edition/i })).not.toBeNull();
     expect(screen.queryByRole("heading", { name: /official workspace/i })).toBeNull();
+  });
+
+  it("gives officials explicit keep-draft and authoritative-reload conflict actions", async () => {
+    const keepDraft = vi.fn();
+    const reloadAuthoritative = vi.fn();
+    render(<OperatorConflictNotice message="A remote update is waiting." onKeepDraft={keepDraft} onReloadAuthoritative={reloadAuthoritative} />);
+
+    await userEvent.click(screen.getByRole("button", { name: /keep my draft/i }));
+    await userEvent.click(screen.getByRole("button", { name: /review\/reload authoritative/i }));
+
+    expect(screen.getByRole("alert").textContent).toContain("A remote update is waiting.");
+    expect(keepDraft).toHaveBeenCalledOnce();
+    expect(reloadAuthoritative).toHaveBeenCalledOnce();
   });
 });

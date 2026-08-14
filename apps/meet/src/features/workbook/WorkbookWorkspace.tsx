@@ -25,7 +25,7 @@ export type WorkbookActions = {
 
 const CREATOR_CREDIT = "Made by Cesar Lacsamana and Ahsan Ali";
 
-export function WorkbookWorkspace({ meet, role, readOnly, actions, heatVersions = {}, onSignOut }: { meet: MeetStateV1; role: OrganisationRole; readOnly: boolean; actions: WorkbookActions; heatVersions?: Readonly<Record<string, number>>; onSignOut?(): void }) {
+export function WorkbookWorkspace({ meet, role, readOnly, actions, heatVersions = {}, onSignOut, onFormDirtyChange }: { meet: MeetStateV1; role: OrganisationRole; readOnly: boolean; actions: WorkbookActions; heatVersions?: Readonly<Record<string, number>>; onSignOut?(): void; onFormDirtyChange?(dirty: boolean): void }) {
   const ordered = useMemo(() => meet.brackets.slice().sort((a, b) => a.displayOrder - b.displayOrder || a.id.localeCompare(b.id)), [meet.brackets]);
   const [selectedId, setSelectedId] = useState(ordered[0]?.id ?? "");
   const [expanded, setExpanded] = useState(() => new Set<string>(ordered[0] ? [ordered[0].id] : []));
@@ -124,6 +124,7 @@ export function WorkbookWorkspace({ meet, role, readOnly, actions, heatVersions 
                 actions={actions}
                 heatVersions={heatVersions}
                 announce={announce}
+                onFormDirtyChange={onFormDirtyChange}
                 onSelect={() => selectBracket(bracket.id)}
                 onToggle={() => setExpanded((current) => { const next = new Set(current); next.has(bracket.id) ? next.delete(bracket.id) : next.add(bracket.id); return next; })}
               />
@@ -134,8 +135,8 @@ export function WorkbookWorkspace({ meet, role, readOnly, actions, heatVersions 
       </div>
 
       <p className="print-credit">{CREATOR_CREDIT}</p>
-      {setupOpen ? <SetupDialog meet={meet} actions={actions} onResult={announce} onClose={() => setSetupOpen(false)} /> : null}
-      {registrationOpen && selected ? <RegistrationDialog bracket={selected} actions={actions} onResult={announce} onClose={() => setRegistrationOpen(false)} /> : null}
+      {setupOpen ? <SetupDialog meet={meet} actions={actions} onResult={announce} onDirtyChange={(dirty) => onFormDirtyChange?.(dirty)} onClose={() => { onFormDirtyChange?.(false); setSetupOpen(false); }} /> : null}
+      {registrationOpen && selected ? <RegistrationDialog bracket={selected} actions={actions} onResult={announce} onDirtyChange={(dirty) => onFormDirtyChange?.(dirty)} onClose={() => { onFormDirtyChange?.(false); setRegistrationOpen(false); }} /> : null}
     </section>
   );
 }
@@ -158,7 +159,7 @@ function ProgressionSummary({ meet }: { meet: MeetStateV1 }) {
   </section>;
 }
 
-const BracketSheet = memo(function BracketSheet({ bracket, active, expanded, readOnly, role, actions, heatVersions, announce, onSelect, onToggle }: { bracket: BracketState; active: boolean; expanded: boolean; readOnly: boolean; role: OrganisationRole; actions: WorkbookActions; heatVersions: Readonly<Record<string, number>>; announce(result: WorkbookActionResult): WorkbookActionResult; onSelect(): void; onToggle(): void }) {
+const BracketSheet = memo(function BracketSheet({ bracket, active, expanded, readOnly, role, actions, heatVersions, announce, onFormDirtyChange, onSelect, onToggle }: { bracket: BracketState; active: boolean; expanded: boolean; readOnly: boolean; role: OrganisationRole; actions: WorkbookActions; heatVersions: Readonly<Record<string, number>>; announce(result: WorkbookActionResult): WorkbookActionResult; onFormDirtyChange?(dirty: boolean): void; onSelect(): void; onToggle(): void }) {
   const activeCars = bracket.event.entries.filter((entry) => entry.active).length;
   const heats = bracket.stage === "final" ? bracket.event.finals : bracket.event.matches;
   const complete = heats.filter((heat) => heat.status === "completed").length;
@@ -172,17 +173,17 @@ const BracketSheet = memo(function BracketSheet({ bracket, active, expanded, rea
       <span className="summary-copy">{activeCars} active cars</span>
       <progress max={100} value={completedPercent} aria-label={`${bracket.name} completion`}>{completedPercent}%</progress>
     </header>
-    {detailsMounted ? <BracketDetails bracket={bracket} active={active} readOnly={readOnly} role={role} actions={actions} heatVersions={heatVersions} announce={announce} /> : null}
+    {detailsMounted ? <BracketDetails bracket={bracket} active={active} readOnly={readOnly} role={role} actions={actions} heatVersions={heatVersions} announce={announce} onFormDirtyChange={onFormDirtyChange} /> : null}
   </section>;
 });
 
-const BracketDetails = memo(function BracketDetails({ bracket, active, readOnly, role, actions, heatVersions, announce }: { bracket: BracketState; active: boolean; readOnly: boolean; role: OrganisationRole; actions: WorkbookActions; heatVersions: Readonly<Record<string, number>>; announce(result: WorkbookActionResult): WorkbookActionResult }) {
+const BracketDetails = memo(function BracketDetails({ bracket, active, readOnly, role, actions, heatVersions, announce, onFormDirtyChange }: { bracket: BracketState; active: boolean; readOnly: boolean; role: OrganisationRole; actions: WorkbookActions; heatVersions: Readonly<Record<string, number>>; announce(result: WorkbookActionResult): WorkbookActionResult; onFormDirtyChange?(dirty: boolean): void }) {
   const view = useMemo(() => workbookViewModel.selectBracketView(bracket), [bracket]);
   return <div id={`bracket-detail-${bracket.id}`} className="sheet-detail">
-      <RaceControl bracket={bracket} view={view} readOnly={readOnly} role={role} actions={actions} heatVersions={heatVersions} announce={announce} active={active} />
+      <RaceControl bracket={bracket} view={view} readOnly={readOnly} role={role} actions={actions} heatVersions={heatVersions} announce={announce} onFormDirtyChange={onFormDirtyChange} active={active} />
       <div className="sheet-grid">
         <RegistrationTable bracket={bracket} />
-        <ScheduleLab bracket={bracket} readOnly={readOnly} role={role} actions={actions} announce={announce} />
+        <ScheduleLab bracket={bracket} readOnly={readOnly} role={role} actions={actions} announce={announce} onFormDirtyChange={onFormDirtyChange} />
       </div>
       <ScheduleTable bracket={bracket} />
       <StandingsTable bracket={bracket} view={view} />
@@ -199,7 +200,7 @@ function RegistrationTable({ bracket }: { bracket: BracketState }) {
   return <section className="sheet-panel"><div className="panel-heading"><h4>Cars and participants</h4><div className="registration-filters"><label><span className="sr-only">Search cars and participants</span><input type="search" placeholder="Search cars or people" value={query} onChange={(event) => setQuery(event.target.value)} /></label><label>Car status<select value={status} onChange={(event) => setStatus(event.target.value as typeof status)}><option value="all">All</option><option value="active">Active</option><option value="withdrawn">Withdrawn</option></select></label><label>Sort cars<select value={sort} onChange={(event) => setSort(event.target.value as typeof sort)}><option value="number">Car number</option><option value="participant">Participant</option><option value="car">Car name</option></select></label></div></div><div className="table-scroll"><table aria-label={`${bracket.name} cars and participants`}><thead><tr><th scope="col">Car #</th><th scope="col">Car</th><th scope="col">Participant</th><th scope="col">State</th></tr></thead><tbody>{rows.map((entry) => <tr key={entry.id}><th scope="row">{entry.carNumber}</th><td>{entry.name}</td><td>{participants.get(entry.participantId)?.name ?? "Unknown"}</td><td>{entry.active ? "Active" : "Withdrawn"}</td></tr>)}</tbody></table></div></section>;
 }
 
-function ScheduleLab({ bracket, readOnly, role, actions, announce }: { bracket: BracketState; readOnly: boolean; role: OrganisationRole; actions: WorkbookActions; announce(result: WorkbookActionResult): WorkbookActionResult }) {
+function ScheduleLab({ bracket, readOnly, role, actions, announce, onFormDirtyChange }: { bracket: BracketState; readOnly: boolean; role: OrganisationRole; actions: WorkbookActions; announce(result: WorkbookActionResult): WorkbookActionResult; onFormDirtyChange?(dirty: boolean): void }) {
   const canSchedule = !readOnly && ["owner", "admin", "organiser"].includes(role);
   const [seed, setSeed] = useState(bracket.event.settings.seed || "meet-schedule");
   const [rounds, setRounds] = useState(5);
@@ -207,8 +208,14 @@ function ScheduleLab({ bracket, readOnly, role, actions, announce }: { bracket: 
   const [error, setError] = useState("");
   const [replacementReason, setReplacementReason] = useState("");
   const replacing = bracket.event.matches.length > 0 || bracket.event.finals.length > 0;
-  const generate = () => { try { setCandidate(buildScheduleCandidate(bracket, { seed, rounds })); setError(""); } catch (cause) { setError(cause instanceof Error ? cause.message : "Schedule generation failed."); } };
-  return <section className="sheet-panel schedule-lab"><div className="panel-heading"><h4>Schedule quality</h4><span>{candidate?.source ?? "No candidate"}</span></div>{canSchedule ? <div className="schedule-form"><label>Seed<input value={seed} maxLength={128} onChange={(event) => setSeed(event.target.value)} /></label><label>Rounds<input type="number" min={1} max={10} value={rounds} onChange={(event) => setRounds(Number(event.target.value))} /></label><button type="button" onClick={generate}>Generate candidate</button></div> : <p>Viewer-safe schedule summary.</p>}{error ? <p role="alert">{error}</p> : null}{candidate ? <><dl className="quality-grid"><div><dt>Opponent repeats</dt><dd>{candidate.quality.opponentRepeatExcess}</dd></div><div><dt>Appearances</dt><dd>{candidate.quality.appearanceMinimum}–{candidate.quality.appearanceMaximum} per car</dd></div><div><dt>Byes</dt><dd>{candidate.quality.totalByes} total · max {candidate.quality.maximumByes}</dd></div><div><dt>Max car repeat burden</dt><dd>{candidate.quality.maxCarRepeatBurden}</dd></div><div><dt>Lower-bound gap</dt><dd>{candidate.quality.gap}</dd></div><div><dt>Max pair frequency</dt><dd>{candidate.quality.maxPairFrequency}</dd></div><div><dt>Lane spread</dt><dd>{candidate.quality.laneSpread}</dd></div><div><dt>Certificate</dt><dd>{candidate.quality.provenOptimal ? "Certified optimal" : "Best found"}</dd></div></dl>{canSchedule ? <>{replacing ? <label>Replacement reason<textarea required maxLength={500} value={replacementReason} onChange={(event) => setReplacementReason(event.target.value)} /></label> : null}<button type="button" disabled={replacing && !replacementReason.trim()} onClick={() => void actions.activateSchedule({ bracketId: bracket.id, expectedVersion: bracket.version, candidate: schedulePayload(candidate), replacementReason: replacing ? replacementReason.trim() : null }).then(announce)}>Activate schedule</button></> : null}</> : null}</section>;
+  const generate = () => { try { setCandidate(buildScheduleCandidate(bracket, { seed, rounds })); setError(""); onFormDirtyChange?.(true); } catch (cause) { setError(cause instanceof Error ? cause.message : "Schedule generation failed."); } };
+  const activate = async () => {
+    if (!candidate) return;
+    const result = await actions.activateSchedule({ bracketId: bracket.id, expectedVersion: bracket.version, candidate: schedulePayload(candidate), replacementReason: replacing ? replacementReason.trim() : null });
+    announce(result);
+    if (result.ok) onFormDirtyChange?.(false);
+  };
+  return <section className="sheet-panel schedule-lab"><div className="panel-heading"><h4>Schedule quality</h4><span>{candidate?.source ?? "No candidate"}</span></div>{canSchedule ? <div className="schedule-form"><label>Seed<input value={seed} maxLength={128} onChange={(event) => { setSeed(event.target.value); onFormDirtyChange?.(true); }} /></label><label>Rounds<input type="number" min={1} max={10} value={rounds} onChange={(event) => { setRounds(Number(event.target.value)); onFormDirtyChange?.(true); }} /></label><button type="button" onClick={generate}>Generate candidate</button></div> : <p>Viewer-safe schedule summary.</p>}{error ? <p role="alert">{error}</p> : null}{candidate ? <><dl className="quality-grid"><div><dt>Opponent repeats</dt><dd>{candidate.quality.opponentRepeatExcess}</dd></div><div><dt>Appearances</dt><dd>{candidate.quality.appearanceMinimum}–{candidate.quality.appearanceMaximum} per car</dd></div><div><dt>Byes</dt><dd>{candidate.quality.totalByes} total · max {candidate.quality.maximumByes}</dd></div><div><dt>Max car repeat burden</dt><dd>{candidate.quality.maxCarRepeatBurden}</dd></div><div><dt>Lower-bound gap</dt><dd>{candidate.quality.gap}</dd></div><div><dt>Max pair frequency</dt><dd>{candidate.quality.maxPairFrequency}</dd></div><div><dt>Lane spread</dt><dd>{candidate.quality.laneSpread}</dd></div><div><dt>Certificate</dt><dd>{candidate.quality.provenOptimal ? "Certified optimal" : "Best found"}</dd></div></dl>{canSchedule ? <>{replacing ? <label>Replacement reason<textarea required maxLength={500} value={replacementReason} onChange={(event) => { setReplacementReason(event.target.value); onFormDirtyChange?.(true); }} /></label> : null}<button type="button" disabled={replacing && !replacementReason.trim()} onClick={() => void activate()}>Activate schedule</button></> : null}</> : null}</section>;
 }
 
 function ScheduleTable({ bracket }: { bracket: BracketState }) {
@@ -221,7 +228,7 @@ function StandingsTable({ bracket, view }: { bracket: BracketState; view: Return
   return <section className="sheet-panel full-width"><h4>Standings</h4>{view.standings.every((row) => row.rank === null) ? <p className="ranking-notice">Competitive rankings appear after the first official result.</p> : null}<div className="table-scroll"><table aria-label={`${bracket.name} standings`}><thead><tr><th scope="col">Rank</th><th scope="col">Car</th><th scope="col">Participant</th><th scope="col">Wins</th><th scope="col">Heats</th><th scope="col">Tie state</th></tr></thead><tbody>{view.standings.map((row) => <tr key={row.carId}><td>{row.rank ?? "—"}</td><th scope="row">#{row.carNumber} {row.carName}</th><td>{row.participantName}</td><td>{row.totalWins}</td><td>{row.completedHeats}</td><td>{row.isTied && row.rank !== null ? "Tied" : row.rank === null ? "No official rank" : "Resolved"}</td></tr>)}</tbody></table></div></section>;
 }
 
-function RaceControl({ bracket, view, readOnly, role, actions, heatVersions, announce, active }: { bracket: BracketState; view: ReturnType<typeof workbookViewModel.selectBracketView>; readOnly: boolean; role: OrganisationRole; actions: WorkbookActions; heatVersions: Readonly<Record<string, number>>; announce(result: WorkbookActionResult): WorkbookActionResult; active: boolean }) {
+function RaceControl({ bracket, view, readOnly, role, actions, heatVersions, announce, onFormDirtyChange, active }: { bracket: BracketState; view: ReturnType<typeof workbookViewModel.selectBracketView>; readOnly: boolean; role: OrganisationRole; actions: WorkbookActions; heatVersions: Readonly<Record<string, number>>; announce(result: WorkbookActionResult): WorkbookActionResult; onFormDirtyChange?(dirty: boolean): void; active: boolean }) {
   const canRace = !readOnly && ["owner", "admin", "organiser", "marshal"].includes(role);
   const [lane, setLane] = useState(1);
   const [correctionOpen, setCorrectionOpen] = useState(false);
@@ -256,14 +263,18 @@ function RaceControl({ bracket, view, readOnly, role, actions, heatVersions, ann
     {canRace && heat ? <button className="confirm-winner" type="button" onClick={confirm}>Confirm winner · Lane {lane}</button> : null}
     {canRace && completed.length ? <button type="button" className="quiet-danger" onClick={() => setCorrectionOpen(true)}>Correct result</button> : null}
     <button id={`keyboard-help-${bracket.id}`} type="button" className="keyboard-hint" aria-label="Keyboard help">1/2/3 lane · arrows move · Enter confirms · ? help</button>
-    {correctionOpen && completed.length ? <CorrectionDialog heats={completed} bracket={bracket} actions={actions} heatVersions={heatVersions} announce={announce} onClose={() => setCorrectionOpen(false)} /> : null}
+    {correctionOpen && completed.length ? <CorrectionDialog heats={completed} bracket={bracket} actions={actions} heatVersions={heatVersions} announce={announce} onDirtyChange={(dirty) => onFormDirtyChange?.(dirty)} onClose={() => { onFormDirtyChange?.(false); setCorrectionOpen(false); }} /> : null}
   </section>;
 }
 
-function SetupDialog({ meet, actions, onResult, onClose }: { meet: MeetStateV1; actions: WorkbookActions; onResult(result: WorkbookActionResult): WorkbookActionResult; onClose(): void }) {
+function SetupDialog({ meet, actions, onResult, onDirtyChange, onClose }: { meet: MeetStateV1; actions: WorkbookActions; onResult(result: WorkbookActionResult): WorkbookActionResult; onDirtyChange(dirty: boolean): void; onClose(): void }) {
   const [draft, setDraft] = useState(() => structuredClone(meet));
   const [errors, setErrors] = useState<string[]>([]);
-  const submit = async (event: FormEvent) => { event.preventDefault(); const issues = validateSetupGraph(draft); setErrors(issues); if (issues.length) return; const result = await actions.saveSetup(draft); onResult(result); if (result.ok) onClose(); };
+  const initialDraft = useRef(draft);
+  const onDirtyRef = useRef(onDirtyChange);
+  onDirtyRef.current = onDirtyChange;
+  useEffect(() => { if (draft !== initialDraft.current) onDirtyRef.current(true); }, [draft]);
+  const submit = async (event: FormEvent) => { event.preventDefault(); const issues = validateSetupGraph(draft); setErrors(issues); if (issues.length) return; const result = await actions.saveSetup(draft); onResult(result); if (result.ok) { onDirtyChange(false); onClose(); } };
   const addBracket = () => setDraft((current) => {
     if (current.brackets.length >= 15) return current;
     const id = crypto.randomUUID();
@@ -294,7 +305,7 @@ function SetupDialog({ meet, actions, onResult, onClose }: { meet: MeetStateV1; 
   </form></WorkbookDialog>;
 }
 
-function RegistrationDialog({ bracket, actions, onResult, onClose }: { bracket: BracketState; actions: WorkbookActions; onResult(result: WorkbookActionResult): WorkbookActionResult; onClose(): void }) {
+function RegistrationDialog({ bracket, actions, onResult, onDirtyChange, onClose }: { bracket: BracketState; actions: WorkbookActions; onResult(result: WorkbookActionResult): WorkbookActionResult; onDirtyChange(dirty: boolean): void; onClose(): void }) {
   const [paste, setPaste] = useState("");
   const [parsed, setParsed] = useState<ReturnType<typeof parseRegistrationPaste> | null>(null);
   const [rows, setRows] = useState(() => registrationRows(bracket));
@@ -302,11 +313,11 @@ function RegistrationDialog({ bracket, actions, onResult, onClose }: { bracket: 
   const [statusReason, setStatusReason] = useState("");
   const [statusWarning, setStatusWarning] = useState("");
   const [error, setError] = useState("");
-  const update = (carId: string, field: keyof RegistrationDraft, value: string | number | boolean) => setRows((current) => {
+  const update = (carId: string, field: keyof RegistrationDraft, value: string | number | boolean) => { onDirtyChange(true); setRows((current) => {
     const source = current.find((row) => row.carId === carId);
     const participantField = ["participantName", "email", "phone", "notes"].includes(field);
     return current.map((row) => row.carId === carId || (participantField && row.participantId === source?.participantId) ? { ...row, [field]: value } : row);
-  });
+  }); };
   const validateRows = (candidate: RegistrationDraft[]) => {
     const numbers = new Set<number>();
     for (const row of candidate) {
@@ -315,8 +326,8 @@ function RegistrationDialog({ bracket, actions, onResult, onClose }: { bracket: 
     }
     return candidate.length > 0;
   };
-  const save = async () => { if (!validateRows(rows)) { setError("Fix every row before saving. Car numbers must be unique and all names are required."); return; } const result = await actions.saveRegistration({ bracketId: bracket.id, expectedVersion: bracket.version, rows }); onResult(result); if (result.ok) onClose(); };
-  const applyPaste = () => { const next = parseRegistrationPaste(paste, bracket.id); setParsed(next); if (next.ok) { setRows(next.rows); setError(""); } };
+  const save = async () => { if (!validateRows(rows)) { setError("Fix every row before saving. Car numbers must be unique and all names are required."); return; } const result = await actions.saveRegistration({ bracketId: bracket.id, expectedVersion: bracket.version, rows }); onResult(result); if (result.ok) { onDirtyChange(false); onClose(); } };
+  const applyPaste = () => { const next = parseRegistrationPaste(paste, bracket.id); setParsed(next); if (next.ok) { setRows(next.rows); setError(""); onDirtyChange(true); } };
   const requestStatus = (row: RegistrationDraft) => {
     const scheduled = [...bracket.event.matches, ...bracket.event.finals].some((heat) => heat.lanes.includes(row.carId));
     const protectedLineage = bracket.lineage.length > 0;
@@ -329,16 +340,16 @@ function RegistrationDialog({ bracket, actions, onResult, onClose }: { bracket: 
     setPendingStatus({ carId: row.carId, active: !row.active });
   };
   const pendingRow = pendingStatus ? rows.find((row) => row.carId === pendingStatus.carId) : null;
-  return <WorkbookDialog title={`Registration · ${bracket.name}`} onClose={onClose}><p>Edit each participant and car, or paste one car per line. Cars sharing the same email are grouped under one participant identity.</p><p>Submitted rows add/update; unlisted existing rows remain.</p><div className="registration-editor">{rows.map((row, index) => <fieldset key={row.carId}><legend>Car #{row.carNumber}</legend><label>Car {row.carNumber} participant<input data-initial-focus={index === 0 ? true : undefined} required maxLength={200} value={row.participantName} onChange={(event) => update(row.carId, "participantName", event.target.value)} /></label><label>Participant email<input type="email" maxLength={320} value={row.email} onChange={(event) => update(row.carId, "email", event.target.value)} /></label><label>Participant phone<input maxLength={80} value={row.phone} onChange={(event) => update(row.carId, "phone", event.target.value)} /></label><label>Participant notes<textarea maxLength={500} value={row.notes} onChange={(event) => update(row.carId, "notes", event.target.value)} /></label><label>Car number<input type="number" min={1} max={999999} value={row.carNumber} onChange={(event) => update(row.carId, "carNumber", Number(event.target.value))} /></label><label>Car name<input required maxLength={200} value={row.carName} onChange={(event) => update(row.carId, "carName", event.target.value)} /></label><button type="button" className={row.active ? "quiet-danger" : "quiet-action"} onClick={() => requestStatus(row)}>{row.active ? `Withdraw car #${row.carNumber}` : `Restore car #${row.carNumber}`}</button></fieldset>)}</div>{statusWarning ? <p role="alert">{statusWarning}</p> : null}<details><summary>Bulk paste</summary><label>Bulk registration rows<textarea value={paste} onChange={(event) => { setPaste(event.target.value); setParsed(null); }} placeholder={'7\tCesar\tComet\tcesar@example.com\n8\tCesar\tNova\tcesar@example.com'} /></label><button type="button" onClick={applyPaste}>Validate rows</button></details>{parsed ? parsed.ok ? <p role="status">{parsed.rows.length} valid rows ready to add or update. Unlisted existing rows remain.</p> : <ul role="alert">{parsed.errors.map((message) => <li key={message}>{message}</li>)}</ul> : null}{error ? <p role="alert">{error}</p> : null}{pendingRow && pendingStatus ? <section role="alertdialog" aria-labelledby="registration-status-title" className="inline-confirmation"><h3 id="registration-status-title">{pendingStatus.active ? "Restore" : "Withdraw"} car #{pendingRow.carNumber}</h3><p>This unscheduled status change will be submitted with the rest of the registration updates.</p><label>Reason<textarea required maxLength={500} value={statusReason} onChange={(event) => setStatusReason(event.target.value)} /></label><div className="dialog-actions"><button type="button" disabled={!statusReason.trim()} className="quiet-danger" onClick={() => { const carId = pendingRow.carId; const active = pendingStatus.active; setRows((current) => current.map((row) => row.carId === carId ? { ...row, active } : row)); setPendingStatus(null); }}>Confirm status change</button><button type="button" onClick={() => setPendingStatus(null)}>Keep current status</button></div></section> : null}<div className="dialog-actions"><button type="button" disabled={!validateRows(rows)} onClick={() => void save()}>Validate and save rows</button><button type="button" className="quiet-action" onClick={onClose}>Cancel</button></div></WorkbookDialog>;
+  return <WorkbookDialog title={`Registration · ${bracket.name}`} onClose={onClose}><p>Edit each participant and car, or paste one car per line. Cars sharing the same email are grouped under one participant identity.</p><p>Submitted rows add/update; unlisted existing rows remain.</p><div className="registration-editor">{rows.map((row, index) => <fieldset key={row.carId}><legend>Car #{row.carNumber}</legend><label>Car {row.carNumber} participant<input data-initial-focus={index === 0 ? true : undefined} required maxLength={200} value={row.participantName} onChange={(event) => update(row.carId, "participantName", event.target.value)} /></label><label>Participant email<input type="email" maxLength={320} value={row.email} onChange={(event) => update(row.carId, "email", event.target.value)} /></label><label>Participant phone<input maxLength={80} value={row.phone} onChange={(event) => update(row.carId, "phone", event.target.value)} /></label><label>Participant notes<textarea maxLength={500} value={row.notes} onChange={(event) => update(row.carId, "notes", event.target.value)} /></label><label>Car number<input type="number" min={1} max={999999} value={row.carNumber} onChange={(event) => update(row.carId, "carNumber", Number(event.target.value))} /></label><label>Car name<input required maxLength={200} value={row.carName} onChange={(event) => update(row.carId, "carName", event.target.value)} /></label><button type="button" className={row.active ? "quiet-danger" : "quiet-action"} onClick={() => requestStatus(row)}>{row.active ? `Withdraw car #${row.carNumber}` : `Restore car #${row.carNumber}`}</button></fieldset>)}</div>{statusWarning ? <p role="alert">{statusWarning}</p> : null}<details><summary>Bulk paste</summary><label>Bulk registration rows<textarea value={paste} onChange={(event) => { setPaste(event.target.value); setParsed(null); onDirtyChange(true); }} placeholder={'7\tCesar\tComet\tcesar@example.com\n8\tCesar\tNova\tcesar@example.com'} /></label><button type="button" onClick={applyPaste}>Validate rows</button></details>{parsed ? parsed.ok ? <p role="status">{parsed.rows.length} valid rows ready to add or update. Unlisted existing rows remain.</p> : <ul role="alert">{parsed.errors.map((message) => <li key={message}>{message}</li>)}</ul> : null}{error ? <p role="alert">{error}</p> : null}{pendingRow && pendingStatus ? <section role="alertdialog" aria-labelledby="registration-status-title" className="inline-confirmation"><h3 id="registration-status-title">{pendingStatus.active ? "Restore" : "Withdraw"} car #{pendingRow.carNumber}</h3><p>This unscheduled status change will be submitted with the rest of the registration updates.</p><label>Reason<textarea required maxLength={500} value={statusReason} onChange={(event) => { setStatusReason(event.target.value); onDirtyChange(true); }} /></label><div className="dialog-actions"><button type="button" disabled={!statusReason.trim()} className="quiet-danger" onClick={() => { const carId = pendingRow.carId; const active = pendingStatus.active; const reason = statusReason.trim(); setRows((current) => current.map((row) => row.carId === carId ? { ...row, active, reason } : row)); setPendingStatus(null); }}>Confirm status change</button><button type="button" onClick={() => setPendingStatus(null)}>Keep current status</button></div></section> : null}<div className="dialog-actions"><button type="button" disabled={!validateRows(rows)} onClick={() => void save()}>Validate and save rows</button><button type="button" className="quiet-action" onClick={onClose}>Cancel</button></div></WorkbookDialog>;
 }
 
-function CorrectionDialog({ heats, bracket, actions, heatVersions, announce, onClose }: { heats: BracketState["event"]["matches"]; bracket: BracketState; actions: WorkbookActions; heatVersions: Readonly<Record<string, number>>; announce(result: WorkbookActionResult): WorkbookActionResult; onClose(): void }) {
+function CorrectionDialog({ heats, bracket, actions, heatVersions, announce, onDirtyChange, onClose }: { heats: BracketState["event"]["matches"]; bracket: BracketState; actions: WorkbookActions; heatVersions: Readonly<Record<string, number>>; announce(result: WorkbookActionResult): WorkbookActionResult; onDirtyChange(dirty: boolean): void; onClose(): void }) {
   const [heatId, setHeatId] = useState(heats[0]?.id ?? "");
   const [reason, setReason] = useState("");
   const [lane, setLane] = useState(1);
   const heat = heats.find((candidate) => candidate.id === heatId) ?? heats[0]!;
-  const save = async () => { const winnerId = heat.lanes[lane - 1]; if (!winnerId || !reason.trim()) return; const result = await actions.correctWinner({ heatId: heat.id, winnerId, lane, laneTimes: {}, expectedVersion: heatVersions[heat.id] ?? 1, reason: reason.trim() }); announce(result); if (result.ok) onClose(); };
-  return <WorkbookDialog title="Correct official result" onClose={onClose}><label>Completed heat<select autoFocus data-initial-focus value={heat.id} onChange={(event) => { setHeatId(event.target.value); setLane(1); }}>{heats.map((candidate) => <option key={candidate.id} value={candidate.id}>Round {candidate.matchNumber} · Heat {candidate.heatNumber}</option>)}</select></label><label>Winning lane<select value={lane} onChange={(event) => setLane(Number(event.target.value))}>{heat.lanes.map((carId, index) => carId ? <option key={carId} value={index + 1}>Lane {index + 1} · #{bracket.event.entries.find((entry) => entry.id === carId)?.carNumber}</option> : null)}</select></label><label>Reason<textarea required maxLength={500} value={reason} onChange={(event) => setReason(event.target.value)} /></label><div className="dialog-actions"><button type="button" disabled={!reason.trim()} onClick={() => void save()}>Save correction</button><button type="button" className="quiet-action" onClick={onClose}>Cancel</button></div></WorkbookDialog>;
+  const save = async () => { const winnerId = heat.lanes[lane - 1]; if (!winnerId || !reason.trim()) return; const result = await actions.correctWinner({ heatId: heat.id, winnerId, lane, laneTimes: {}, expectedVersion: heatVersions[heat.id] ?? 1, reason: reason.trim() }); announce(result); if (result.ok) { onDirtyChange(false); onClose(); } };
+  return <WorkbookDialog title="Correct official result" onClose={onClose}><label>Completed heat<select autoFocus data-initial-focus value={heat.id} onChange={(event) => { setHeatId(event.target.value); setLane(1); onDirtyChange(true); }}>{heats.map((candidate) => <option key={candidate.id} value={candidate.id}>Round {candidate.matchNumber} · Heat {candidate.heatNumber}</option>)}</select></label><label>Winning lane<select value={lane} onChange={(event) => { setLane(Number(event.target.value)); onDirtyChange(true); }}>{heat.lanes.map((carId, index) => carId ? <option key={carId} value={index + 1}>Lane {index + 1} · #{bracket.event.entries.find((entry) => entry.id === carId)?.carNumber}</option> : null)}</select></label><label>Reason<textarea required maxLength={500} value={reason} onChange={(event) => { setReason(event.target.value); onDirtyChange(true); }} /></label><div className="dialog-actions"><button type="button" disabled={!reason.trim()} onClick={() => void save()}>Save correction</button><button type="button" className="quiet-action" onClick={onClose}>Cancel</button></div></WorkbookDialog>;
 }
 
 function WorkbookDialog({ title, onClose, children, role = "dialog" }: { title: string; onClose(): void; children: ReactNode; role?: "dialog" | "alertdialog" }) {

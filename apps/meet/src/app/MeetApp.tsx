@@ -135,7 +135,6 @@ function OfficialWorkspace({ repository, organisation, organisations, onSelect, 
   const [members, setMembers] = useState<TeamMember[]>([]);
   const [meets, setMeets] = useState<MeetSummary[]>([]);
   const [selectedMeetId, setSelectedMeetId] = useState<string | null>(null);
-  const [heatVersions, setHeatVersions] = useState<Readonly<Record<string, number>>>({});
   const [loadingMeet, setLoadingMeet] = useState(true);
   const [invitation, setInvitation] = useState<{ id: string; code: string } | null>(null);
   const [notice, setNotice] = useState<string | null>(null);
@@ -172,7 +171,6 @@ function OfficialWorkspace({ repository, organisation, organisations, onSelect, 
     setLoadingMeet(true);
     const receipt = await repository.loadMeet(organisation.id, meetId);
     if (!receipt.ok) { setNotice(receipt.message); setLoadingMeet(false); return false; }
-    setHeatVersions(receipt.value.heatVersions);
     dispatch({ type: "meet.selected", meetId });
     dispatch({ type: "bundle.loaded", bundle: receipt.value, syncedAt: new Date().toISOString() });
     setLoadingMeet(false);
@@ -183,7 +181,7 @@ function OfficialWorkspace({ repository, organisation, organisations, onSelect, 
     if (!selectedMeetId || !state.snapshot || state.snapshot.meet.id !== selectedMeetId) return;
     return repository.watchMeet(organisation.id, selectedMeetId, {
       bracketIds: state.snapshot.brackets.map((bracket) => bracket.id),
-      onBundle: (bundle, syncedAt) => { setHeatVersions(bundle.heatVersions); dispatch({ type: "realtime.bundle", bundle, syncedAt }); },
+      onBundle: (bundle, syncedAt) => dispatch({ type: "realtime.bundle", bundle, syncedAt }),
       onStatus: (status) => dispatch({ type: "connection.changed", status }),
       isDirty: () => state.formDirty,
       onDirtyUpdate: () => dispatch({ type: "form.dirty", dirty: true }),
@@ -227,6 +225,14 @@ function OfficialWorkspace({ repository, organisation, organisations, onSelect, 
     confirmWinner: ({ heatId, winnerId, laneTimes, expectedVersion }) => asAction(`winner:${heatId}`, (requestId) => repository.confirmHeatWinnerMs(heatId, winnerId, laneTimes, expectedVersion, requestId)),
     correctWinner: ({ heatId, winnerId, laneTimes, expectedVersion, reason }) => asAction(`correction:${heatId}`, (requestId) => repository.correctHeatWinnerMs(heatId, winnerId, laneTimes, expectedVersion, reason, requestId)),
   }), [asAction, organisation.id, reloadMeet, repository, runCommand, selectedMeetId]);
+  const reviewAuthoritative = async () => {
+    if (state.queuedRemoteBundle) {
+      dispatch({ type: "remote-update.accepted" });
+      return;
+    }
+    dispatch({ type: "form.dirty", dirty: false });
+    await reloadMeet();
+  };
   return (
     <section className="official-meet-shell" aria-labelledby="workspace-heading">
       <div className="workspace-toolbar organisation-toolbar">
@@ -239,10 +245,15 @@ function OfficialWorkspace({ repository, organisation, organisations, onSelect, 
       {meets.length > 1 ? <label className="meet-picker"><span>Meet</span><select value={selectedMeetId ?? ""} onChange={(event) => setSelectedMeetId(event.target.value)}>{meets.map((meet) => <option value={meet.id} key={meet.id}>{meet.name} · {meet.date}</option>)}</select></label> : null}
       {invitation ? <section className="invitation-receipt"><h3>Single-use invitation code</h3><output>{invitation.code}</output><button type="button" className="quiet-danger" onClick={() => void teamActions.revokeInvitation(invitation.id)}>Revoke invitation</button></section> : null}
       {notice ? <p role="status" className="safe-notice">{notice}</p> : null}
+      {state.conflict ? <OperatorConflictNotice message={state.conflict.message} onKeepDraft={() => dispatch({ type: "remote-update.discarded" })} onReloadAuthoritative={() => void reviewAuthoritative()} /> : null}
       {teamOpen ? <TeamDrawer role={organisation.role} members={members} actions={teamActions} /> : null}
-      {loadingMeet ? <section className="center-card"><p role="status">Loading the authorised Meet workbook…</p></section> : state.snapshot ? <WorkbookWorkspace meet={state.snapshot} heatVersions={heatVersions} role={organisation.role} readOnly={organisation.role === "viewer"} actions={workbookActions} /> : <section className="workbook-placeholder"><h3>Meet unavailable</h3><p>The current view was preserved. Retry after the hosted service reconnects.</p></section>}
+      {loadingMeet ? <section className="center-card"><p role="status">Loading the authorised Meet workbook…</p></section> : state.snapshot ? <WorkbookWorkspace meet={state.snapshot} heatVersions={state.bundle?.heatVersions ?? {}} role={organisation.role} readOnly={organisation.role === "viewer"} actions={workbookActions} onFormDirtyChange={(dirty) => dispatch({ type: "form.dirty", dirty })} /> : <section className="workbook-placeholder"><h3>Meet unavailable</h3><p>The current view was preserved. Retry after the hosted service reconnects.</p></section>}
     </section>
   );
+}
+
+export function OperatorConflictNotice({ message, onKeepDraft, onReloadAuthoritative }: { message: string; onKeepDraft(): void; onReloadAuthoritative(): void }) {
+  return <section role="alert" className="safe-notice"><strong>Authoritative data changed.</strong> {message}<div className="dialog-actions"><button type="button" className="quiet-action" onClick={onKeepDraft}>Keep my draft</button><button type="button" onClick={onReloadAuthoritative}>Review/reload authoritative</button></div></section>;
 }
 
 function DemoWorkspace({ onExit }: { onExit(): void }) {

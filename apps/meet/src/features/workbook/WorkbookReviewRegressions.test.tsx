@@ -15,8 +15,8 @@ const actionSet = (): WorkbookActions => ({
   correctWinner: vi.fn(async () => ({ ok: true, message: "saved" })),
 });
 
-function mount(meet = withSchedule(makeMeet(2, 3)), actions = actionSet()) {
-  render(<MeetProviders selected={{ id: "org", name: "Club", slug: "club", role: "owner", version: 1 }}><WorkbookWorkspace meet={meet} role="owner" readOnly={false} actions={actions} /></MeetProviders>);
+function mount(meet = withSchedule(makeMeet(2, 3)), actions = actionSet(), onFormDirtyChange?: (dirty: boolean) => void) {
+  render(<MeetProviders selected={{ id: "org", name: "Club", slug: "club", role: "owner", version: 1 }}><WorkbookWorkspace meet={meet} role="owner" readOnly={false} actions={actions} onFormDirtyChange={onFormDirtyChange} /></MeetProviders>);
   return actions;
 }
 
@@ -52,7 +52,7 @@ describe("reviewed workbook interactions", () => {
   });
 
   it("truthfully describes upsert registration and reason-confirms an unscheduled status change", async () => {
-    mount(makeMeet(1, 3));
+    const actions = mount(makeMeet(1, 3));
     await userEvent.click(screen.getByRole("button", { name: /registration/i }));
     const dialog = screen.getByRole("dialog", { name: /registration/i });
     expect(within(dialog).getByRole("button", { name: /validate and save rows/i })).not.toBeNull();
@@ -61,11 +61,56 @@ describe("reviewed workbook interactions", () => {
     const confirmation = screen.getByRole("alertdialog", { name: /withdraw car #1/i });
     const confirm = within(confirmation).getByRole("button", { name: /confirm status change/i });
     expect(confirm.hasAttribute("disabled")).toBe(true);
-    await userEvent.type(within(confirmation).getByLabelText(/^reason$/i), "Car failed scrutineering");
+    await userEvent.type(within(confirmation).getByLabelText(/^reason$/i), "  Car failed scrutineering  ");
     const enabledConfirm = within(confirmation).getByRole("button", { name: /confirm status change/i });
     expect(enabledConfirm.hasAttribute("disabled")).toBe(false);
     await userEvent.click(enabledConfirm);
     expect(within(dialog).getByRole("button", { name: /restore car #1/i })).not.toBeNull();
+    await userEvent.click(within(dialog).getByRole("button", { name: /validate and save rows/i }));
+    expect(actions.saveRegistration).toHaveBeenCalledWith(expect.objectContaining({
+      rows: expect.arrayContaining([expect.objectContaining({ active: false, reason: "Car failed scrutineering" })]),
+    }));
+  });
+
+  it("marks setup, registration and schedule drafts dirty and clears only on explicit cancel or success", async () => {
+    const dirty = vi.fn();
+    mount(makeMeet(1, 3), actionSet(), dirty);
+
+    await userEvent.click(screen.getByRole("button", { name: /meet setup/i }));
+    await userEvent.type(screen.getByLabelText(/meet name/i), " revised");
+    expect(dirty).toHaveBeenLastCalledWith(true);
+    await userEvent.click(screen.getByRole("button", { name: /^cancel$/i }));
+    expect(dirty).toHaveBeenLastCalledWith(false);
+
+    await userEvent.click(screen.getByRole("button", { name: /registration/i }));
+    await userEvent.type(screen.getByLabelText(/car 1 participant/i), " revised");
+    expect(dirty).toHaveBeenLastCalledWith(true);
+    await userEvent.click(screen.getByRole("button", { name: /^cancel$/i }));
+    expect(dirty).toHaveBeenLastCalledWith(false);
+
+    await userEvent.click(screen.getByRole("button", { name: /generate candidate/i }));
+    expect(dirty).toHaveBeenLastCalledWith(true);
+    await userEvent.click(screen.getByRole("button", { name: /activate schedule/i }));
+    expect(dirty).toHaveBeenLastCalledWith(false);
+  });
+
+  it("keeps a failed correction draft dirty and clears it after explicit cancel", async () => {
+    const meet = withSchedule(makeMeet(1, 3));
+    const heat = meet.brackets[0]!.event.matches[0]!;
+    heat.status = "completed";
+    heat.winnerEntryId = heat.lanes[0];
+    const actions = actionSet();
+    actions.correctWinner = vi.fn(async () => ({ ok: false, message: "conflict" }));
+    const dirty = vi.fn();
+    mount(meet, actions, dirty);
+
+    await userEvent.click(screen.getByRole("button", { name: /correct result/i }));
+    await userEvent.type(screen.getByLabelText(/^reason$/i), "Camera review");
+    expect(dirty).toHaveBeenLastCalledWith(true);
+    await userEvent.click(screen.getByRole("button", { name: /save correction/i }));
+    expect(dirty).toHaveBeenLastCalledWith(true);
+    await userEvent.click(screen.getByRole("button", { name: /^cancel$/i }));
+    expect(dirty).toHaveBeenLastCalledWith(false);
   });
 
   it("requires an official replacement reason and shows the full quality certificate", async () => {

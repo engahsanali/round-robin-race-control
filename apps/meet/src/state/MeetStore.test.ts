@@ -42,15 +42,48 @@ describe("Meet store", () => {
   it("does not replace dirty form input when realtime changes arrive", () => {
     const current = bundle();
     const initial = meetStoreReducer(meetStoreReducer(createInitialMeetStoreState(), { type: "bundle.loaded", bundle: current, syncedAt: "2026-08-14T10:00:00.000Z" }), { type: "form.dirty", dirty: true });
-    const remote = bundle({ ...validMeet(), meet: { ...validMeet().meet, version: 2 } });
+    const remote = bundle({ ...validMeet(), meet: { ...validMeet().meet, version: 4 } });
     const next = meetStoreReducer(initial, { type: "realtime.bundle", bundle: remote, syncedAt: "2026-08-14T10:01:00.000Z" });
     expect(next.bundle).toEqual(current);
+    expect(next.bundle?.heatVersions).toEqual({ heat: 3 });
     expect(next.queuedRemoteBundle).toEqual(remote);
     expect(next.conflict).toMatchObject({ kind: "dirty-realtime" });
     const applied = meetStoreReducer(next, { type: "remote-update.applied" });
     expect(applied.bundle).toEqual(remote);
     expect(applied.snapshot).toEqual(remote.state);
     expect(applied).toMatchObject({ queuedRemoteBundle: null, conflict: null, formDirty: false });
+  });
+
+  it("keeps the entire applied bundle atomic until the operator accepts the queued remote bundle", () => {
+    const current = bundle();
+    const remote = bundle({ ...validMeet(), meet: { ...validMeet().meet, version: 4 } });
+    remote.heatVersions = { heat: 4 };
+    let state = meetStoreReducer(createInitialMeetStoreState(), { type: "bundle.loaded", bundle: current, syncedAt: "2026-08-14T10:00:00.000Z" });
+    state = meetStoreReducer(state, { type: "form.dirty", dirty: true });
+    state = meetStoreReducer(state, { type: "realtime.bundle", bundle: remote, syncedAt: "2026-08-14T10:01:00.000Z" });
+
+    expect(state.snapshot?.meet.version).toBe(3);
+    expect(state.bundle?.heatVersions).toEqual({ heat: 3 });
+    expect(state.queuedRemoteBundle?.heatVersions).toEqual({ heat: 4 });
+
+    const accepted = meetStoreReducer(state, { type: "remote-update.accepted" });
+    expect(accepted.snapshot?.meet.version).toBe(4);
+    expect(accepted.bundle?.heatVersions).toEqual({ heat: 4 });
+    expect(accepted).toMatchObject({ queuedRemoteBundle: null, formDirty: false, conflict: null });
+  });
+
+  it("lets an operator explicitly keep a dirty local draft without partially applying the queued bundle", () => {
+    const current = bundle();
+    const remote = bundle({ ...validMeet(), meet: { ...validMeet().meet, version: 4 } });
+    remote.heatVersions = { heat: 4 };
+    let state = meetStoreReducer(createInitialMeetStoreState(), { type: "bundle.loaded", bundle: current, syncedAt: "2026-08-14T10:00:00.000Z" });
+    state = meetStoreReducer(state, { type: "form.dirty", dirty: true });
+    state = meetStoreReducer(state, { type: "realtime.bundle", bundle: remote, syncedAt: "2026-08-14T10:01:00.000Z" });
+
+    const kept = meetStoreReducer(state, { type: "remote-update.discarded" });
+    expect(kept.bundle).toEqual(current);
+    expect(kept.bundle?.heatVersions).toEqual({ heat: 3 });
+    expect(kept).toMatchObject({ queuedRemoteBundle: null, formDirty: true, conflict: null });
   });
 
   it("derives truthful role capabilities", () => {

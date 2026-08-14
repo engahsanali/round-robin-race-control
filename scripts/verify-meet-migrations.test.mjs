@@ -28,8 +28,23 @@ test("accepts the checked-in Meet migration security contract", async () => {
   const result = await verifier.verifyMeetMigrations(migrationsDir);
   assert.deepEqual(result.issues, []);
   assert.equal(result.ok, true);
-  assert.equal(result.schemaVersion, 9);
+  assert.equal(result.schemaVersion, 10);
 });
+
+for (const fixture of [
+  { name: "audit enrichment is not organisation and snapshot scoped", find: "and event.organisation_id = target_organisation_id and event.entity_id = new_snapshot_id", replace: "", code: "unsafe_advancement_audit_scope" },
+  { name: "NULL security page size is accepted", find: "page_size is null or page_size not between 1 and 100", replace: "page_size not between 1 and 100", code: "nullable_admin_page_limit" },
+  { name: "NULL overview recent limit is accepted", find: "recent_limit is null or recent_limit not between 1 and 50", replace: "recent_limit not between 1 and 50", code: "nullable_admin_page_limit" },
+  { name: "winner idempotency happens after active-car validation", find: "-- WINNER IDEMPOTENCY BEFORE ACTIVE GUARD", replace: "-- WINNER IDEMPOTENCY REMOVED", code: "late_winner_idempotency" },
+  { name: "registration status changes do not require an audited reason", find: "-- REGISTRATION STATUS REASON REQUIRED", replace: "-- REGISTRATION STATUS REASON REMOVED", code: "missing_registration_status_reason" },
+]) {
+  test(`advancement review invariant rejects ${fixture.name}`, async () => {
+    assert.equal(typeof verifier.verifyAdvancementReviewFixInvariant, "function");
+    const source = await readFile(path.join(migrationsDir, "202608140010_advancement_review_fixes.sql"), "utf8");
+    const issues = verifier.verifyAdvancementReviewFixInvariant(source.replace(fixture.find, fixture.replace));
+    assert.ok(issues.some((issue) => issue.code === fixture.code), `${fixture.name} should report ${fixture.code}; got ${JSON.stringify(issues)}`);
+  });
+}
 
 for (const fixture of [
   { name: "replacement lacks downstream-result block", find: "'MEET_DOWNSTREAM_RESULTS_EXIST'", replace: "'MEET_DOWNSTREAM_RESULTS_MISSING'", code: "missing_downstream_result_guard" },
@@ -60,6 +75,7 @@ for (const fixture of fixtures) {
         "202608140007_meet_workbook_commands.sql",
         "202608140008_registration_audit_reassignment.sql",
         "202608140009_advancement_accountability.sql",
+        "202608140010_advancement_review_fixes.sql",
       ]) {
         const original = await readFile(path.join(migrationsDir, fileName), "utf8");
         const mutated = fileName === fixture.file

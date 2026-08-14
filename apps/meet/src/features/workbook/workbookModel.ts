@@ -20,6 +20,7 @@ export type RegistrationDraft = {
   carNumber: number;
   carName: string;
   active: boolean;
+  reason?: string;
 };
 
 export type RegistrationParse = { ok: boolean; rows: RegistrationDraft[]; errors: string[] };

@@ -42,6 +42,8 @@ export type MeetStoreAction =
   | { type: "connection.changed"; status: ConnectionStatus }
   | { type: "form.dirty"; dirty: boolean }
   | { type: "remote-update.applied" }
+  | { type: "remote-update.accepted" }
+  | { type: "remote-update.discarded" }
   | { type: "command.started"; requestId: string }
   | { type: "command.succeeded"; requestId: string; advisory: string | null }
   | { type: "command.failed"; requestId: string; message: string; kind?: RepositoryFailureKind }
@@ -82,8 +84,11 @@ export function meetStoreReducer(state: MeetStoreState, action: MeetStoreAction)
     case "form.dirty":
       return { ...state, formDirty: action.dirty };
     case "remote-update.applied":
+    case "remote-update.accepted":
       if (!state.queuedRemoteBundle) return state;
       return { ...state, bundle: state.queuedRemoteBundle, snapshot: state.queuedRemoteBundle.state, queuedRemoteBundle: null, conflict: null, formDirty: false, error: null };
+    case "remote-update.discarded":
+      return { ...state, queuedRemoteBundle: null, conflict: null };
     case "command.started":
       if (state.pendingRequestIds.includes(action.requestId)) return state;
       return { ...state, pendingRequestIds: [...state.pendingRequestIds, action.requestId], saveStatus: "saving", advisory: null, error: null };

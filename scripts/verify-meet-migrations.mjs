@@ -12,6 +12,7 @@ const REQUIRED_FILES = [
   "202608140007_meet_workbook_commands.sql",
   "202608140008_registration_audit_reassignment.sql",
   "202608140009_advancement_accountability.sql",
+  "202608140010_advancement_review_fixes.sql",
 ];
 
 const OWNED_TABLES = [
@@ -372,6 +373,42 @@ export function verifyAdvancementAccountabilityInvariant(source) {
   return issues;
 }
 
+export function verifyAdvancementReviewFixInvariant(source) {
+  const sql = normalize(source);
+  const issues = [];
+  const requireMarker = (condition, code, target, message) => {
+    if (!condition) issues.push(issue(code, target, message));
+  };
+  requireMarker(
+    /event\.organisation_id\s*=\s*target_organisation_id\s+and\s+event\.entity_id\s*=\s*new_snapshot_id/i.test(sql)
+      && /event\.entity_type\s*=\s*'advancement_snapshot'/i.test(sql),
+    "unsafe_advancement_audit_scope", "advancement audit",
+    "Advancement audit enrichment must be scoped to the committed organisation and snapshot",
+  );
+  requireMarker(
+    /page_size\s+is\s+null\s+or\s+page_size\s+not\s+between\s+1\s+and\s+100/i.test(sql)
+      && /recent_limit\s+is\s+null\s+or\s+recent_limit\s+not\s+between\s+1\s+and\s+50/i.test(sql),
+    "nullable_admin_page_limit", "admin pagination",
+    "Explicit NULL page limits must be rejected rather than disabling SQL LIMIT",
+  );
+  requireMarker(
+    /--\s*WINNER IDEMPOTENCY BEFORE ACTIVE GUARD/i.test(sql)
+      && (sql.match(/prior_result\s*:=\s*private_meet\.existing_heat_result/gi) ?? []).length >= 4
+      && (sql.match(/if\s+prior_result\s+is\s+not\s+null\s+then\s+return\s+prior_result/gi) ?? []).length >= 4,
+    "late_winner_idempotency", "winner retry",
+    "Winner wrappers must return a committed request before validating later car state",
+  );
+  requireMarker(
+    /--\s*REGISTRATION STATUS REASON REQUIRED/i.test(sql)
+      && /char_length\s*\(\s*btrim\s*\(\s*row_value->>'reason'\s*\)\s*\)\s+not\s+between\s+1\s+and\s+500/i.test(sql)
+      && /existing_car\.active\s+is\s+distinct\s+from[\s\S]*MEET_REASON_REQUIRED/i.test(sql)
+      && /reason\s*=\s*change\.value->>'reason'/i.test(sql),
+    "missing_registration_status_reason", "registration status audit",
+    "Existing car withdraw or restore changes must require and audit a bounded row reason",
+  );
+  return issues;
+}
+
 export async function verifyMeetMigrations(migrationsDirectory) {
   const issues = [];
   const sources = new Map();
@@ -487,6 +524,7 @@ export async function verifyMeetMigrations(migrationsDirectory) {
   issues.push(...verifyReviewRound3Invariant(allMigrations));
   issues.push(...verifyWorkbookCommandInvariant(allMigrations));
   issues.push(...verifyAdvancementAccountabilityInvariant(sources.get(REQUIRED_FILES[8])));
+  issues.push(...verifyAdvancementReviewFixInvariant(sources.get(REQUIRED_FILES[9])));
   return { ok: issues.length === 0, issues, schemaVersion: REQUIRED_FILES.length };
 }
 
