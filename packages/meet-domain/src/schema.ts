@@ -54,6 +54,7 @@ const meetStateCoreSchema = z.object({
   const brackets = new Map(state.brackets.map((bracket) => [bracket.id, bracket]));
   state.advancementRules.forEach((rule, index) => validateRule(rule, index, brackets, context));
   detectCycles(state.advancementRules, context);
+  validateSnapshotAndLineageGraph(state, brackets, context);
 });
 
 export const meetStateV1Schema = z.unknown().transform((input, context): MeetStateV1 => {
@@ -124,6 +125,49 @@ function detectCycles(rules: readonly AdvancementRule[], context: z.RefinementCt
   };
   for (const node of graph.keys()) if (visit(node)) { context.addIssue(custom("advancement_cycle", ["advancementRules"], "Advancement graph must be acyclic")); return; }
 }
+
+function validateSnapshotAndLineageGraph(state: MeetStateV1, brackets: Map<string, BracketStateLike>, context: z.RefinementCtx): void {
+  const rules = new Map(state.advancementRules.map((rule) => [rule.id, rule]));
+  const snapshots = new Map(state.advancementSnapshots.map((snapshot) => [snapshot.id, snapshot]));
+  const selectionKeys = new Set<string>();
+  state.advancementSnapshots.forEach((snapshot, snapshotIndex) => {
+    const rule = rules.get(snapshot.ruleId);
+    if (!rule) { context.addIssue(custom("unknown_snapshot_rule", ["advancementSnapshots", snapshotIndex, "ruleId"], "Snapshot references an unknown advancement rule")); return; }
+    if (snapshot.sourceBracketId !== rule.sourceBracketId) context.addIssue(custom("snapshot_source_mismatch", ["advancementSnapshots", snapshotIndex, "sourceBracketId"], "Snapshot source must match its rule source"));
+    const source = brackets.get(snapshot.sourceBracketId);
+    if (!source) context.addIssue(custom("unknown_snapshot_source", ["advancementSnapshots", snapshotIndex, "sourceBracketId"], "Snapshot source bracket is unknown"));
+    const selected = new Set<string>();
+    snapshot.selections.forEach((selection, selectionIndex) => {
+      const selectionPath = ["advancementSnapshots", snapshotIndex, "selections", selectionIndex];
+      if (selected.has(selection.sourceCarId)) context.addIssue(custom("duplicate_snapshot_selection", selectionPath, "A source car may appear only once in a snapshot"));
+      selected.add(selection.sourceCarId);
+      if (source && !source.event.entries.some((entry) => entry.id === selection.sourceCarId)) context.addIssue(custom("unknown_snapshot_source_car", [...selectionPath, "sourceCarId"], "Snapshot selection references an unknown source car"));
+      if (!rule.destinationBracketIds.includes(selection.destinationBracketId)) context.addIssue(custom("invalid_snapshot_destination", [...selectionPath, "destinationBracketId"], "Snapshot selection destination is not allowed by its rule"));
+      if (!brackets.has(selection.destinationBracketId)) context.addIssue(custom("unknown_snapshot_destination", [...selectionPath, "destinationBracketId"], "Snapshot selection destination bracket is unknown"));
+      selectionKeys.add(`${snapshot.id}\u0000${selection.sourceCarId}\u0000${selection.destinationBracketId}`);
+    });
+  });
+  const lineageKeys = new Set<string>();
+  state.brackets.forEach((bracket, bracketIndex) => bracket.lineage.forEach((lineage, lineageIndex) => {
+    const path = ["brackets", bracketIndex, "lineage", lineageIndex];
+    const key = `${lineage.snapshotId}\u0000${lineage.sourceCarId}\u0000${bracket.id}`;
+    if (lineageKeys.has(key)) context.addIssue(custom("duplicate_lineage", path, "Duplicate advancement lineage is not allowed"));
+    lineageKeys.add(key);
+    const source = brackets.get(lineage.sourceBracketId);
+    const rule = rules.get(lineage.ruleId);
+    const snapshot = snapshots.get(lineage.snapshotId);
+    if (!source) context.addIssue(custom("unknown_lineage_source", [...path, "sourceBracketId"], "Lineage source bracket is unknown"));
+    else if (!source.event.entries.some((entry) => entry.id === lineage.sourceCarId)) context.addIssue(custom("unknown_lineage_source_car", [...path, "sourceCarId"], "Lineage source car is unknown"));
+    if (!rule) context.addIssue(custom("unknown_lineage_rule", [...path, "ruleId"], "Lineage rule is unknown"));
+    if (!snapshot) context.addIssue(custom("unknown_lineage_snapshot", [...path, "snapshotId"], "Lineage snapshot is unknown"));
+    if (rule && rule.sourceBracketId !== lineage.sourceBracketId) context.addIssue(custom("lineage_rule_source_mismatch", path, "Lineage source must match its rule source"));
+    if (snapshot && (snapshot.ruleId !== lineage.ruleId || snapshot.sourceBracketId !== lineage.sourceBracketId)) context.addIssue(custom("lineage_snapshot_mismatch", path, "Lineage must match its snapshot rule and source"));
+    if (!selectionKeys.has(key)) context.addIssue(custom("lineage_missing_snapshot_selection", path, "Lineage must correspond to a snapshot selection for this destination"));
+  }));
+  for (const key of selectionKeys) if (!lineageKeys.has(key)) context.addIssue(custom("snapshot_selection_missing_lineage", ["advancementSnapshots"], "Every snapshot selection must have destination lineage"));
+}
+
+type BracketStateLike = { stage: z.infer<typeof stage>; event: { entries: Array<{ id: string }> } };
 
 function uniqueIds(items: readonly { id: string }[], path: string, context: z.RefinementCtx): void {
   const known = new Set<string>();

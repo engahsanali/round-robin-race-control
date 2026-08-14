@@ -38,3 +38,23 @@
 ## Concerns
 
 - None. `tsconfig.json` already includes all `packages/**/*.ts`, so no redundant configuration change was needed for the new package.
+
+## Review-fix follow-up
+
+### RED evidence
+
+- `pnpm vitest run packages/meet-domain/src/review-regressions.test.ts` — 6 failures before the fix: separate-rule destination occupancy, cutoff-tie treatment/manual eligibility, transitive staleness, graph references, and Unicode ordering.
+
+### GREEN evidence
+
+- `pnpm vitest run packages/meet-domain/src/review-regressions.test.ts` — 6/6 passed.
+- `pnpm vitest run packages/meet-domain/src` — 5 files, 19 tests passed.
+- `pnpm typecheck` and `git diff --check` — passed.
+
+### Review-fix scope
+
+- Occupancy-aware, stable balanced allocation across independent rules.
+- Cutoff-group-aware previews; reasoned manual choices require unique, exact top-N eligible IDs and cannot bypass disabled, stale, duplicate, or capacity gates.
+- Transitive stale propagation through snapshot-backed destination lineage.
+- Complete snapshot/rule/bracket/source-car/destination/lineage graph validation.
+- Locale-independent code-unit report ordering with Unicode regression coverage.

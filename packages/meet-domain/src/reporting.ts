@@ -1,4 +1,5 @@
 import type { CsvCell, CsvRow } from "@rr3/domain";
+import { compareCodeUnits } from "./ordering";
 import type { MeetStateV1 } from "./types";
 
 export type MeetExportManifestEntry = { key: "meet-summary" | "bracket-summary" | "registrations"; fileName: string };
@@ -21,7 +22,7 @@ export function buildMeetRegistrationRows(state: MeetStateV1): CsvRow[] {
   const rows: CsvRow[] = [["Bracket ID", "Bracket", "Participant ID", "Participant", "Email", "Phone", "Car entry ID", "Car number", "Car", "Active"]];
   for (const bracket of orderedBrackets(state)) {
     const participants = new Map(bracket.event.participants.map((participant) => [participant.id, participant]));
-    for (const entry of bracket.event.entries.slice().sort((left, right) => left.carNumber - right.carNumber || left.id.localeCompare(right.id))) {
+    for (const entry of bracket.event.entries.slice().sort((left, right) => left.carNumber - right.carNumber || compareCodeUnits(left.id, right.id))) {
       const participant = participants.get(entry.participantId);
       rows.push([bracket.id, bracket.name, entry.participantId, participant?.name ?? "", participant?.email ?? "", participant?.phone ?? "", entry.id, entry.carNumber, entry.name, entry.active]);
     }
@@ -37,5 +38,5 @@ export function buildMeetExportManifest(_state: MeetStateV1): MeetExportManifest
   ];
 }
 
-function orderedBrackets(state: MeetStateV1) { return state.brackets.slice().sort((left, right) => left.displayOrder - right.displayOrder || left.id.localeCompare(right.id)); }
+function orderedBrackets(state: MeetStateV1) { return state.brackets.slice().sort((left, right) => left.displayOrder - right.displayOrder || compareCodeUnits(left.id, right.id)); }
 function encodeCell(value: CsvCell): string { const original = value === null ? "" : String(value); const safe = /^\s*[=+\-@]/u.test(original) ? `'${original}` : original; return /[",\r\n]/u.test(safe) ? `"${safe.replaceAll('"', '""')}"` : safe; }
