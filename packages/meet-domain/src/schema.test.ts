@@ -29,8 +29,8 @@ describe("MeetStateV1 schema", () => {
     expect(domain).not.toBeNull();
     if (!domain) return;
     const result = domain.validateMeetState({ ...state([bracket("q", "qualifier"), bracket("f", "final")]), advancementRules: [
-      { id: "q-f", sourceBracketId: "q", destinationBracketIds: ["f"], topN: 1, destinationCapacity: 9, destinationOrder: ["f"], status: "active" },
-      { id: "f-q", sourceBracketId: "f", destinationBracketIds: ["q"], topN: 1, destinationCapacity: 9, destinationOrder: ["q"], status: "active" }
+      { id: "q-f", version: 1, sourceBracketId: "q", destinationBracketIds: ["f"], topN: 1, destinationCapacity: 9, destinationOrder: ["f"], status: "active" },
+      { id: "f-q", version: 1, sourceBracketId: "f", destinationBracketIds: ["q"], topN: 1, destinationCapacity: 9, destinationOrder: ["q"], status: "active" }
     ] });
     expect(result.success).toBe(false);
     if (!result.success) expect(result.issues.some((issue: { code: string }) => issue.code === "advancement_cycle" || issue.code === "invalid_stage_order")).toBe(true);

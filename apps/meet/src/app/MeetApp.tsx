@@ -172,9 +172,9 @@ function OfficialWorkspace({ repository, organisation, organisations, onSelect, 
     setLoadingMeet(true);
     const receipt = await repository.loadMeet(organisation.id, meetId);
     if (!receipt.ok) { setNotice(receipt.message); setLoadingMeet(false); return false; }
-    setHeatVersions(receipt.heatVersions);
+    setHeatVersions(receipt.value.heatVersions);
     dispatch({ type: "meet.selected", meetId });
-    dispatch({ type: "snapshot.loaded", snapshot: receipt.value, syncedAt: new Date().toISOString() });
+    dispatch({ type: "bundle.loaded", bundle: receipt.value, syncedAt: new Date().toISOString() });
     setLoadingMeet(false);
     return true;
   }, [dispatch, organisation.id, repository, selectedMeetId]);
@@ -183,7 +183,7 @@ function OfficialWorkspace({ repository, organisation, organisations, onSelect, 
     if (!selectedMeetId || !state.snapshot || state.snapshot.meet.id !== selectedMeetId) return;
     return repository.watchMeet(organisation.id, selectedMeetId, {
       bracketIds: state.snapshot.brackets.map((bracket) => bracket.id),
-      onSnapshot: (snapshot, syncedAt) => dispatch({ type: "realtime.snapshot", snapshot, syncedAt }),
+      onBundle: (bundle, syncedAt) => { setHeatVersions(bundle.heatVersions); dispatch({ type: "realtime.bundle", bundle, syncedAt }); },
       onStatus: (status) => dispatch({ type: "connection.changed", status }),
       isDirty: () => state.formDirty,
       onDirtyUpdate: () => dispatch({ type: "form.dirty", dirty: true }),

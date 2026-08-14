@@ -1,6 +1,6 @@
 import { createContext, useContext, useMemo, useReducer, type Dispatch, type ReactNode } from "react";
 import type { MeetStateV1 } from "@rr3/meet-domain";
-import type { CommandReceipt, ConnectionStatus, OrganisationRole } from "../data/meetRepository";
+import type { CommandReceipt, ConnectionStatus, HostedMeetBundle, OrganisationRole, RepositoryFailureKind } from "../data/meetRepository";
 
 export type WorkspaceMode = "official" | "demo";
 export type SaveStatus = "idle" | "saving" | "saved" | "error";
@@ -19,6 +19,7 @@ export type MeetStoreState = {
   selectedMeetId: string | null;
   role: OrganisationRole | null;
   snapshot: MeetStateV1 | null;
+  bundle: HostedMeetBundle | null;
   connectionStatus: ConnectionStatus;
   saveStatus: SaveStatus;
   lastSyncedAt: string | null;
@@ -26,7 +27,8 @@ export type MeetStoreState = {
   advisory: string | null;
   error: string | null;
   formDirty: boolean;
-  remoteUpdatePending: boolean;
+  queuedRemoteBundle: HostedMeetBundle | null;
+  conflict: { kind: "dirty-realtime" | "optimistic"; message: string } | null;
 };
 
 export type MeetStoreAction =
@@ -35,12 +37,14 @@ export type MeetStoreAction =
   | { type: "meet.selected"; meetId: string | null }
   | { type: "snapshot.loaded"; snapshot: MeetStateV1; syncedAt: string }
   | { type: "realtime.snapshot"; snapshot: MeetStateV1; syncedAt: string }
+  | { type: "bundle.loaded"; bundle: HostedMeetBundle; syncedAt: string }
+  | { type: "realtime.bundle"; bundle: HostedMeetBundle; syncedAt: string }
   | { type: "connection.changed"; status: ConnectionStatus }
   | { type: "form.dirty"; dirty: boolean }
-  | { type: "remote-update.dismissed" }
+  | { type: "remote-update.applied" }
   | { type: "command.started"; requestId: string }
   | { type: "command.succeeded"; requestId: string; advisory: string | null }
-  | { type: "command.failed"; requestId: string; message: string }
+  | { type: "command.failed"; requestId: string; message: string; kind?: RepositoryFailureKind }
   | { type: "session.cleared" };
 
 export function createInitialMeetStoreState(options: {
@@ -50,8 +54,8 @@ export function createInitialMeetStoreState(options: {
 } = {}): MeetStoreState {
   return {
     workspace: options.workspace ?? "official", selectedOrganisationId: options.organisationId ?? null, selectedMeetId: null, role: options.role ?? null,
-    snapshot: null, connectionStatus: "offline", saveStatus: "idle", lastSyncedAt: null,
-    pendingRequestIds: [], advisory: null, error: null, formDirty: false, remoteUpdatePending: false,
+    snapshot: null, bundle: null, connectionStatus: "offline", saveStatus: "idle", lastSyncedAt: null,
+    pendingRequestIds: [], advisory: null, error: null, formDirty: false, queuedRemoteBundle: null, conflict: null,
   };
 }
 
@@ -60,27 +64,33 @@ export function meetStoreReducer(state: MeetStoreState, action: MeetStoreAction)
     case "workspace.selected":
       return { ...createInitialMeetStoreState(), workspace: action.workspace };
     case "organisation.selected":
-      return { ...state, selectedOrganisationId: action.organisationId, role: action.role, selectedMeetId: null, snapshot: null, remoteUpdatePending: false };
+      return { ...state, selectedOrganisationId: action.organisationId, role: action.role, selectedMeetId: null, snapshot: null, bundle: null, queuedRemoteBundle: null, conflict: null };
     case "meet.selected":
-      return { ...state, selectedMeetId: action.meetId, snapshot: null, remoteUpdatePending: false };
+      return { ...state, selectedMeetId: action.meetId, snapshot: null, bundle: null, queuedRemoteBundle: null, conflict: null };
     case "snapshot.loaded":
-      return { ...state, snapshot: action.snapshot, lastSyncedAt: action.syncedAt, remoteUpdatePending: false, error: null };
+      return { ...state, snapshot: action.snapshot, bundle: { state: action.snapshot, history: { snapshots: [], selections: [] }, heatVersions: {} }, lastSyncedAt: action.syncedAt, queuedRemoteBundle: null, conflict: null, error: null };
     case "realtime.snapshot":
-      if (state.formDirty) return { ...state, remoteUpdatePending: true, lastSyncedAt: action.syncedAt };
-      return { ...state, snapshot: action.snapshot, lastSyncedAt: action.syncedAt, remoteUpdatePending: false, error: null };
+      if (state.formDirty) return { ...state, queuedRemoteBundle: { state: action.snapshot, history: { snapshots: [], selections: [] }, heatVersions: {} }, conflict: { kind: "dirty-realtime", message: "A remote update is waiting while this form has unsaved changes." }, lastSyncedAt: action.syncedAt };
+      return { ...state, snapshot: action.snapshot, bundle: { state: action.snapshot, history: { snapshots: [], selections: [] }, heatVersions: {} }, lastSyncedAt: action.syncedAt, queuedRemoteBundle: null, conflict: null, error: null };
+    case "bundle.loaded":
+      return { ...state, bundle: action.bundle, snapshot: action.bundle.state, lastSyncedAt: action.syncedAt, queuedRemoteBundle: null, conflict: null, error: null };
+    case "realtime.bundle":
+      if (state.formDirty) return { ...state, queuedRemoteBundle: action.bundle, conflict: { kind: "dirty-realtime", message: "A remote update is waiting while this form has unsaved changes." }, lastSyncedAt: action.syncedAt };
+      return { ...state, bundle: action.bundle, snapshot: action.bundle.state, lastSyncedAt: action.syncedAt, queuedRemoteBundle: null, conflict: null, error: null };
     case "connection.changed":
       return { ...state, connectionStatus: action.status };
     case "form.dirty":
       return { ...state, formDirty: action.dirty };
-    case "remote-update.dismissed":
-      return { ...state, remoteUpdatePending: false };
+    case "remote-update.applied":
+      if (!state.queuedRemoteBundle) return state;
+      return { ...state, bundle: state.queuedRemoteBundle, snapshot: state.queuedRemoteBundle.state, queuedRemoteBundle: null, conflict: null, formDirty: false, error: null };
     case "command.started":
       if (state.pendingRequestIds.includes(action.requestId)) return state;
       return { ...state, pendingRequestIds: [...state.pendingRequestIds, action.requestId], saveStatus: "saving", advisory: null, error: null };
     case "command.succeeded":
       return { ...state, pendingRequestIds: state.pendingRequestIds.filter((id) => id !== action.requestId), saveStatus: state.pendingRequestIds.some((id) => id !== action.requestId) ? "saving" : "saved", advisory: action.advisory, error: null };
     case "command.failed":
-      return { ...state, pendingRequestIds: state.pendingRequestIds.filter((id) => id !== action.requestId), saveStatus: "error", error: action.message };
+      return { ...state, pendingRequestIds: state.pendingRequestIds.filter((id) => id !== action.requestId), saveStatus: "error", error: action.message, conflict: action.kind === "conflict" ? { kind: "optimistic", message: action.message } : state.conflict };
     case "session.cleared":
       return createInitialMeetStoreState();
   }
@@ -105,11 +115,11 @@ export function createStoreCommandRunner(dispatch: Dispatch<MeetStoreAction>): S
     try {
       const receipt = await command();
       if (receipt.ok) dispatch({ type: "command.succeeded", requestId, advisory: receipt.advisory?.message ?? null });
-      else dispatch({ type: "command.failed", requestId, message: receipt.message });
+      else dispatch({ type: "command.failed", requestId, message: receipt.message, kind: receipt.kind });
       return receipt;
     } catch {
       const receipt = { ok: false, kind: "network", requestId, statePreserved: true, message: "The hosted service is unreachable. Your current view was preserved." } as const;
-      dispatch({ type: "command.failed", requestId, message: receipt.message });
+      dispatch({ type: "command.failed", requestId, message: receipt.message, kind: receipt.kind });
       return receipt;
     } finally {
       pending.delete(requestId);

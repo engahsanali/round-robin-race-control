@@ -35,10 +35,10 @@ describe("MeetRepository", () => {
     const result = hydrateMeetState(rowsByTable(), IDS.org, IDS.meet);
     expect(result.ok).toBe(true);
     if (!result.ok) return;
-    expect(result.value.brackets[0]?.event.matches[0]?.laneTimesMs[0]).toBe(1234);
-    expect(result.value.brackets[0]?.event.finals).toEqual([]);
-    expect(result.value.meet.version).toBe(3);
-    expect(result.heatVersions[IDS.heat]).toBe(2);
+    expect(result.value.state.brackets[0]?.event.matches[0]?.laneTimesMs[0]).toBe(1234);
+    expect(result.value.state.brackets[0]?.event.finals).toEqual([]);
+    expect(result.value.state.meet.version).toBe(3);
+    expect(result.value.heatVersions[IDS.heat]).toBe(2);
   });
 
   it("rejects invalid or cross-organisation normalized data before publication", () => {
@@ -90,9 +90,17 @@ describe("MeetRepository", () => {
     const result = hydrateMeetState(rows, IDS.org, IDS.meet);
     expect(result.ok).toBe(true);
     if (!result.ok) return;
-    expect(result.value.advancementSnapshots.map((snapshot) => snapshot.id)).toEqual([currentSnapshotId]);
-    expect(result.history.snapshots.map((snapshot) => snapshot.id)).toEqual([oldSnapshotId, currentSnapshotId]);
-    expect(result.history.selections).toHaveLength(2);
+    expect(result.value.state.advancementSnapshots.map((snapshot) => snapshot.id)).toEqual([currentSnapshotId]);
+    expect(result.value.history.snapshots.map((snapshot) => snapshot.id)).toEqual([oldSnapshotId, currentSnapshotId]);
+    expect(result.value.history.selections).toHaveLength(2);
+    expect(result.value.state.advancementRules[0]?.version).toBe(2);
+  });
+
+  it("returns one hosted bundle with state, history and optimistic versions", () => {
+    const result = hydrateMeetState(rowsByTable(), IDS.org, IDS.meet);
+    expect(result.ok).toBe(true);
+    if (!result.ok) return;
+    expect(result.value).toEqual({ state: expect.objectContaining({ meet: expect.objectContaining({ id: IDS.meet }) }), history: expect.any(Object), heatVersions: { [IDS.heat]: 2 } });
   });
 
   it("shapes every official read to one organisation and one meet", async () => {
@@ -130,6 +138,46 @@ describe("MeetRepository", () => {
     const repository = new MeetRepository(port);
     await repository.correctHeatWinner(IDS.heat, IDS.car, { lane1: 1.111, lane2: null }, 4, "Photo finish correction", "00000000-0000-4000-8000-000000000084");
     expect(port.rpcCalls[0]).toEqual({ name: "correct_heat_winner", args: { heat_id: IDS.heat, winner_car_id: IDS.car, lane_times: { lane1: 1.111, lane2: null }, expected_version: 4, reason: "Photo finish correction", request_id: "00000000-0000-4000-8000-000000000084" } });
+  });
+
+  it("uses exact source and rule versions for confirm and replace advancement", async () => {
+    const port = new FakeDataPort();
+    const repository = new MeetRepository(port);
+    const selections = [{ sourceCarId: IDS.car, destinationBracketId: IDS.bracket, rank: 1 }];
+    await repository.confirmAdvancement("rule-1", 7, 4, selections, "Tie resolved", "request-confirm");
+    await repository.replaceAdvancement("rule-1", 8, 5, selections, "Appeal upheld", "request-replace");
+    expect(port.rpcCalls).toEqual([
+      { name: "confirm_advancement", args: { rule_id: "rule-1", source_result_version: 7, expected_version: 4, selections, reason: "Tie resolved", request_id: "request-confirm" } },
+      { name: "replace_advancement", args: { rule_id: "rule-1", source_result_version: 8, expected_version: 5, selections, reason: "Appeal upheld", request_id: "request-replace" } },
+    ]);
+  });
+
+  it.each([
+    ["MEET_DOWNSTREAM_RESULTS_EXIST", "conflict"],
+    ["MEET_ADVANCEMENT_EXISTS", "conflict"],
+    ["MEET_STALE_SOURCE", "conflict"],
+    ["MEET_DESTINATION_CAPACITY", "validation"],
+    ["MEET_DESTINATION_ALLOCATION", "validation"],
+    ["MEET_SELECTION_COUNT", "validation"],
+    ["MEET_SOURCE_INCOMPLETE", "validation"],
+    ["MEET_AUTH_REQUIRED", "permission"],
+  ] as const)("maps %s to %s without losing local state", async (code, kind) => {
+    const port = new FakeDataPort();
+    port.rpcResult = { data: null, error: { message: code, code } };
+    const receipt = await new MeetRepository(port).confirmAdvancement("rule", 1, 1, [], null, "request");
+    expect(receipt).toMatchObject({ ok: false, kind, statePreserved: true });
+  });
+
+  it("loads paginated security events and admin overview through owner/admin RPCs", async () => {
+    const port = new FakeDataPort();
+    port.rpcResult = { data: [], error: null };
+    const repository = new MeetRepository(port);
+    await repository.listSecurityEvents(IDS.org, { limit: 25, beforeOccurredAt: "2026-08-14T10:00:00Z", beforeId: "event-9" });
+    await repository.loadAdminOverview(IDS.org, 10);
+    expect(port.rpcCalls).toEqual([
+      { name: "list_security_events", args: { target_organisation_id: IDS.org, page_size: 25, before_occurred_at: "2026-08-14T10:00:00Z", before_id: "event-9" } },
+      { name: "get_admin_overview", args: { target_organisation_id: IDS.org, recent_limit: 10 } },
+    ]);
   });
 
   it("shapes workbook, registration, schedule and millisecond winner RPC contracts", async () => {
@@ -205,6 +253,23 @@ describe("MeetRepository", () => {
     expect(updates).toEqual([IDS.meet]);
     cleanup();
     expect(unsubscribe).toHaveBeenCalledOnce();
+    vi.useRealTimers();
+  });
+
+  it("delivers the complete remote bundle while local forms are dirty so the store can queue it", async () => {
+    vi.useFakeTimers();
+    let invalidate: (() => void) | undefined;
+    const port = new FakeDataPort();
+    port.subscribe = (_request: RealtimeRequest, callback: () => void) => { invalidate = callback; return () => undefined; };
+    const repository = new MeetRepository(port);
+    const bundles: unknown[] = [];
+    repository.watchMeet(IDS.org, IDS.meet, {
+      bracketIds: [IDS.bracket], onBundle: (bundle) => bundles.push(bundle), onStatus: () => undefined,
+      isDirty: () => true, onDirtyUpdate: () => undefined,
+    });
+    invalidate?.();
+    await vi.advanceTimersByTimeAsync(80);
+    expect(bundles).toEqual([{ state: expect.objectContaining({ meet: expect.objectContaining({ id: IDS.meet }) }), history: { snapshots: [], selections: [] }, heatVersions: { [IDS.heat]: 2 } }]);
     vi.useRealTimers();
   });
 });

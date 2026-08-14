@@ -23,6 +23,8 @@ export type BracketState = {
 
 export type AdvancementRule = {
   id: string;
+  /** Defaults to 1 when legacy Meet JSON is validated. */
+  version?: number;
   sourceBracketId: string;
   destinationBracketIds: string[];
   topN: number;

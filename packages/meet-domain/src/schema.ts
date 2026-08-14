@@ -24,7 +24,7 @@ const bracketSchema = z.object({
 }).strict();
 
 const ruleSchema = z.object({
-  id, sourceBracketId: id,
+  id, version: positive.default(1), sourceBracketId: id,
   destinationBracketIds: z.array(id).min(1).max(100),
   topN: positive.max(10_000), destinationCapacity: positive.max(10_000),
   destinationOrder: z.array(id).min(1).max(100), status: z.enum(["active", "disabled"])

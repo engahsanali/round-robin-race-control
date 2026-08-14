@@ -1,6 +1,18 @@
 import { describe, expect, it } from "vitest";
 import { createInitialMeetStoreState, createStoreCommandRunner, meetStoreReducer, roleCapabilities } from "./MeetStore";
 import { validMeet } from "../test/fixtures";
+import type { HostedMeetBundle } from "../data/meetRepository";
+
+function bundle(snapshot = validMeet()): HostedMeetBundle {
+  return {
+    state: snapshot,
+    history: {
+      snapshots: [{ id: "snapshot-old", ruleId: "rule", sourceBracketId: "source", sourceResultVersion: 1, stale: true, replacedBySnapshotId: "snapshot-current", confirmedBy: "official", reason: "Appeal", confirmedAt: "2026-08-14T09:00:00Z" }],
+      selections: [{ id: "selection-old", snapshotId: "snapshot-old", ruleId: "rule", sourceBracketId: "source", sourceCarId: "car", destinationBracketId: "final", destinationCarId: "old-car", rank: 1 }],
+    },
+    heatVersions: { heat: 3 },
+  };
+}
 
 describe("Meet store", () => {
   it("prevents duplicate pending request ids and never claims saved before success", () => {
@@ -28,10 +40,17 @@ describe("Meet store", () => {
   });
 
   it("does not replace dirty form input when realtime changes arrive", () => {
-    const initial = meetStoreReducer(createInitialMeetStoreState(), { type: "form.dirty", dirty: true });
-    const next = meetStoreReducer(initial, { type: "realtime.snapshot", snapshot: validMeet(), syncedAt: "2026-08-14T10:01:00.000Z" });
-    expect(next.snapshot).toBeNull();
-    expect(next.remoteUpdatePending).toBe(true);
+    const current = bundle();
+    const initial = meetStoreReducer(meetStoreReducer(createInitialMeetStoreState(), { type: "bundle.loaded", bundle: current, syncedAt: "2026-08-14T10:00:00.000Z" }), { type: "form.dirty", dirty: true });
+    const remote = bundle({ ...validMeet(), meet: { ...validMeet().meet, version: 2 } });
+    const next = meetStoreReducer(initial, { type: "realtime.bundle", bundle: remote, syncedAt: "2026-08-14T10:01:00.000Z" });
+    expect(next.bundle).toEqual(current);
+    expect(next.queuedRemoteBundle).toEqual(remote);
+    expect(next.conflict).toMatchObject({ kind: "dirty-realtime" });
+    const applied = meetStoreReducer(next, { type: "remote-update.applied" });
+    expect(applied.bundle).toEqual(remote);
+    expect(applied.snapshot).toEqual(remote.state);
+    expect(applied).toMatchObject({ queuedRemoteBundle: null, conflict: null, formDirty: false });
   });
 
   it("derives truthful role capabilities", () => {
@@ -62,5 +81,14 @@ describe("Meet store", () => {
     const thrown = await runner("00000000-0000-4000-8000-000000000061", async () => { throw new Error("fetch failed"); });
     expect(thrown).toMatchObject({ ok: false, kind: "network", statePreserved: true });
     expect(actions).toEqual(["command.started", "command.succeeded", "command.started", "command.failed"]);
+  });
+
+  it("retains an explicit optimistic conflict instead of reducing it to a generic save error", async () => {
+    const dispatched: Parameters<typeof meetStoreReducer>[1][] = [];
+    const runner = createStoreCommandRunner((action) => dispatched.push(action));
+    await runner("conflict-request", async () => ({ ok: false, kind: "conflict", requestId: "conflict-request", statePreserved: true, message: "Refresh before retrying." }));
+    const final = dispatched.reduce(meetStoreReducer, createInitialMeetStoreState());
+    expect(final.conflict).toEqual({ kind: "optimistic", message: "Refresh before retrying." });
+    expect(final.snapshot).toBeNull();
   });
 });

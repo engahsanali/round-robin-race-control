@@ -1,5 +1,5 @@
 import type { CarEntry, EventStateV1, Participant } from "@rr3/domain";
-import { allocateSelections, bracketFor, eligibleAdvancementSelections, previewAdvancement, ruleFor, staleSnapshotIds } from "./progression";
+import { bracketFor, prepareAdvancementSelections, previewAdvancement, ruleFor, staleSnapshotIds } from "./progression";
 import { validateMeetState } from "./schema";
 import type { AdvancementSelection, BracketState, ConfirmAdvancementInput, MeetStateV1 } from "./types";
 
@@ -11,13 +11,12 @@ export function confirmAdvancementPure(state: MeetStateV1, ruleId: string, input
   if (existing) return state;
   const preview = previewAdvancement(state, ruleId);
   const rule = ruleFor(state, ruleId);
-  const eligible = eligibleAdvancementSelections(state, ruleId);
-  const selected = resolveSelections(state, rule, preview.selected, eligible, input.selectedCarIds);
   const isManual = input.selectedCarIds !== undefined;
   const changedSelection = input.selectedCarIds !== undefined && !sameCars(input.selectedCarIds, preview.selected.map((selection) => selection.sourceCarId));
   const reason = input.reason?.trim() ?? "";
   if (changedSelection && reason.length === 0) throw new Error("A manual advancement reason is required");
   if (reason.length > MAX_REASON) throw new Error(`Manual advancement reason must be at most ${MAX_REASON} characters`);
+  const selected = input.selectedCarIds === undefined ? preview.selected : prepareAdvancementSelections(state, ruleId, input.selectedCarIds);
   if (selected.length !== rule.topN) throw new Error(`Manual advancement must select exactly ${rule.topN} cars`);
   if ((!isManual && !preview.canConfirm) || rule.status !== "active" || preview.staleSource || hasCapacityIssue(state, rule, selected)) throw new Error("Advancement preview cannot be confirmed");
   if (selected.some((selection) => state.brackets.some((bracket) => bracket.lineage.some((lineage) => lineage.sourceBracketId === preview.sourceBracketId && lineage.sourceCarId === selection.sourceCarId)))) throw new Error("Duplicate advancement is not allowed");
@@ -30,8 +29,19 @@ export function confirmAdvancementPure(state: MeetStateV1, ruleId: string, input
   const source = bracketFor(state, rule.sourceBracketId);
   const nextBrackets = state.brackets.map((bracket) => applySelections(bracket, source, selected, rule.id, snapshotId));
   const snapshot = { id: snapshotId, ruleId: rule.id, sourceBracketId: source.id, sourceResultVersion: source.version, selections: selected, confirmedBy: input.actorId, reason: reason || null, confirmedAt: input.confirmedAt, stale: false };
-  const audit = { id: `audit-${snapshotId}`, timestamp: input.confirmedAt, actorId: input.actorId, action: "advancement.confirmed", entityType: "advancement_snapshot", entityId: snapshotId, reason: reason || null, before: { ruleId: rule.id, selectedCarIds: [] }, after: { ruleId: rule.id, selectedCarIds: selected.map((selection) => selection.sourceCarId) } };
-  const next: MeetStateV1 = { ...state, brackets: nextBrackets, advancementSnapshots: [...state.advancementSnapshots, snapshot], auditLog: [...state.auditLog, audit] };
+  const audit = {
+    id: `audit-${snapshotId}`, timestamp: input.confirmedAt, actorId: input.actorId,
+    action: "advancement.confirmed", entityType: "advancement_snapshot", entityId: snapshotId,
+    reason: reason || null,
+    before: { ruleId: rule.id, selections: [] },
+    after: { ruleId: rule.id, selections: selected.map((selection) => ({ ...selection })) },
+  };
+  const next: MeetStateV1 = {
+    ...state,
+    brackets: nextBrackets,
+    advancementRules: state.advancementRules.map((item) => item.id === rule.id ? { ...item, version: (item.version ?? 1) + 1 } : item),
+    advancementSnapshots: [...state.advancementSnapshots, snapshot], auditLog: [...state.auditLog, audit],
+  };
   assertState(next);
   return next;
 }
@@ -40,18 +50,6 @@ export function markDependentAdvancementStale(state: MeetStateV1): MeetStateV1 {
   const stale = staleSnapshotIds(state);
   const snapshots = state.advancementSnapshots.map((snapshot) => ({ ...snapshot, stale: stale.has(snapshot.id) }));
   return snapshots.some((snapshot, index) => snapshot.stale !== state.advancementSnapshots[index]?.stale) ? { ...state, advancementSnapshots: snapshots } : state;
-}
-
-function resolveSelections(state: MeetStateV1, rule: ReturnType<typeof ruleFor>, defaultSelections: AdvancementSelection[], eligible: Array<{ sourceCarId: string; rank: number }>, manualCarIds: string[] | undefined): AdvancementSelection[] {
-  if (manualCarIds === undefined) return defaultSelections;
-  if (new Set(manualCarIds).size !== manualCarIds.length) throw new Error("Manual advancement selections must be unique");
-  const byCar = new Map(eligible.map((selection) => [selection.sourceCarId, selection]));
-  const candidates = manualCarIds.map((sourceCarId) => {
-    const selection = byCar.get(sourceCarId);
-    if (!selection) throw new Error(`Manual advancement selection contains ineligible car: ${sourceCarId}`);
-    return selection;
-  }).sort((left, right) => left.rank - right.rank || (left.sourceCarId < right.sourceCarId ? -1 : left.sourceCarId > right.sourceCarId ? 1 : 0));
-  return allocateSelections(state, rule, candidates);
 }
 
 function applySelections(destination: BracketState, source: BracketState, selections: AdvancementSelection[], ruleId: string, snapshotId: string): BracketState {

@@ -32,6 +32,34 @@ export function eligibleAdvancementSelections(state: MeetStateV1, ruleId: string
   return groups.filter((group) => group.end <= rule.topN || (group.start <= rule.topN && group.end > rule.topN)).flatMap((group) => group.rows).map((standing) => ({ sourceCarId: standing.carId, rank: standing.rank ?? rule.topN }));
 }
 
+/**
+ * Validates the organiser's exact advancement choice against the published
+ * automatic and cutoff groups, then allocates it using current destination
+ * occupancy. The returned ordering is stable and is the payload sent to the
+ * authoritative PostgreSQL transaction.
+ */
+export function prepareAdvancementSelections(state: MeetStateV1, ruleId: string, selectedIds: readonly string[]): AdvancementPreview["selected"] {
+  const rule = ruleFor(state, ruleId);
+  const preview = previewAdvancement(state, ruleId);
+  if (rule.status !== "active" || preview.staleSource) throw new Error("Advancement preview cannot be confirmed");
+  if (selectedIds.length !== rule.topN) throw new Error(`Advancement must select exactly ${rule.topN} cars`);
+  if (new Set(selectedIds).size !== selectedIds.length) throw new Error("Advancement selections must be unique");
+
+  const eligible = new Map(eligibleAdvancementSelections(state, ruleId).map((selection) => [selection.sourceCarId, selection]));
+  const selectedSet = new Set(selectedIds);
+  const automaticIds = preview.selected.map((selection) => selection.sourceCarId);
+  if (automaticIds.some((sourceCarId) => !selectedSet.has(sourceCarId))) throw new Error("Every automatic qualifier must be selected");
+  const candidates = selectedIds.map((sourceCarId) => {
+    const selection = eligible.get(sourceCarId);
+    if (!selection) throw new Error(`Advancement selection contains an ineligible car: ${sourceCarId}`);
+    if (isDuplicate(state, preview.sourceBracketId, sourceCarId)) throw new Error(`Advancement selection is already active: ${sourceCarId}`);
+    return selection;
+  }).sort((left, right) => left.rank - right.rank || compareCodeUnits(left.sourceCarId, right.sourceCarId));
+  const allocated = allocateSelections(state, rule, candidates);
+  if (capacityIssuesFor(state, rule, allocated).length > 0) throw new Error("Advancement destination capacity is exceeded");
+  return allocated;
+}
+
 export function allocateSelections(state: MeetStateV1, rule: AdvancementRule, candidates: ReadonlyArray<{ carId: string; rank: number | null }> | ReadonlyArray<{ sourceCarId: string; rank: number }>): AdvancementPreview["selected"] {
   const counts = new Map(rule.destinationOrder.map((id) => [id, bracketFor(state, id).event.entries.filter((entry) => entry.active).length]));
   return candidates.map((candidate) => {

@@ -37,7 +37,16 @@ export type AdvancementHistorySelection = {
   destinationBracketId: string; destinationCarId: string | null; rank: number;
 };
 export type AdvancementHistory = { snapshots: AdvancementHistorySnapshot[]; selections: AdvancementHistorySelection[] };
-export type LoadReceipt = { ok: true; value: MeetStateV1; history: AdvancementHistory; heatVersions: Readonly<Record<string, number>> } | { ok: false; kind: RepositoryFailureKind; message: string };
+export type HostedMeetBundle = { state: MeetStateV1; history: AdvancementHistory; heatVersions: Readonly<Record<string, number>> };
+export type LoadReceipt = { ok: true; value: HostedMeetBundle } | { ok: false; kind: RepositoryFailureKind; message: string };
+export type SecurityEventPageItem = {
+  id: string; organisationId: string; actorId: string | null; subjectUserId: string | null;
+  eventType: string; occurredAt: string; metadata: Record<string, JsonValue>;
+};
+export type AdminOverview = {
+  activeMeetCount: number; runningMeetCount: number; staleAdvancementCount: number; unresolvedTieCount: number;
+  recentActivity: Array<{ id: string; meetId: string | null; action: string; actorId: string; occurredAt: string }>;
+};
 
 const TABLES = [
   "meets", "brackets", "participants", "cars", "heats", "advancement_rules",
@@ -202,6 +211,34 @@ export class MeetRepository {
     return this.execute<{ ok: boolean; security_event_id?: string; event_type?: string }>("record_security_event", { target_organisation_id: organisationId, event_name: eventName, subject_user_id: subjectUserId, event_metadata: metadata, request_id: requestId }, (value) => this.readOne("security_events", value.security_event_id ? { id: value.security_event_id } : { organisation_id: organisationId }));
   }
 
+  async listSecurityEvents(organisationId: string, page: { limit?: number; beforeOccurredAt?: string | null; beforeId?: string | null } = {}): Promise<SecurityEventPageItem[]> {
+    const limit = Math.min(100, Math.max(1, page.limit ?? 50));
+    const response = await this.port.rpc<Record<string, unknown>[]>("list_security_events", {
+      target_organisation_id: organisationId, page_size: limit,
+      before_occurred_at: page.beforeOccurredAt ?? null, before_id: page.beforeId ?? null,
+    });
+    if (response.error) throw new Error(safeMessage(response.error));
+    return (response.data ?? []).map((row) => ({
+      id: asString(row.id), organisationId: asString(row.organisation_id), actorId: nullableString(row.actor_id),
+      subjectUserId: nullableString(row.subject_user_id), eventType: asString(row.event_type),
+      occurredAt: asString(row.occurred_at), metadata: isRecord(row.metadata) ? row.metadata as Record<string, JsonValue> : {},
+    }));
+  }
+
+  async loadAdminOverview(organisationId: string, recentLimit = 20): Promise<AdminOverview> {
+    const response = await this.port.rpc<Record<string, unknown>>("get_admin_overview", {
+      target_organisation_id: organisationId, recent_limit: Math.min(50, Math.max(1, recentLimit)),
+    });
+    if (response.error || response.data === null) throw new Error(safeMessage(response.error ?? { message: "Empty admin overview" }));
+    const value = response.data;
+    const activity = Array.isArray(value.recent_activity) ? value.recent_activity.map(asRecord) : [];
+    return {
+      activeMeetCount: asInteger(value.active_meet_count), runningMeetCount: asInteger(value.running_meet_count),
+      staleAdvancementCount: asInteger(value.stale_advancement_count), unresolvedTieCount: asInteger(value.unresolved_tie_count),
+      recentActivity: activity.map((row) => ({ id: asString(row.id), meetId: nullableString(row.meet_id), action: asString(row.action), actorId: asString(row.actor_id), occurredAt: asString(row.occurred_at) })),
+    };
+  }
+
   private async readOne(table: string, filters: Record<string, FilterValue>): Promise<void> {
     const result = await this.port.query<Record<string, unknown>>({ table, filters });
     if (result.error) throw new Error(safeMessage(result.error));
@@ -212,7 +249,8 @@ export class MeetRepository {
     meetId: string,
     handlers: {
       bracketIds: readonly string[];
-      onSnapshot(snapshot: MeetStateV1, syncedAt: string): void;
+      onSnapshot?(snapshot: MeetStateV1, syncedAt: string): void;
+      onBundle?(bundle: HostedMeetBundle, syncedAt: string): void;
       onStatus(status: ConnectionStatus): void;
       isDirty(): boolean;
       onDirtyUpdate(): void;
@@ -239,8 +277,14 @@ export class MeetRepository {
             return;
           }
           handlers.onStatus("connected");
-          if (handlers.isDirty()) handlers.onDirtyUpdate();
-          else handlers.onSnapshot(receipt.value, new Date().toISOString());
+          const syncedAt = new Date().toISOString();
+          if (handlers.isDirty()) {
+            handlers.onDirtyUpdate();
+            handlers.onBundle?.(receipt.value, syncedAt);
+          } else {
+            handlers.onBundle?.(receipt.value, syncedAt);
+            handlers.onSnapshot?.(receipt.value.state, syncedAt);
+          }
         });
       }, 60);
     };
@@ -336,7 +380,7 @@ export function hydrateMeetState(rows: Record<string, unknown[]>, organisationId
     advancementRules: getRows(rows, "advancement_rules").sort(byString("id")).map((rule) => {
       const destinations = getRows(rows, "advancement_rule_destinations").filter((row) => row.rule_id === rule.id).sort(byNumberThenId("destination_order"));
       const ids = destinations.map((row) => asString(row.destination_bracket_id));
-      return { id: asString(rule.id), sourceBracketId: asString(rule.source_bracket_id), destinationBracketIds: ids, topN: asInteger(rule.top_n, 1), destinationCapacity: asInteger(rule.destination_capacity, 1), destinationOrder: [...ids], status: rule.status === "disabled" ? "disabled" as const : "active" as const };
+      return { id: asString(rule.id), version: asInteger(rule.version, 1), sourceBracketId: asString(rule.source_bracket_id), destinationBracketIds: ids, topN: asInteger(rule.top_n, 1), destinationCapacity: asInteger(rule.destination_capacity, 1), destinationOrder: [...ids], status: rule.status === "disabled" ? "disabled" as const : "active" as const };
     }),
     advancementSnapshots: currentSnapshots.map((snapshot) => ({
       id: asString(snapshot.id), ruleId: asString(snapshot.rule_id), sourceBracketId: asString(snapshot.source_bracket_id), sourceResultVersion: asInteger(snapshot.source_result_version, 1),
@@ -350,9 +394,11 @@ export function hydrateMeetState(rows: Record<string, unknown[]>, organisationId
   const validation = validateMeetState(candidate);
   return validation.success ? {
     ok: true,
-    value: validation.data,
-    history: historyResult.history,
-    heatVersions: Object.fromEntries(heats.map((heat) => [asString(heat.id), asInteger(heat.version, 1)])),
+    value: {
+      state: validation.data,
+      history: historyResult.history,
+      heatVersions: Object.fromEntries(heats.map((heat) => [asString(heat.id), asInteger(heat.version, 1)])),
+    },
   } : { ok: false, kind: "validation", message: `Hosted meet data failed validation: ${validation.issues[0]?.message ?? "unknown issue"}` };
 }
 
@@ -475,6 +521,23 @@ function secondsToMilliseconds(value: unknown): number | null { const numeric = 
 function byString(...keys: string[]) { return (a: Record<string, unknown>, b: Record<string, unknown>) => { for (const key of keys) { const difference = asString(a[key]).localeCompare(asString(b[key])); if (difference) return difference; } return 0; }; }
 function byNumberThenId(key: string) { return (a: Record<string, unknown>, b: Record<string, unknown>) => asInteger(a[key]) - asInteger(b[key]) || asString(a.id).localeCompare(asString(b.id)); }
 function safeUnknownMessage(cause: unknown): string { return cause instanceof Error && /offline|network|fetch/i.test(cause.message) ? "The hosted service is unreachable. Your current view was preserved." : "The hosted operation failed safely."; }
-function safeMessage(error: PortError): string { const message = error.message; if (/MEET_VERSION_CONFLICT/.test(message)) return "Another official changed this record. Refresh before retrying."; if (/MEET_FORBIDDEN|permission|row-level security/i.test(message)) return "Your role does not allow this action."; if (/MEET_REASON_REQUIRED|MEET_INVALID|validation/i.test(message)) return "The server rejected invalid meet data."; if (/offline|network|fetch/i.test(message)) return "The hosted service is unreachable. Your current view was preserved."; return "The hosted operation failed safely."; }
-function mapError(error: PortError): RepositoryFailureKind { const message = error.message; if (/MEET_VERSION_CONFLICT/.test(message)) return "conflict"; if (/MEET_FORBIDDEN|permission|row-level security/i.test(message)) return "permission"; if (/MEET_REASON_REQUIRED|MEET_INVALID|validation/i.test(message)) return "validation"; if (/offline/i.test(message)) return "offline"; if (/network|fetch/i.test(message)) return "network"; return "unknown"; }
+function safeMessage(error: PortError): string {
+  const message = `${error.code ?? ""} ${error.message}`;
+  if (/MEET_VERSION_CONFLICT/.test(message)) return "Another official changed this record. Refresh before retrying.";
+  if (/MEET_DOWNSTREAM_RESULTS_EXIST/.test(message)) return "Downstream results already exist, so this advancement cannot be replaced.";
+  if (/MEET_ADVANCEMENT_EXISTS|MEET_DUPLICATE_ADVANCEMENT|MEET_STALE_SOURCE|MEET_STATUS_CONFLICT|MEET_RESULT_STATE_CONFLICT|MEET_CONFIRMED_RESULTS_EXIST|MEET_INACTIVE_ASSIGNED_CAR/.test(message)) return "The advancement state changed. Refresh before continuing.";
+  if (/MEET_AUTH_REQUIRED|MEET_FORBIDDEN|permission|row-level security/i.test(message)) return "Your role does not allow this action.";
+  if (/MEET_REASON_REQUIRED|MEET_MANUAL_ADVANCEMENT_REQUIRED|MEET_INVALID|MEET_SELECTION|MEET_DESTINATION|MEET_SOURCE_INCOMPLETE|MEET_ADVANCEMENT_(?:RULE_)?NOT_FOUND|validation/i.test(message)) return "The server rejected invalid meet data.";
+  if (/offline|network|fetch/i.test(message)) return "The hosted service is unreachable. Your current view was preserved.";
+  return "The hosted operation failed safely.";
+}
+function mapError(error: PortError): RepositoryFailureKind {
+  const message = `${error.code ?? ""} ${error.message}`;
+  if (/MEET_VERSION_CONFLICT|MEET_DOWNSTREAM_RESULTS_EXIST|MEET_ADVANCEMENT_EXISTS|MEET_DUPLICATE_ADVANCEMENT|MEET_STALE_SOURCE|MEET_STATUS_CONFLICT|MEET_RESULT_STATE_CONFLICT|MEET_CONFIRMED_RESULTS_EXIST|MEET_INACTIVE_ASSIGNED_CAR/.test(message)) return "conflict";
+  if (/MEET_AUTH_REQUIRED|MEET_FORBIDDEN|permission|row-level security/i.test(message)) return "permission";
+  if (/MEET_REASON_REQUIRED|MEET_MANUAL_ADVANCEMENT_REQUIRED|MEET_INVALID|MEET_SELECTION|MEET_DESTINATION|MEET_SOURCE_INCOMPLETE|MEET_ADVANCEMENT_(?:RULE_)?NOT_FOUND|validation/i.test(message)) return "validation";
+  if (/offline/i.test(message)) return "offline";
+  if (/network|fetch/i.test(message)) return "network";
+  return "unknown";
+}
 export function createRequestId(): string { return crypto.randomUUID(); }

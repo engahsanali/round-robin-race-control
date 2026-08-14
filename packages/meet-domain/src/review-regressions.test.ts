@@ -15,7 +15,7 @@ function finishedBracket(id: string, stage: "qualifier" | "semifinal" | "final",
 }
 
 function rule(id: string, sourceBracketId: string, destinationBracketIds: string[], topN: number, destinationCapacity = 6, status: "active" | "disabled" = "active") {
-  return { id, sourceBracketId, destinationBracketIds, destinationOrder: destinationBracketIds, topN, destinationCapacity, status };
+  return { id, version: 1, sourceBracketId, destinationBracketIds, destinationOrder: destinationBracketIds, topN, destinationCapacity, status };
 }
 
 describe("review regressions", () => {

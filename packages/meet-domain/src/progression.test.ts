@@ -16,7 +16,7 @@ function finishedBracket(id: string, stage: "qualifier" | "semifinal" | "final",
 }
 
 function rule(id: string, sourceBracketId: string, destinationBracketIds: string[], topN: number, capacity: number): AdvancementRule {
-  return { id, sourceBracketId, destinationBracketIds, topN, destinationCapacity: capacity, destinationOrder: destinationBracketIds, status: "active" };
+  return { id, version: 1, sourceBracketId, destinationBracketIds, topN, destinationCapacity: capacity, destinationOrder: destinationBracketIds, status: "active" };
 }
 
 describe("advancement progression", () => {

@@ -11,6 +11,7 @@ const REQUIRED_FILES = [
   "202608140006_meet_preliminary_and_identity_hardening.sql",
   "202608140007_meet_workbook_commands.sql",
   "202608140008_registration_audit_reassignment.sql",
+  "202608140009_advancement_accountability.sql",
 ];
 
 const OWNED_TABLES = [
@@ -46,6 +47,8 @@ const REQUIRED_RPCS = [
   "save_meet_workbook",
   "save_registration_batch",
   "activate_bracket_schedule",
+  "list_security_events",
+  "get_admin_overview",
 ];
 
 export function verifyWorkbookCommandInvariant(source) {
@@ -329,6 +332,46 @@ export function verifyReviewInvariant(source) {
   return issues;
 }
 
+export function verifyAdvancementAccountabilityInvariant(source) {
+  const sql = normalize(source);
+  const issues = [];
+  const requireMarker = (condition, code, target, message) => {
+    if (!condition) issues.push(issue(code, target, message));
+  };
+  requireMarker(
+    /heat\.status\s*=\s*'confirmed'[\s\S]*?MEET_DOWNSTREAM_RESULTS_EXIST/i.test(sql)
+      && /before\s+update\s+of\s+active\s+on\s+public\.cars/i.test(sql),
+    "missing_downstream_result_guard", "advancement replacement",
+    "Replacement must abort before deactivating cars when a destination has confirmed results",
+  );
+  requireMarker(
+    /delete\s+from\s+public\.heats\s+heat[\s\S]*?heat\.status\s*=\s*'pending'/i.test(sql)
+      && /advancement\.pending_schedule_retired/i.test(sql),
+    "missing_pending_schedule_cleanup", "pending schedules",
+    "Safe replacement must retire pending heats that reference superseded cars and audit the cleanup",
+  );
+  requireMarker(
+    (sql.match(/perform\s+private_meet\.assert_heat_cars_active\s*\(\s*heat_id\s*,\s*winner_car_id\s*\)/gi) ?? []).length >= 4
+      && /MEET_INACTIVE_ASSIGNED_CAR/i.test(sql),
+    "missing_inactive_car_guard", "winner commands",
+    "Every second and millisecond winner confirmation/correction wrapper must reject inactive assigned cars",
+  );
+  requireMarker(
+    /before_state\s*=\s*event\.before_state\s*\|\|\s*jsonb_build_object\s*\(\s*'selections'\s*,\s*previous_selections\s*\)/i.test(sql)
+      && /after_state\s*=\s*event\.after_state\s*\|\|\s*jsonb_build_object\s*\(\s*'selections'\s*,\s*current_selections\s*\)/i.test(sql),
+    "missing_advancement_selection_audit", "advancement audit",
+    "Advancement audit must retain deterministic before and after selection arrays",
+  );
+  requireMarker(
+    (sql.match(/has_org_role\s*\(\s*target_organisation_id\s*,\s*array\['owner',\s*'admin'\]\s*\)/gi) ?? []).length >= 2
+      && /page_size\s+not\s+between\s+1\s+and\s+100/i.test(sql)
+      && /recent_limit\s+not\s+between\s+1\s+and\s+50/i.test(sql),
+    "unsafe_admin_read_model", "admin read models",
+    "Security-event pagination and admin overview must be bounded and owner/admin only",
+  );
+  return issues;
+}
+
 export async function verifyMeetMigrations(migrationsDirectory) {
   const issues = [];
   const sources = new Map();
@@ -443,6 +486,7 @@ export async function verifyMeetMigrations(migrationsDirectory) {
   issues.push(...verifyReviewRound2Invariant(allMigrations));
   issues.push(...verifyReviewRound3Invariant(allMigrations));
   issues.push(...verifyWorkbookCommandInvariant(allMigrations));
+  issues.push(...verifyAdvancementAccountabilityInvariant(sources.get(REQUIRED_FILES[8])));
   return { ok: issues.length === 0, issues, schemaVersion: REQUIRED_FILES.length };
 }
 
