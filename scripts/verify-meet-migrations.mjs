@@ -13,6 +13,7 @@ const REQUIRED_FILES = [
   "202608140008_registration_audit_reassignment.sql",
   "202608140009_advancement_accountability.sql",
   "202608140010_advancement_review_fixes.sql",
+  "202608140011_meet_backup_recovery.sql",
 ];
 
 const OWNED_TABLES = [
@@ -31,6 +32,7 @@ const OWNED_TABLES = [
   "audit_events",
   "security_events",
   "mutation_rate_limits",
+  "meet_revisions",
 ];
 
 const REQUIRED_RPCS = [
@@ -50,7 +52,72 @@ const REQUIRED_RPCS = [
   "activate_bracket_schedule",
   "list_security_events",
   "get_admin_overview",
+  "export_meet_bundle",
+  "create_meet_revision",
+  "list_meet_revisions",
+  "preview_meet_revision",
+  "import_meet_backup",
+  "restore_meet_revision_copy",
 ];
+
+export function verifyBackupInvariant(source) {
+  const sql = normalize(source ?? "");
+  const issues = [];
+  const exportDefinition = sql.match(/create\s+or\s+replace\s+function\s+public\.export_meet_bundle[\s\S]*?\$\$\s*;/i)?.[0] ?? "";
+  const requireMarker = (condition, code, target, message) => { if (!condition) issues.push(issue(code, target, message)); };
+  requireMarker(
+    /create\s+table\s+public\.meet_revisions/i.test(sql)
+      && /alter\s+table\s+public\.meet_revisions\s+enable\s+row\s+level\s+security/i.test(sql)
+      && /alter\s+table\s+public\.meet_revisions\s+force\s+row\s+level\s+security/i.test(sql)
+      && /private_meet\.is_org_member\(organisation_id\)/i.test(sql),
+    "backup_revision_rls", "meet_revisions", "Recovery revisions must be organisation-isolated with forced RLS",
+  );
+  requireMarker(
+    /for\s+share/i.test(exportDefinition) && /private_meet\.build_hosted_bundle/i.test(exportDefinition)
+      && /jsonb_agg[\s\S]*public\.participants/i.test(sql)
+      && /history[\s\S]*advancement_selections/i.test(sql),
+    "backup_export_not_consistent", "export_meet_bundle", "Full graph export must lock one meet snapshot and aggregate all rows server-side",
+  );
+  requireMarker(
+    /function\s+private_meet\.canonical_json/i.test(sql)
+      && /function\s+private_meet\.bundle_sha256/i.test(sql)
+      && /-- backup_hash_mismatch/.test(sql)
+      && /MEET_BACKUP_HASH_MISMATCH/i.test(sql),
+    "backup_hash_unchecked", "import_meet_backup", "Portable imports and revisions must recompute their canonical SHA-256",
+  );
+  requireMarker(
+    /--\s*RESTORE CREATES A NEW MEET/i.test(sql)
+      && /function\s+public\.restore_meet_revision_copy/i.test(sql)
+      && /private_meet\.import_bundle_copy/i.test(sql)
+      && !/update\s+public\.meets[\s\S]*restore_meet_revision_copy/i.test(sql),
+    "unsafe_restore_strategy", "restore_meet_revision_copy", "Restore must create a copy instead of rolling an existing meet backward",
+  );
+  requireMarker(
+    (sql.match(/MEET_BACKUP_CONFIRM_REQUIRED/gi) ?? []).length >= 2
+      && /confirm_import\s+is\s+not\s+true/i.test(sql)
+      && /confirm_restore\s+is\s+not\s+true/i.test(sql),
+    "backup_confirmation_missing", "recovery confirmation", "Import and restore require explicit confirmation",
+  );
+  requireMarker(
+    /unique\s*\(organisation_id\s*,\s*request_id\)/i.test(sql)
+      && /select\s+\*\s+into\s+prior[\s\S]*request_id[\s\S]*if\s+found\s+then\s+return/i.test(sql),
+    "backup_idempotency_missing", "recovery request", "Recovery requests need organisation-scoped idempotency before fresh validation",
+  );
+  requireMarker(
+    /page_size\s+is\s+null\s+or\s+page_size\s+not\s+between\s+1\s+and\s+100/i.test(sql)
+      && /order\s+by\s+revision\.sequence\s+desc\s+limit\s+page_size/i.test(sql),
+    "backup_pagination_unbounded", "list_meet_revisions", "Revision history must use bounded cursor pagination",
+  );
+  requireMarker(
+    /auth\.uid\(\)[\s\S]*meet\.imported/i.test(sql)
+      && /never forged into operational history/i.test(sql),
+    "backup_actor_forgery", "import provenance", "Imported source actors and security history must remain provenance only",
+  );
+  for (const name of ["export_meet_bundle", "create_meet_revision", "list_meet_revisions", "preview_meet_revision", "import_meet_backup", "restore_meet_revision_copy"]) {
+    requireMarker(new RegExp(`function\\s+public\\.${name}[\\s\\S]*?security\\s+definer[\\s\\S]*?set\\s+search_path\\s*=\\s*''`, "i").test(sql), "backup_unsafe_definer", name, `${name} must be a fixed-search-path definer`);
+  }
+  return issues;
+}
 
 export function verifyWorkbookCommandInvariant(source) {
   const sql = normalize(source);
@@ -428,16 +495,16 @@ export async function verifyMeetMigrations(migrationsDirectory) {
   const allMigrations = [...sources.values()].join("\n");
 
   for (const table of OWNED_TABLES) {
-    if (!new RegExp(`create\\s+table\\s+public\\.${table}\\b`, "i").test(core)) {
+    if (!new RegExp(`create\\s+table\\s+public\\.${table}\\b`, "i").test(allMigrations)) {
       issues.push(issue("missing_table", table, `Missing required table public.${table}`));
     }
-    if (!new RegExp(`alter\\s+table\\s+public\\.${table}\\s+enable\\s+row\\s+level\\s+security\\s*;`, "i").test(rls)
-        || !new RegExp(`alter\\s+table\\s+public\\.${table}\\s+force\\s+row\\s+level\\s+security\\s*;`, "i").test(rls)) {
+    if (!new RegExp(`alter\\s+table\\s+public\\.${table}\\s+enable\\s+row\\s+level\\s+security\\s*;`, "i").test(allMigrations)
+        || !new RegExp(`alter\\s+table\\s+public\\.${table}\\s+force\\s+row\\s+level\\s+security\\s*;`, "i").test(allMigrations)) {
       issues.push(issue("missing_rls", table, `public.${table} must enable and force RLS`));
     }
   }
 
-  for (const policy of rls.matchAll(/create\s+policy\b[\s\S]*?;/gi)) {
+  for (const policy of allMigrations.matchAll(/create\s+policy\b[\s\S]*?;/gi)) {
     if (/\bto\s+[^;\n]*(?:anon|public)\b/i.test(policy[0])) {
       issues.push(issue("anonymous_policy", "RLS", "Meet policies must never target anon or public"));
     }
@@ -525,6 +592,7 @@ export async function verifyMeetMigrations(migrationsDirectory) {
   issues.push(...verifyWorkbookCommandInvariant(allMigrations));
   issues.push(...verifyAdvancementAccountabilityInvariant(sources.get(REQUIRED_FILES[8])));
   issues.push(...verifyAdvancementReviewFixInvariant(sources.get(REQUIRED_FILES[9])));
+  issues.push(...verifyBackupInvariant(sources.get(REQUIRED_FILES[10])));
   return { ok: issues.length === 0, issues, schemaVersion: REQUIRED_FILES.length };
 }
 

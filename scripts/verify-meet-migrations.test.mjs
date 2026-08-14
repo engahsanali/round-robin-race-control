@@ -28,8 +28,29 @@ test("accepts the checked-in Meet migration security contract", async () => {
   const result = await verifier.verifyMeetMigrations(migrationsDir);
   assert.deepEqual(result.issues, []);
   assert.equal(result.ok, true);
-  assert.equal(result.schemaVersion, 10);
+  assert.equal(result.schemaVersion, 11);
 });
+
+test("backup invariant requires forced RLS, consistent graph export and guarded new-meet recovery", async () => {
+  assert.equal(typeof verifier.verifyBackupInvariant, "function", "backup migration invariant verifier must be exported");
+  const source = await readFile(path.join(migrationsDir, "202608140011_meet_backup_recovery.sql"), "utf8");
+  assert.deepEqual(verifier.verifyBackupInvariant(source), []);
+});
+
+for (const fixture of [
+  { name: "revision RLS is not forced", find: "alter table public.meet_revisions force row level security", replace: "-- missing forced rls", code: "backup_revision_rls" },
+  { name: "full graph export lacks a meet lock", find: "for share", replace: "-- missing consistent lock", code: "backup_export_not_consistent" },
+  { name: "import skips canonical hash validation", find: "backup_hash_mismatch", replace: "backup_hash_unchecked", code: "backup_hash_unchecked" },
+  { name: "restore mutates the source meet", find: "-- RESTORE CREATES A NEW MEET", replace: "-- restore behavior missing", code: "unsafe_restore_strategy" },
+  { name: "recovery accepts unconfirmed requests", find: "MEET_BACKUP_CONFIRM_REQUIRED", replace: "MEET_BACKUP_CONFIRM_SKIPPED", code: "backup_confirmation_missing" },
+]) {
+  test(`backup invariant rejects when ${fixture.name}`, async () => {
+    assert.equal(typeof verifier.verifyBackupInvariant, "function");
+    const source = await readFile(path.join(migrationsDir, "202608140011_meet_backup_recovery.sql"), "utf8");
+    const issues = verifier.verifyBackupInvariant(source.replace(fixture.find, fixture.replace));
+    assert.ok(issues.some((issue) => issue.code === fixture.code), `${fixture.name} should report ${fixture.code}; got ${JSON.stringify(issues)}`);
+  });
+}
 
 for (const fixture of [
   { name: "audit enrichment is not organisation and snapshot scoped", find: "and event.organisation_id = target_organisation_id and event.entity_id = new_snapshot_id", replace: "", code: "unsafe_advancement_audit_scope" },
@@ -76,6 +97,7 @@ for (const fixture of fixtures) {
         "202608140008_registration_audit_reassignment.sql",
         "202608140009_advancement_accountability.sql",
         "202608140010_advancement_review_fixes.sql",
+        "202608140011_meet_backup_recovery.sql",
       ]) {
         const original = await readFile(path.join(migrationsDir, fileName), "utf8");
         const mutated = fileName === fixture.file
