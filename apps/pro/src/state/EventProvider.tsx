@@ -236,7 +236,7 @@ export function useOptionalEventState(): EventContextValue | null {
     importEventJson: async (text, summary = "Imported event into rehearsal workspace") => {
       const parsed = parseEventJson(text);
       if (!parsed.ok) throw new EventRepositoryValidationError("Imported event is invalid", parsed.issues);
-      return rehearsal.dispatch({ type: "event.replace", event: parsed.data, summary });
+      return rehearsal.dispatch({ type: "event.import-compatible", event: parsed.data, summary });
     },
     previewSnapshot: async () => {
       throw new Error("Exit the rehearsal before previewing official recovery history");

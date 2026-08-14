@@ -1,6 +1,6 @@
 import "fake-indexeddb/auto";
 
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import { act, cleanup, render, screen, waitFor } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
@@ -15,6 +15,7 @@ import {
   type PostCommitIssue,
 } from "./commands";
 import { EventProvider, useEventState } from "./EventProvider";
+import { RehearsalWorkspaceProvider, useRehearsalWorkspace } from "./RehearsalWorkspace";
 
 let database: ProDatabase;
 let repository: EventRepository;
@@ -407,6 +408,55 @@ describe("EventProvider", () => {
       id: "provider-exact-import",
       summary: "Imported exact Solo event",
     });
+  });
+
+  it("imports compatible JSON byte-equivalently into rehearsal without mutating the official event", async () => {
+    const official = eventFixture();
+    official.event.name = "Official event remains saved";
+    await repository.save(official, bootstrapRevision());
+    const officialText = serializeEvent((await repository.load())!);
+
+    const rehearsalStart = eventFixture();
+    rehearsalStart.event.name = "Current rehearsal";
+    const imported = eventFixture();
+    imported.event.name = "Imported Solo rehearsal";
+    const importedText = serializeEvent(imported);
+    let importEventJson: ReturnType<typeof useEventState>["importEventJson"] | undefined;
+    let renderedEventText: string | undefined;
+
+    function BeginAndCaptureRehearsal() {
+      const rehearsal = useRehearsalWorkspace();
+      const event = useEventState();
+
+      useEffect(() => {
+        if (!rehearsal.state) rehearsal.begin(rehearsalStart);
+      }, [rehearsal.begin, rehearsal.state]);
+
+      importEventJson = event.importEventJson;
+      renderedEventText = event.state ? serializeEvent(event.state) : undefined;
+      return null;
+    }
+
+    render(
+      <RehearsalWorkspaceProvider>
+        <EventProvider repository={repository}>
+          <BeginAndCaptureRehearsal />
+        </EventProvider>
+      </RehearsalWorkspaceProvider>,
+    );
+    await waitFor(() => expect(renderedEventText).toBe(serializeEvent(rehearsalStart)));
+
+    let receipt: CommandReceipt | undefined;
+    await act(async () => {
+      receipt = await importEventJson!(importedText, "Imported exact Solo rehearsal");
+    });
+
+    await waitFor(() => expect(renderedEventText).toBe(importedText));
+    expect(receipt).toMatchObject({
+      summary: "Imported exact Solo rehearsal",
+      undoUntil: null,
+    });
+    expect(serializeEvent((await repository.load())!)).toBe(officialText);
   });
 
   it("loads local state, publishes only committed commands, and exposes persistence status", async () => {
