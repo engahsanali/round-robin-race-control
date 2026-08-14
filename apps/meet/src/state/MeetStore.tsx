@@ -43,9 +43,13 @@ export type MeetStoreAction =
   | { type: "command.failed"; requestId: string; message: string }
   | { type: "session.cleared" };
 
-export function createInitialMeetStoreState(): MeetStoreState {
+export function createInitialMeetStoreState(options: {
+  workspace?: WorkspaceMode;
+  organisationId?: string | null;
+  role?: OrganisationRole | null;
+} = {}): MeetStoreState {
   return {
-    workspace: "official", selectedOrganisationId: null, selectedMeetId: null, role: null,
+    workspace: options.workspace ?? "official", selectedOrganisationId: options.organisationId ?? null, selectedMeetId: null, role: options.role ?? null,
     snapshot: null, connectionStatus: "offline", saveStatus: "idle", lastSyncedAt: null,
     pendingRequestIds: [], advisory: null, error: null, formDirty: false, remoteUpdatePending: false,
   };
@@ -74,7 +78,7 @@ export function meetStoreReducer(state: MeetStoreState, action: MeetStoreAction)
       if (state.pendingRequestIds.includes(action.requestId)) return state;
       return { ...state, pendingRequestIds: [...state.pendingRequestIds, action.requestId], saveStatus: "saving", advisory: null, error: null };
     case "command.succeeded":
-      return { ...state, pendingRequestIds: state.pendingRequestIds.filter((id) => id !== action.requestId), saveStatus: "saved", advisory: action.advisory, error: null };
+      return { ...state, pendingRequestIds: state.pendingRequestIds.filter((id) => id !== action.requestId), saveStatus: state.pendingRequestIds.some((id) => id !== action.requestId) ? "saving" : "saved", advisory: action.advisory, error: null };
     case "command.failed":
       return { ...state, pendingRequestIds: state.pendingRequestIds.filter((id) => id !== action.requestId), saveStatus: "error", error: action.message };
     case "session.cleared":
@@ -89,24 +93,35 @@ export function roleCapabilities(role: OrganisationRole | null): RoleCapabilitie
   return { manageTeam: admin, configureMeet: organiser, recordResults: marshal, confirmAdvancement: organiser, read: role !== null, export: role !== null };
 }
 
-export async function dispatchStoreCommand<T>(
-  state: MeetStoreState,
-  dispatch: Dispatch<MeetStoreAction>,
-  requestId: string,
-  command: () => Promise<CommandReceipt<T>>,
-): Promise<CommandReceipt<T> | { ok: false; kind: "duplicate"; requestId: string; statePreserved: true; message: string }> {
-  if (state.pendingRequestIds.includes(requestId)) return { ok: false, kind: "duplicate", requestId, statePreserved: true, message: "This command is already pending." };
-  dispatch({ type: "command.started", requestId });
-  const receipt = await command();
-  if (receipt.ok) dispatch({ type: "command.succeeded", requestId, advisory: receipt.advisory?.message ?? null });
-  else dispatch({ type: "command.failed", requestId, message: receipt.message });
-  return receipt;
+export type StoreCommandReceipt<T> = CommandReceipt<T> | { ok: false; kind: "duplicate"; requestId: string; statePreserved: true; message: string };
+export type StoreCommandRunner = <T>(requestId: string, command: () => Promise<CommandReceipt<T>>) => Promise<StoreCommandReceipt<T>>;
+
+export function createStoreCommandRunner(dispatch: Dispatch<MeetStoreAction>): StoreCommandRunner {
+  const pending = new Set<string>();
+  return async <T,>(requestId: string, command: () => Promise<CommandReceipt<T>>): Promise<StoreCommandReceipt<T>> => {
+    if (pending.has(requestId)) return { ok: false, kind: "duplicate", requestId, statePreserved: true, message: "This command is already pending." };
+    pending.add(requestId);
+    dispatch({ type: "command.started", requestId });
+    try {
+      const receipt = await command();
+      if (receipt.ok) dispatch({ type: "command.succeeded", requestId, advisory: receipt.advisory?.message ?? null });
+      else dispatch({ type: "command.failed", requestId, message: receipt.message });
+      return receipt;
+    } catch {
+      const receipt = { ok: false, kind: "network", requestId, statePreserved: true, message: "The hosted service is unreachable. Your current view was preserved." } as const;
+      dispatch({ type: "command.failed", requestId, message: receipt.message });
+      return receipt;
+    } finally {
+      pending.delete(requestId);
+    }
+  };
 }
 
 type MeetStoreContextValue = {
   state: MeetStoreState;
   dispatch: Dispatch<MeetStoreAction>;
   capabilities: RoleCapabilities;
+  runCommand: StoreCommandRunner;
 };
 
 const MeetStoreContext = createContext<MeetStoreContextValue | null>(null);
@@ -114,7 +129,8 @@ const MeetStoreContext = createContext<MeetStoreContextValue | null>(null);
 export function MeetStoreProvider({ children, initialState }: { children: ReactNode; initialState?: MeetStoreState }) {
   const [state, dispatch] = useReducer(meetStoreReducer, initialState ?? createInitialMeetStoreState());
   const capabilities = useMemo(() => roleCapabilities(state.role), [state.role]);
-  const value = useMemo(() => ({ state, dispatch, capabilities }), [state, capabilities]);
+  const runCommand = useMemo(() => createStoreCommandRunner(dispatch), [dispatch]);
+  const value = useMemo(() => ({ state, dispatch, capabilities, runCommand }), [state, capabilities, runCommand]);
   return <MeetStoreContext.Provider value={value}>{children}</MeetStoreContext.Provider>;
 }
 

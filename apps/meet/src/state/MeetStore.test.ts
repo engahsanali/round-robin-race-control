@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { createInitialMeetStoreState, meetStoreReducer, roleCapabilities } from "./MeetStore";
+import { createInitialMeetStoreState, createStoreCommandRunner, meetStoreReducer, roleCapabilities } from "./MeetStore";
 import { validMeet } from "../test/fixtures";
 
 describe("Meet store", () => {
@@ -38,5 +38,29 @@ describe("Meet store", () => {
     expect(roleCapabilities("owner")).toMatchObject({ manageTeam: true, configureMeet: true, recordResults: true, confirmAdvancement: true });
     expect(roleCapabilities("marshal")).toMatchObject({ manageTeam: false, configureMeet: false, recordResults: true, confirmAdvancement: false });
     expect(roleCapabilities("viewer")).toMatchObject({ manageTeam: false, configureMeet: false, recordResults: false, confirmAdvancement: false });
+  });
+
+  it("initialises selected workspace/organisation/role and resets them on boundary changes", () => {
+    const official = createInitialMeetStoreState({ workspace: "official", organisationId: "org-1", role: "marshal" });
+    expect(official).toMatchObject({ workspace: "official", selectedOrganisationId: "org-1", role: "marshal" });
+    const demo = meetStoreReducer(official, { type: "workspace.selected", workspace: "demo" });
+    expect(demo).toMatchObject({ workspace: "demo", selectedOrganisationId: null, role: null, snapshot: null });
+    const signedOut = meetStoreReducer(official, { type: "session.cleared" });
+    expect(signedOut).toMatchObject({ workspace: "official", selectedOrganisationId: null, role: null, snapshot: null });
+  });
+
+  it("blocks same-tick duplicate commands synchronously and clears pending even when the command throws", async () => {
+    const actions: string[] = [];
+    let release: ((value: { ok: true; value: {}; requestId: string }) => void) | undefined;
+    const runner = createStoreCommandRunner((action) => actions.push(action.type));
+    const requestId = "00000000-0000-4000-8000-000000000060";
+    const first = runner<{}>(requestId, () => new Promise((resolve) => { release = resolve; }));
+    const duplicate = await runner(requestId, async () => ({ ok: true, value: {}, requestId }));
+    expect(duplicate).toMatchObject({ ok: false, kind: "duplicate" });
+    release?.({ ok: true, value: {}, requestId });
+    await first;
+    const thrown = await runner("00000000-0000-4000-8000-000000000061", async () => { throw new Error("fetch failed"); });
+    expect(thrown).toMatchObject({ ok: false, kind: "network", statePreserved: true });
+    expect(actions).toEqual(["command.started", "command.succeeded", "command.started", "command.failed"]);
   });
 });

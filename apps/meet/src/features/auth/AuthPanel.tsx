@@ -1,4 +1,4 @@
-import { useState, type FormEvent } from "react";
+import { useEffect, useState, type FormEvent } from "react";
 import type { MeetSessionContextValue } from "../../app/AuthBoundary";
 
 type AuthMode = "signin" | "signup" | "recovery" | "update-password";
@@ -10,6 +10,10 @@ export function AuthPanel({ authState }: { authState: MeetSessionContextValue })
   const [displayName, setDisplayName] = useState("");
   const [status, setStatus] = useState<string | null>(authState.message);
   const [busy, setBusy] = useState(false);
+
+  useEffect(() => {
+    if (authState.recoveryMode) setMode("update-password");
+  }, [authState.recoveryMode]);
 
   const submit = async (event: FormEvent) => {
     event.preventDefault();

@@ -10,7 +10,7 @@ import {
 
 export type MeetUser = { id: string; email?: string };
 export type MeetSession = { user: MeetUser };
-export type AuthEvent = "SIGNED_IN" | "SIGNED_OUT" | "PASSWORD_RECOVERY" | "TOKEN_REFRESHED" | "USER_UPDATED";
+export type AuthEvent = "INITIAL_SESSION" | "SIGNED_IN" | "SIGNED_OUT" | "PASSWORD_RECOVERY" | "TOKEN_REFRESHED" | "USER_UPDATED";
 
 export interface AuthPort {
   getSession(): Promise<{ session: MeetSession | null }>;
@@ -44,7 +44,8 @@ export function validateMeetEnvironment(environment: Record<string, unknown>): E
   }
   try {
     const parsed = new URL(url);
-    if (parsed.protocol !== "https:" && parsed.hostname !== "localhost" && parsed.hostname !== "127.0.0.1") throw new Error("unsafe protocol");
+    const exactLocalHttp = parsed.protocol === "http:" && (parsed.hostname === "localhost" || parsed.hostname === "127.0.0.1");
+    if (parsed.protocol !== "https:" && !exactLocalHttp) throw new Error("unsafe protocol");
     if (parsed.username || parsed.password || parsed.search || parsed.hash) throw new Error("unsafe URL");
     return { ok: true, value: { url: parsed.origin, publishableKey } };
   } catch {

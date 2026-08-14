@@ -104,9 +104,9 @@ export class SupabaseDataPort implements DataPort {
   }
 
   subscribe(request: RealtimeRequest, onInvalidate: () => void, onStatus?: (status: ConnectionStatus) => void): () => void {
-    const channel = this.client.channel(`meet:${request.organisationId}:${request.meetId}`);
-    for (const table of request.tables) {
-      channel.on("postgres_changes", { event: "*", schema: "public", table, filter: `organisation_id=eq.${request.organisationId}` }, onInvalidate);
+    const channel = this.client.channel(request.channel);
+    for (const target of request.targets) {
+      channel.on("postgres_changes", { event: "*", schema: "public", table: target.table, filter: target.filter }, onInvalidate);
     }
     channel.subscribe((status) => {
       if (status === "SUBSCRIBED") onStatus?.("connected");
@@ -124,6 +124,6 @@ function toMeetSession(session: { user: { id: string; email?: string } } | null)
 }
 
 function mapAuthEvent(event: string): AuthEvent | null {
-  if (event === "SIGNED_IN" || event === "SIGNED_OUT" || event === "PASSWORD_RECOVERY" || event === "TOKEN_REFRESHED" || event === "USER_UPDATED") return event;
+  if (event === "INITIAL_SESSION" || event === "SIGNED_IN" || event === "SIGNED_OUT" || event === "PASSWORD_RECOVERY" || event === "TOKEN_REFRESHED" || event === "USER_UPDATED") return event;
   return null;
 }

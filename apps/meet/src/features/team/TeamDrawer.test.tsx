@@ -1,4 +1,4 @@
-import { render, screen } from "@testing-library/react";
+import { fireEvent, render, screen } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { describe, expect, it, vi } from "vitest";
 import { TeamDrawer, type TeamActions } from "./TeamDrawer";
@@ -33,5 +33,17 @@ describe("TeamDrawer", () => {
     await userEvent.type(screen.getByLabelText(/reason/i), "No longer on the officiating team");
     await userEvent.click(screen.getByRole("button", { name: /confirm removal/i }));
     expect(teamActions.removeMember).toHaveBeenCalledWith("u-viewer", "No longer on the officiating team");
+  });
+
+  it("moves focus into an inert modal removal flow, closes on Escape and restores the trigger", async () => {
+    render(<TeamDrawer role="owner" members={members} actions={actions()} />);
+    const trigger = screen.getByRole("button", { name: /remove viewer two/i });
+    await userEvent.click(trigger);
+    const dialog = screen.getByRole("dialog", { name: /remove viewer two/i });
+    expect(screen.getByLabelText(/reason/i)).toBe(document.activeElement);
+    expect(screen.getByTestId("team-drawer-background").hasAttribute("inert")).toBe(true);
+    fireEvent.keyDown(dialog, { key: "Escape" });
+    expect(screen.queryByRole("dialog")).toBeNull();
+    expect(trigger).toBe(document.activeElement);
   });
 });

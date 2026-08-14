@@ -28,7 +28,9 @@ describe("Meet authentication boundary", () => {
       value: { url: "https://demo.supabase.co", publishableKey: "sb_publishable_example" },
     });
     expect(validateMeetEnvironment({ VITE_SUPABASE_URL: "https://demo.supabase.co", VITE_SUPABASE_ANON_KEY: "legacy" })).toEqual({ ok: false, message: expect.stringMatching(/publishable/i) });
-    expect(validateMeetEnvironment({ VITE_SUPABASE_URL: "https://demo.supabase.co", VITE_SUPABASE_PUBLISHABLE_KEY: "service_role_secret" })).toEqual({ ok: false, message: expect.stringMatching(/publishable/i) });
+    expect(validateMeetEnvironment({ VITE_SUPABASE_URL: "https://demo.supabase.co", VITE_SUPABASE_PUBLISHABLE_KEY: "not-a-publishable-key" })).toEqual({ ok: false, message: expect.stringMatching(/publishable/i) });
+    expect(validateMeetEnvironment({ VITE_SUPABASE_URL: "ftp://localhost:54321", VITE_SUPABASE_PUBLISHABLE_KEY: "sb_publishable_example" }).ok).toBe(false);
+    expect(validateMeetEnvironment({ VITE_SUPABASE_URL: "http://localhost:54321", VITE_SUPABASE_PUBLISHABLE_KEY: "sb_publishable_example" }).ok).toBe(true);
   });
 
   it("scrubs a root PKCE code before exactly one exchange", async () => {
@@ -52,6 +54,15 @@ describe("Meet authentication boundary", () => {
     expect(replaced).toEqual(["/unsafe"]);
     expect(auth.calls).toEqual([]);
     expect(result.kind).toBe("ignored");
+  });
+
+  it("scrubs root callback errors and reports expired links without exchanging", async () => {
+    const auth = fakeAuth();
+    const replaced: string[] = [];
+    const result = await processAuthCallback("https://meet.example/?error=access_denied&error_code=otp_expired", "https://meet.example", (url) => replaced.push(url), auth);
+    expect(replaced).toEqual(["/"]);
+    expect(result).toEqual({ kind: "expired", message: expect.stringMatching(/expired/i) });
+    expect(auth.calls).toEqual([]);
   });
 
   it("exposes signup, verification, login, logout and recovery lifecycles without logging secrets", async () => {

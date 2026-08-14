@@ -10,7 +10,8 @@ export type QueryRequest = {
   order?: readonly { column: string; ascending?: boolean }[];
   signal?: AbortSignal;
 };
-export type RealtimeRequest = { organisationId: string; meetId: string; tables: readonly string[] };
+export type RealtimeTarget = { table: string; filter: string };
+export type RealtimeRequest = { channel: string; targets: readonly RealtimeTarget[] };
 
 export interface DataPort {
   query<T>(request: QueryRequest): Promise<{ data: T[] | null; error: PortError | null }>;
@@ -27,7 +28,16 @@ export type RepositoryFailureKind = "permission" | "validation" | "conflict" | "
 export type CommandReceipt<T> =
   | { ok: true; value: T; requestId: string; advisory?: { kind: "readback"; message: string } }
   | { ok: false; kind: RepositoryFailureKind; message: string; requestId: string; statePreserved: true };
-export type LoadReceipt = { ok: true; value: MeetStateV1 } | { ok: false; kind: RepositoryFailureKind; message: string };
+export type AdvancementHistorySnapshot = {
+  id: string; ruleId: string; sourceBracketId: string; sourceResultVersion: number; stale: boolean;
+  replacedBySnapshotId: string | null; confirmedBy: string; reason: string | null; confirmedAt: string;
+};
+export type AdvancementHistorySelection = {
+  id: string; snapshotId: string; ruleId: string; sourceBracketId: string; sourceCarId: string;
+  destinationBracketId: string; destinationCarId: string | null; rank: number;
+};
+export type AdvancementHistory = { snapshots: AdvancementHistorySnapshot[]; selections: AdvancementHistorySelection[] };
+export type LoadReceipt = { ok: true; value: MeetStateV1; history: AdvancementHistory } | { ok: false; kind: RepositoryFailureKind; message: string };
 
 const TABLES = [
   "meets", "brackets", "participants", "cars", "heats", "advancement_rules",
@@ -123,16 +133,22 @@ export class MeetRepository {
     }
   }
 
-  async execute<T>(name: string, args: Record<string, unknown>, readback?: () => Promise<unknown>): Promise<CommandReceipt<T>> {
+  async execute<T>(name: string, args: Record<string, unknown>, readback?: (value: T) => Promise<unknown>): Promise<CommandReceipt<T>> {
     const requestId = typeof args.request_id === "string" ? args.request_id : createRequestId();
-    const response = await this.port.rpc<T>(name, { ...args, request_id: requestId });
+    let response: { data: T | null; error: PortError | null };
+    try {
+      response = await this.port.rpc<T>(name, { ...args, request_id: requestId });
+    } catch (cause) {
+      const message = safeUnknownMessage(cause);
+      return { ok: false, kind: /unreachable/i.test(message) ? "network" : "network", message, requestId, statePreserved: true };
+    }
     if (response.error || response.data === null) {
       const error = response.error ?? { message: "Empty command response" };
       return { ok: false, kind: mapError(error), message: safeMessage(error), requestId, statePreserved: true };
     }
     if (readback) {
       try {
-        await readback();
+        await readback(response.data);
       } catch {
         return { ok: true, value: response.data, requestId, advisory: { kind: "readback", message: "The change committed, but the latest view could not be refreshed. Do not repeat the command." } };
       }
@@ -141,40 +157,46 @@ export class MeetRepository {
   }
 
   createOrganisation(name: string, slug: string, requestId = createRequestId()) {
-    return this.execute<{ organisation_id: string; version: number }>("create_organisation", { name, slug, request_id: requestId });
+    return this.execute<{ organisation_id: string; version: number }>("create_organisation", { name, slug, request_id: requestId }, (value) => this.readOne("organisations", { id: value.organisation_id }));
   }
   redeemInvitation(code: string, requestId = createRequestId()) {
-    return this.execute<{ organisation_id: string; role: OrganisationRole }>("redeem_invitation", { invitation_code: code, request_id: requestId });
+    return this.execute<{ organisation_id: string; role: OrganisationRole }>("redeem_invitation", { invitation_code: code, request_id: requestId }, (value) => this.readOne("organisation_memberships", { organisation_id: value.organisation_id }));
   }
   createInvitation(organisationId: string, role: OrganisationRole, expiresAt: string, requestId = createRequestId()) {
-    return this.execute<{ invitation_id: string; code: string | null; expires_at: string }>("create_invitation", { target_organisation_id: organisationId, invitation_role: role, invitation_expires_at: expiresAt, request_id: requestId });
+    return this.execute<{ invitation_id: string; code: string | null; expires_at: string }>("create_invitation", { target_organisation_id: organisationId, invitation_role: role, invitation_expires_at: expiresAt, request_id: requestId }, (value) => this.readOne("organisation_invitations", { id: value.invitation_id }));
   }
   revokeInvitation(invitationId: string, requestId = createRequestId()) {
-    return this.execute<{ invitation_id: string; revoked: boolean }>("revoke_invitation", { invitation_id: invitationId, request_id: requestId });
+    return this.execute<{ invitation_id: string; revoked: boolean }>("revoke_invitation", { invitation_id: invitationId, request_id: requestId }, (value) => this.readOne("organisation_invitations", { id: value.invitation_id }));
   }
   removeMembership(organisationId: string, userId: string, reason: string, requestId = createRequestId()) {
-    return this.execute<{ organisation_id: string; user_id: string; removed: boolean }>("remove_membership", { target_organisation_id: organisationId, target_user_id: userId, reason, request_id: requestId });
+    return this.execute<{ organisation_id: string; user_id: string; removed: boolean }>("remove_membership", { target_organisation_id: organisationId, target_user_id: userId, reason, request_id: requestId }, (value) => this.readOne("organisation_memberships", { organisation_id: value.organisation_id }));
   }
   confirmHeatWinner(heatId: string, winnerId: string, laneTimes: Record<string, number | null>, expectedVersion: number, requestId = createRequestId()) {
-    return this.execute<{ heat_id: string; winner_car_id: string; version: number }>("confirm_heat_winner", { heat_id: heatId, winner_id: winnerId, lane_times: laneTimes, expected_version: expectedVersion, request_id: requestId });
+    return this.execute<{ heat_id: string; winner_car_id: string; version: number }>("confirm_heat_winner", { heat_id: heatId, winner_car_id: winnerId, lane_times: laneTimes, expected_version: expectedVersion, request_id: requestId }, (value) => this.readOne("heats", { id: value.heat_id }));
   }
   correctHeatWinner(heatId: string, winnerId: string, laneTimes: Record<string, number | null>, expectedVersion: number, reason: string, requestId = createRequestId()) {
-    return this.execute<{ heat_id: string; winner_car_id: string; version: number }>("correct_heat_winner", { heat_id: heatId, winner_id: winnerId, lane_times: laneTimes, expected_version: expectedVersion, reason, request_id: requestId });
+    return this.execute<{ heat_id: string; winner_car_id: string; version: number }>("correct_heat_winner", { heat_id: heatId, winner_car_id: winnerId, lane_times: laneTimes, expected_version: expectedVersion, reason, request_id: requestId }, (value) => this.readOne("heats", { id: value.heat_id }));
   }
   confirmAdvancement(ruleId: string, sourceResultVersion: number, expectedVersion: number, selections: readonly { sourceCarId: string; destinationBracketId: string; rank: number }[], reason: string | null, requestId = createRequestId()) {
-    return this.execute<{ snapshot_id: string; rule_id: string; version: number }>("confirm_advancement", { rule_id: ruleId, source_result_version: sourceResultVersion, expected_version: expectedVersion, selections, reason, request_id: requestId });
+    return this.execute<{ snapshot_id: string; rule_id: string; version: number }>("confirm_advancement", { rule_id: ruleId, source_result_version: sourceResultVersion, expected_version: expectedVersion, selections, reason, request_id: requestId }, (value) => this.readOne("advancement_snapshots", { id: value.snapshot_id }));
   }
   replaceAdvancement(ruleId: string, sourceResultVersion: number, expectedVersion: number, selections: readonly { sourceCarId: string; destinationBracketId: string; rank: number }[], reason: string, requestId = createRequestId()) {
-    return this.execute<{ snapshot_id: string; rule_id: string; version: number }>("replace_advancement", { rule_id: ruleId, source_result_version: sourceResultVersion, expected_version: expectedVersion, selections, reason, request_id: requestId });
+    return this.execute<{ snapshot_id: string; rule_id: string; version: number }>("replace_advancement", { rule_id: ruleId, source_result_version: sourceResultVersion, expected_version: expectedVersion, selections, reason, request_id: requestId }, (value) => this.readOne("advancement_snapshots", { id: value.snapshot_id }));
   }
   recordSecurityEvent(organisationId: string, eventName: "account.sign_in" | "account.password_changed" | "account.recovery_completed" | "account.email_confirmed", subjectUserId: string | null, metadata: Record<string, JsonValue>, requestId = createRequestId()) {
-    return this.execute<{ ok: boolean; security_event_id?: string; event_type?: string }>("record_security_event", { target_organisation_id: organisationId, event_name: eventName, subject_user_id: subjectUserId, event_metadata: metadata, request_id: requestId });
+    return this.execute<{ ok: boolean; security_event_id?: string; event_type?: string }>("record_security_event", { target_organisation_id: organisationId, event_name: eventName, subject_user_id: subjectUserId, event_metadata: metadata, request_id: requestId }, (value) => this.readOne("security_events", value.security_event_id ? { id: value.security_event_id } : { organisation_id: organisationId }));
+  }
+
+  private async readOne(table: string, filters: Record<string, FilterValue>): Promise<void> {
+    const result = await this.port.query<Record<string, unknown>>({ table, filters });
+    if (result.error) throw new Error(safeMessage(result.error));
   }
 
   watchMeet(
     organisationId: string,
     meetId: string,
     handlers: {
+      bracketIds: readonly string[];
       onSnapshot(snapshot: MeetStateV1, syncedAt: string): void;
       onStatus(status: ConnectionStatus): void;
       isDirty(): boolean;
@@ -208,7 +230,16 @@ export class MeetRepository {
       }, 60);
     };
     handlers.onStatus("connecting");
-    const unsubscribe = this.port.subscribe({ organisationId, meetId, tables: TABLES }, refresh, handlers.onStatus);
+    const bracketFilter = `bracket_id=in.(${handlers.bracketIds.join(",")})`;
+    const targets: RealtimeTarget[] = [
+      { table: "meets", filter: `id=eq.${meetId}` },
+      ...["brackets", "advancement_rules", "advancement_rule_destinations", "advancement_snapshots", "advancement_selections", "audit_events"].map((table) => ({ table, filter: `meet_id=eq.${meetId}` })),
+      ...(handlers.bracketIds.length > 0 ? ["participants", "cars", "heats"].map((table) => ({ table, filter: bracketFilter })) : []),
+      { table: "organisations", filter: `id=eq.${organisationId}` },
+      { table: "organisation_memberships", filter: `organisation_id=eq.${organisationId}` },
+      { table: "organisation_invitations", filter: `organisation_id=eq.${organisationId}` },
+    ];
+    const unsubscribe = this.port.subscribe({ channel: `meet:${organisationId}:${meetId}`, targets }, refresh, handlers.onStatus);
     return () => {
       closed = true;
       generation += 1;
@@ -232,6 +263,8 @@ export function hydrateMeetState(rows: Record<string, unknown[]>, organisationId
       }
     }
   }
+  const hostedIssue = validateHostedRows(rows);
+  if (hostedIssue) return { ok: false, kind: "validation", message: hostedIssue };
   const meetRows = getRows(rows, "meets");
   if (meetRows.length !== 1 || meetRows[0]?.id !== meetId) return { ok: false, kind: "validation", message: "The requested meet was not available." };
   const meet = meetRows[0]!;
@@ -242,6 +275,8 @@ export function hydrateMeetState(rows: Record<string, unknown[]>, organisationId
       return { ok: false, kind: "validation", message: `${table} contained rows outside this meet.` };
     }
   }
+  const historyResult = buildAdvancementHistory(rows);
+  if (!historyResult.ok) return historyResult;
   const currentSnapshots = getRows(rows, "advancement_snapshots").filter((row) => row.replaced_by_snapshot_id == null).sort(byString("confirmed_at", "id"));
   const currentSnapshotIds = new Set(currentSnapshots.map((row) => asString(row.id)));
   const selections = getRows(rows, "advancement_selections").filter((row) => currentSnapshotIds.has(asString(row.snapshot_id))).sort(byNumberThenId("rank"));
@@ -298,7 +333,102 @@ export function hydrateMeetState(rows: Record<string, unknown[]>, organisationId
     })),
   };
   const validation = validateMeetState(candidate);
-  return validation.success ? { ok: true, value: validation.data } : { ok: false, kind: "validation", message: `Hosted meet data failed validation: ${validation.issues[0]?.message ?? "unknown issue"}` };
+  return validation.success ? { ok: true, value: validation.data, history: historyResult.history } : { ok: false, kind: "validation", message: `Hosted meet data failed validation: ${validation.issues[0]?.message ?? "unknown issue"}` };
+}
+
+function validateHostedRows(rows: Record<string, unknown[]>): string | null {
+  const fail = (table: string, field: string) => `Hosted ${table}.${field} has an invalid type or value.`;
+  const requiredStrings = (row: Record<string, unknown>, table: string, fields: readonly string[]) => fields.find((field) => typeof row[field] !== "string" || (row[field] as string).length === 0) ? fail(table, fields.find((field) => typeof row[field] !== "string" || (row[field] as string).length === 0)!) : null;
+  const positiveInteger = (value: unknown) => typeof value === "number" && Number.isSafeInteger(value) && value > 0;
+  const nullableString = (value: unknown) => value === null || typeof value === "string";
+  for (const row of getRows(rows, "meets")) {
+    const issue = requiredStrings(row, "meets", ["id", "organisation_id", "name", "meet_date", "created_at", "updated_at"]);
+    if (issue) return issue;
+    if (!isStatus(row.status)) return fail("meets", "status");
+    if (!positiveInteger(row.version)) return fail("meets", "version");
+    if (!isRecord(row.settings) || typeof row.venue !== "string") return fail("meets", "settings");
+  }
+  for (const row of getRows(rows, "brackets")) {
+    const issue = requiredStrings(row, "brackets", ["id", "organisation_id", "meet_id", "name", "created_at", "updated_at"]);
+    if (issue) return issue;
+    if (!isStage(row.stage)) return fail("brackets", "stage");
+    if (!isStatus(row.status)) return fail("brackets", "status");
+    if (!positiveInteger(row.display_order) || !positiveInteger(row.version) || !isRecord(row.settings)) return fail("brackets", "number");
+  }
+  for (const row of getRows(rows, "participants")) {
+    const issue = requiredStrings(row, "participants", ["id", "organisation_id", "bracket_id", "name"]);
+    if (issue) return issue;
+    if (["email", "phone", "notes"].some((field) => typeof row[field] !== "string")) return fail("participants", "text");
+  }
+  for (const row of getRows(rows, "cars")) {
+    const issue = requiredStrings(row, "cars", ["id", "organisation_id", "bracket_id", "participant_id", "name"]);
+    if (issue) return issue;
+    if (!positiveInteger(row.car_number) || typeof row.active !== "boolean") return fail("cars", "number");
+    if (["source_bracket_id", "source_car_id", "rule_id", "snapshot_id"].some((field) => !nullableString(row[field]))) return fail("cars", "lineage");
+  }
+  for (const row of getRows(rows, "heats")) {
+    const issue = requiredStrings(row, "heats", ["id", "organisation_id", "bracket_id", "lane_1_car_id"]);
+    if (issue) return issue;
+    if (row.phase !== "preliminary" && row.phase !== "final") return fail("heats", "phase");
+    if (row.status !== "pending" && row.status !== "confirmed") return fail("heats", "status");
+    if (!positiveInteger(row.round_number) || !positiveInteger(row.heat_number) || !positiveInteger(row.version)) return fail("heats", "number");
+    if (["lane_2_car_id", "lane_3_car_id", "winner_car_id"].some((field) => !nullableString(row[field]))) return fail("heats", "car_id");
+    if (["lane_1_time", "lane_2_time", "lane_3_time"].some((field) => row[field] !== null && (typeof row[field] !== "number" || !Number.isFinite(row[field])))) return fail("heats", "time");
+  }
+  for (const row of getRows(rows, "advancement_rules")) {
+    const issue = requiredStrings(row, "advancement_rules", ["id", "organisation_id", "meet_id", "source_bracket_id"]);
+    if (issue) return issue;
+    if (!positiveInteger(row.top_n) || !positiveInteger(row.destination_capacity) || !positiveInteger(row.version)) return fail("advancement_rules", "number");
+    if (row.status !== "active" && row.status !== "disabled") return fail("advancement_rules", "status");
+  }
+  for (const row of getRows(rows, "advancement_rule_destinations")) {
+    const issue = requiredStrings(row, "advancement_rule_destinations", ["organisation_id", "meet_id", "rule_id", "destination_bracket_id"]);
+    if (issue) return issue;
+    if (!positiveInteger(row.destination_order)) return fail("advancement_rule_destinations", "destination_order");
+  }
+  for (const row of getRows(rows, "advancement_snapshots")) {
+    const issue = requiredStrings(row, "advancement_snapshots", ["id", "organisation_id", "meet_id", "rule_id", "source_bracket_id", "confirmed_by", "confirmed_at"]);
+    if (issue) return issue;
+    if (!positiveInteger(row.source_result_version) || typeof row.stale !== "boolean" || !nullableString(row.replaced_by_snapshot_id) || !nullableString(row.reason)) return fail("advancement_snapshots", "state");
+  }
+  for (const row of getRows(rows, "advancement_selections")) {
+    const issue = requiredStrings(row, "advancement_selections", ["id", "organisation_id", "meet_id", "snapshot_id", "rule_id", "source_bracket_id", "source_car_id", "destination_bracket_id"]);
+    if (issue) return issue;
+    if (!positiveInteger(row.rank) || !nullableString(row.destination_car_id)) return fail("advancement_selections", "state");
+  }
+  for (const row of getRows(rows, "audit_events")) {
+    const issue = requiredStrings(row, "audit_events", ["id", "organisation_id", "meet_id", "actor_id", "action", "entity_type", "entity_id", "occurred_at"]);
+    if (issue) return issue;
+    if (!nullableString(row.reason) || !("before_state" in row) || !("after_state" in row)) return fail("audit_events", "state");
+  }
+  return null;
+}
+
+function buildAdvancementHistory(rows: Record<string, unknown[]>): { ok: true; history: AdvancementHistory } | { ok: false; kind: "validation"; message: string } {
+  const snapshots = getRows(rows, "advancement_snapshots");
+  const selections = getRows(rows, "advancement_selections");
+  const rules = new Set(getRows(rows, "advancement_rules").map((row) => asString(row.id)));
+  const brackets = new Set(getRows(rows, "brackets").map((row) => asString(row.id)));
+  const cars = new Set(getRows(rows, "cars").map((row) => asString(row.id)));
+  const snapshotIds = new Set(snapshots.map((row) => asString(row.id)));
+  if (snapshotIds.size !== snapshots.length) return { ok: false, kind: "validation", message: "Advancement history contains duplicate snapshots." };
+  for (const snapshot of snapshots) {
+    if (!rules.has(asString(snapshot.rule_id)) || !brackets.has(asString(snapshot.source_bracket_id))) return { ok: false, kind: "validation", message: "Advancement history references an unknown rule or source." };
+    const replacement = nullableString(snapshot.replaced_by_snapshot_id);
+    if (replacement && !snapshotIds.has(replacement)) return { ok: false, kind: "validation", message: "Advancement history replacement is missing." };
+  }
+  for (const selection of selections) {
+    const snapshot = snapshots.find((candidate) => candidate.id === selection.snapshot_id);
+    if (!snapshot || snapshot.rule_id !== selection.rule_id || snapshot.source_bracket_id !== selection.source_bracket_id) return { ok: false, kind: "validation", message: "Advancement history selection does not match its snapshot." };
+    if (!cars.has(asString(selection.source_car_id)) || !brackets.has(asString(selection.destination_bracket_id))) return { ok: false, kind: "validation", message: "Advancement history selection references an unknown car or destination." };
+  }
+  return {
+    ok: true,
+    history: {
+      snapshots: snapshots.sort(byString("confirmed_at", "id")).map((snapshot) => ({ id: asString(snapshot.id), ruleId: asString(snapshot.rule_id), sourceBracketId: asString(snapshot.source_bracket_id), sourceResultVersion: snapshot.source_result_version as number, stale: snapshot.stale as boolean, replacedBySnapshotId: nullableString(snapshot.replaced_by_snapshot_id), confirmedBy: asString(snapshot.confirmed_by), reason: nullableString(snapshot.reason), confirmedAt: asString(snapshot.confirmed_at) })),
+      selections: selections.sort(byString("snapshot_id", "id")).map((selection) => ({ id: asString(selection.id), snapshotId: asString(selection.snapshot_id), ruleId: asString(selection.rule_id), sourceBracketId: asString(selection.source_bracket_id), sourceCarId: asString(selection.source_car_id), destinationBracketId: asString(selection.destination_bracket_id), destinationCarId: nullableString(selection.destination_car_id), rank: selection.rank as number })),
+    },
+  };
 }
 
 function eventSettings(settings: Record<string, unknown>): EventStateV1["settings"] {
@@ -310,6 +440,9 @@ function eventSettings(settings: Record<string, unknown>): EventStateV1["setting
 }
 
 function getRows(rows: Record<string, unknown[]>, table: string): Record<string, unknown>[] { return (rows[table] ?? []).map(asRecord); }
+function isRecord(value: unknown): value is Record<string, unknown> { return value !== null && typeof value === "object" && !Array.isArray(value); }
+function isStatus(value: unknown): value is "setup" | "running" | "completed" { return value === "setup" || value === "running" || value === "completed"; }
+function isStage(value: unknown): value is "qualifier" | "semifinal" | "final" { return value === "qualifier" || value === "semifinal" || value === "final"; }
 function asRecord(value: unknown): Record<string, unknown> { return value !== null && typeof value === "object" && !Array.isArray(value) ? value as Record<string, unknown> : {}; }
 function asString(value: unknown): string { return typeof value === "string" ? value : ""; }
 function nullableString(value: unknown): string | null { return typeof value === "string" && value.length > 0 ? value : null; }
