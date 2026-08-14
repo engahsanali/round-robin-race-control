@@ -38,6 +38,7 @@ describe("Meet reporting", () => {
     const domain = await meetDomain();
     const meet = state([bracket("q", "qualifier", [{ id: "formula", number: 1 }])]);
     meet.meet.name = "<script>alert(1)</script> Race";
+    meet.brackets[0]!.event.participants[0]!.name = "Private Driver Name";
     meet.brackets[0]!.event.participants[0]!.email = "secret@example.test";
     meet.brackets[0]!.event.participants[0]!.phone = "0400000000";
     meet.auditLog.push({ id: "audit-1", timestamp: "2026-08-14T10:00:00Z", actorId: "private-actor", action: "meet.updated", entityType: "meet", entityId: meet.meet.id, reason: "private reason", before: { private: "before" }, after: { private: "after" } });
@@ -49,12 +50,14 @@ describe("Meet reporting", () => {
       "advancement.csv", "final-results.csv", "audit.csv", "summary.txt", "printable-report.html", "manifest.json",
     ]);
     expect(operations.find((file: any) => file.name === "registrations.csv").text).toContain("secret@example.test");
+    expect(operations.find((file: any) => file.name === "registrations.csv").text).toContain("Private Driver Name");
 
     const publicPack = await domain.buildMeetEventPack(hosted, { audience: "public", exportedAt: "2026-08-14T12:00:00.000Z", applicationVersion: "0.1.0" });
     const publicText = publicPack.map((file: any) => file.text).join("\n");
     expect(publicPack.some((file: any) => file.name === "backup.json")).toBe(false);
     expect(publicText).not.toContain("secret@example.test");
     expect(publicText).not.toContain("0400000000");
+    expect(publicText).not.toContain("Private Driver Name");
     expect(publicText).not.toContain("private-actor");
     expect(publicText).not.toContain('"private":"before"');
     const html = publicPack.find((file: any) => file.name === "printable-report.html").text;

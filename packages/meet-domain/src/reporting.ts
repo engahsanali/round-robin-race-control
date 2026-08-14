@@ -54,7 +54,7 @@ export async function buildMeetEventPack(
     csvFile("registrations.csv", buildRegistrationReportRows(state, options.audience)),
     csvFile("schedule.csv", buildScheduleRows(state)),
     csvFile("results.csv", buildResultRows(state, false)),
-    csvFile("standings.csv", buildStandingsReportRows(state)),
+    csvFile("standings.csv", buildStandingsReportRows(state, options.audience)),
     csvFile("advancement.csv", buildAdvancementRows(bundle)),
     csvFile("final-results.csv", buildResultRows(state, true)),
     csvFile("audit.csv", buildAuditReportRows(state, options.audience)),
@@ -74,10 +74,9 @@ export async function buildMeetEventPack(
 
 export function buildRegistrationReportRows(state: MeetStateV1, audience: MeetReportAudience): CsvRow[] {
   if (audience === "operations") return buildMeetRegistrationRows(state);
-  const rows: CsvRow[] = [["Bracket", "Participant", "Car number", "Car", "Active"]];
+  const rows: CsvRow[] = [["Bracket", "Car number", "Car", "Active"]];
   for (const bracket of orderedBrackets(state)) {
-    const participants = new Map(bracket.event.participants.map((participant) => [participant.id, participant]));
-    for (const entry of orderedEntries(bracket.event.entries)) rows.push([bracket.name, participants.get(entry.participantId)?.name ?? "", entry.carNumber, entry.name, entry.active]);
+    for (const entry of orderedEntries(bracket.event.entries)) rows.push([bracket.name, entry.carNumber, entry.name, entry.active]);
   }
   return rows;
 }
@@ -94,11 +93,15 @@ export function buildResultRows(state: MeetStateV1, finalsOnly: boolean): CsvRow
   return rows;
 }
 
-export function buildStandingsReportRows(state: MeetStateV1): CsvRow[] {
-  const rows: CsvRow[] = [["Bracket", "Stage", "Phase", "Rank", "Tied", "Car ID", "Car number", "Car", "Participant", "Total wins", "Matches won", "Completed heats", "Average time ms", "Best time ms"]];
+export function buildStandingsReportRows(state: MeetStateV1, audience: MeetReportAudience = "operations"): CsvRow[] {
+  const rows: CsvRow[] = [audience === "operations"
+    ? ["Bracket", "Stage", "Phase", "Rank", "Tied", "Car ID", "Car number", "Car", "Participant", "Total wins", "Matches won", "Completed heats", "Average time ms", "Best time ms"]
+    : ["Bracket", "Stage", "Phase", "Rank", "Tied", "Car number", "Car", "Total wins", "Matches won", "Completed heats", "Average time ms", "Best time ms"]];
   for (const bracket of orderedBrackets(state)) for (const phase of ["preliminary", "final"] as const) {
     const standings = calculateRankings(calculateStandings(bracket.event, phase), bracket.event.settings);
-    for (const standing of standings) rows.push([bracket.name, bracket.stage, phase, standing.rank, standing.isTied, standing.carId, standing.carNumber, standing.carName, standing.participantName, standing.totalWins, standing.matchesWon, standing.completedHeats, standing.averageTimeMs, standing.bestTimeMs]);
+    for (const standing of standings) rows.push(audience === "operations"
+      ? [bracket.name, bracket.stage, phase, standing.rank, standing.isTied, standing.carId, standing.carNumber, standing.carName, standing.participantName, standing.totalWins, standing.matchesWon, standing.completedHeats, standing.averageTimeMs, standing.bestTimeMs]
+      : [bracket.name, bracket.stage, phase, standing.rank, standing.isTied, standing.carNumber, standing.carName, standing.totalWins, standing.matchesWon, standing.completedHeats, standing.averageTimeMs, standing.bestTimeMs]);
   }
   return rows;
 }
@@ -129,8 +132,11 @@ export function buildMeetTextSummary(state: MeetStateV1): string {
 export function buildPrintableMeetHtml(state: MeetStateV1, audience: MeetReportAudience): string {
   const sheets = orderedBrackets(state).map((bracket) => {
     const participants = new Map(bracket.event.participants.map((participant) => [participant.id, participant]));
-    const rows = orderedEntries(bracket.event.entries).map((entry) => `<tr><td>${escapeHtml(String(entry.carNumber))}</td><td>${escapeHtml(entry.name)}</td><td>${escapeHtml(participants.get(entry.participantId)?.name ?? "")}</td><td>${entry.active ? "Active" : "Withdrawn"}</td></tr>`).join("");
-    return `<section><h2>${escapeHtml(bracket.name)} · ${escapeHtml(bracket.stage)}</h2><p>Status: ${escapeHtml(bracket.status)}</p><table><thead><tr><th>Car</th><th>Name</th><th>Participant</th><th>Status</th></tr></thead><tbody>${rows}</tbody></table></section>`;
+    const rows = orderedEntries(bracket.event.entries).map((entry) => audience === "operations"
+      ? `<tr><td>${escapeHtml(String(entry.carNumber))}</td><td>${escapeHtml(entry.name)}</td><td>${escapeHtml(participants.get(entry.participantId)?.name ?? "")}</td><td>${entry.active ? "Active" : "Withdrawn"}</td></tr>`
+      : `<tr><td>${escapeHtml(String(entry.carNumber))}</td><td>${escapeHtml(entry.name)}</td><td>${entry.active ? "Active" : "Withdrawn"}</td></tr>`).join("");
+    const participantHeading = audience === "operations" ? "<th>Participant</th>" : "";
+    return `<section><h2>${escapeHtml(bracket.name)} · ${escapeHtml(bracket.stage)}</h2><p>Status: ${escapeHtml(bracket.status)}</p><table><thead><tr><th>Car</th><th>Name</th>${participantHeading}<th>Status</th></tr></thead><tbody>${rows}</tbody></table></section>`;
   }).join("");
   return `<!doctype html><html lang="en"><head><meta charset="utf-8"><title>${escapeHtml(state.meet.name)} report</title><style>body{font-family:system-ui,sans-serif;color:#111}table{width:100%;border-collapse:collapse}th,td{border:1px solid #999;padding:.35rem;text-align:left}section{break-after:page}footer{margin-top:2rem}</style></head><body><header><h1>${escapeHtml(state.meet.name)}</h1><p>${escapeHtml(state.meet.date)} · ${escapeHtml(state.meet.venue)} · ${escapeHtml(state.meet.status)}</p><p>Report audience: ${escapeHtml(audience)}</p></header>${sheets}<footer>${MEET_CREATOR_CREDIT}</footer></body></html>\n`;
 }

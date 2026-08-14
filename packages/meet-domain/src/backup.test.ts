@@ -24,6 +24,26 @@ function manyBracketBundle() {
   return bundle(state(brackets));
 }
 
+function progressionBundle(): any {
+  const q = bracket("q", "qualifier", [{ id: "q-car", number: 1 }]);
+  const other = bracket("other", "qualifier", [{ id: "other-car", number: 1 }]);
+  const final = bracket("f", "final", [{ id: "f-car", number: 1 }, { id: "f-old", number: 2 }]);
+  final.event.entries[1]!.active = false;
+  final.lineage = [{ sourceBracketId: "q", sourceCarId: "q-car", ruleId: "q-f", snapshotId: "snapshot-current" }];
+  q.event.matches = [{ id: "q-heat", phase: "preliminary", matchNumber: 1, heatNumber: 1, lanes: ["q-car", null, null], status: "scheduled", winnerEntryId: null, laneTimesMs: [null, null, null], notes: "" }];
+  const meet = state([q, other, final]);
+  meet.advancementRules = [{ id: "q-f", version: 1, sourceBracketId: "q", destinationBracketIds: ["f"], topN: 1, destinationCapacity: 2, destinationOrder: ["f"], status: "active" }];
+  meet.advancementSnapshots = [{ id: "snapshot-current", ruleId: "q-f", sourceBracketId: "q", sourceResultVersion: 1, selections: [{ sourceCarId: "q-car", destinationBracketId: "f", rank: 1 }], confirmedBy: "actor", reason: null, confirmedAt: "2026-08-14T11:00:00Z", stale: false }];
+  return {
+    state: meet,
+    history: {
+      snapshots: [{ id: "snapshot-current", ruleId: "q-f", sourceBracketId: "q", sourceResultVersion: 1, stale: false, replacedBySnapshotId: null, confirmedBy: "actor", reason: null, confirmedAt: "2026-08-14T11:00:00Z" }],
+      selections: [{ id: "selection-current", snapshotId: "snapshot-current", ruleId: "q-f", sourceBracketId: "q", sourceCarId: "q-car", destinationBracketId: "f", destinationCarId: "f-car", rank: 1 }],
+    },
+    heatVersions: { "q-heat": 1 },
+  };
+}
+
 describe("Meet portable backup", () => {
   test("serializes a canonical checksummed envelope and round-trips 15 brackets with repeated car numbers", async () => {
     const api = await domain();
@@ -94,6 +114,39 @@ describe("Meet portable backup", () => {
     for (let index = 0; index < 130; index += 1) { const child: Record<string, unknown> = {}; nested.child = child; nested = child; }
     expect((await api.parseMeetBackup(JSON.stringify(root))).issues[0].code).toBe("import_depth_limit");
   });
+
+  test("requires heatVersions to contain exactly every heat", async () => {
+    const api = await domain();
+    const missing = progressionBundle();
+    missing.heatVersions = {};
+    await expect(api.serializeMeetBackup(missing, { exportedAt: "2026-08-14T12:00:00.000Z", applicationVersion: "0.1.0" })).rejects.toThrow(/heat version/i);
+  });
+
+  test("rejects historical selections whose cars or destinations do not match the rule graph", async () => {
+    const api = await domain();
+    const wrongSource = progressionBundle();
+    wrongSource.history.snapshots.unshift({ ...wrongSource.history.snapshots[0]!, id: "snapshot-old", replacedBySnapshotId: "snapshot-current" });
+    wrongSource.history.selections.unshift({ ...wrongSource.history.selections[0]!, id: "selection-old", snapshotId: "snapshot-old", sourceCarId: "other-car", destinationCarId: "f-old" });
+    await expect(api.serializeMeetBackup(wrongSource, { exportedAt: "2026-08-14T12:00:00.000Z", applicationVersion: "0.1.0" })).rejects.toThrow(/source bracket/i);
+
+    const wrongDestination = progressionBundle();
+    wrongDestination.history.selections[0] = { ...wrongDestination.history.selections[0]!, destinationBracketId: "other", destinationCarId: "other-car" };
+    await expect(api.serializeMeetBackup(wrongDestination, { exportedAt: "2026-08-14T12:00:00.000Z", applicationVersion: "0.1.0" })).rejects.toThrow(/destination/i);
+  });
+
+  test("rejects duplicate historical source, rank or destination cars and replacement cycles", async () => {
+    const api = await domain();
+    const duplicate = progressionBundle();
+    duplicate.history.snapshots.unshift({ ...duplicate.history.snapshots[0]!, id: "snapshot-old", replacedBySnapshotId: "snapshot-current" });
+    duplicate.history.selections.unshift({ ...duplicate.history.selections[0]!, id: "selection-old", snapshotId: "snapshot-old", destinationCarId: "f-old" });
+    duplicate.history.selections.push({ ...duplicate.history.selections[0]!, id: "selection-duplicate", destinationCarId: "f-car" });
+    await expect(api.serializeMeetBackup(duplicate, { exportedAt: "2026-08-14T12:00:00.000Z", applicationVersion: "0.1.0" })).rejects.toThrow(/unique/i);
+
+    const cycle = progressionBundle();
+    cycle.history.snapshots[0] = { ...cycle.history.snapshots[0]!, replacedBySnapshotId: "snapshot-old" };
+    cycle.history.snapshots.push({ ...cycle.history.snapshots[0]!, id: "snapshot-old", replacedBySnapshotId: "snapshot-current" });
+    await expect(api.serializeMeetBackup(cycle, { exportedAt: "2026-08-14T12:00:00.000Z", applicationVersion: "0.1.0" })).rejects.toThrow(/cycle/i);
+  });
 });
 
 describe("Meet compatible import preview", () => {
@@ -121,5 +174,22 @@ describe("Meet compatible import preview", () => {
     expect(result.state.brackets[0]).toMatchObject({ stage: "qualifier" });
     expect(result.state.brackets[0].event.payments).toEqual([]);
     expect(result.state.brackets[0].event.entries.map((entry: any) => entry.carNumber)).toEqual([7, 8]);
+  });
+
+  test("keeps EventState categories internal to one qualifier and remaps category prices consistently", async () => {
+    const api = await domain();
+    const source = event("solo-event", [{ id: "car-1", number: 7 }, { id: "car-2", number: 8 }]);
+    source.entries[0]!.categoryId = "junior";
+    source.entries[1]!.categoryId = "senior";
+    source.settings.prices = { junior: 500, senior: 700 };
+    const result = await api.previewMeetImport(JSON.stringify(source));
+
+    expect(result.ok).toBe(true);
+    if (!result.ok) return;
+    expect(result.state.brackets).toHaveLength(1);
+    const mappedEvent = result.state.brackets[0]!.event;
+    expect(new Set(mappedEvent.entries.map((entry: any) => entry.categoryId)).size).toBe(2);
+    expect(Object.keys(mappedEvent.settings.prices).sort()).toEqual(mappedEvent.entries.map((entry: any) => entry.categoryId).sort());
+    expect(Object.values(mappedEvent.settings.prices).sort()).toEqual([500, 700]);
   });
 });

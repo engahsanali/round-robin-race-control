@@ -161,6 +161,7 @@ function validateBundleRelations(bundle: PortableHostedMeetBundle): ValidationIs
   const rules = new Map(bundle.state.advancementRules.map((rule) => [rule.id, rule]));
   const brackets = new Map(bundle.state.brackets.map((bracket) => [bracket.id, bracket]));
   const cars = new Map(bundle.state.brackets.flatMap((bracket) => bracket.event.entries.map((car) => [car.id, car] as const)));
+  const carBrackets = new Map(bundle.state.brackets.flatMap((bracket) => bracket.event.entries.map((car) => [car.id, bracket.id] as const)));
   const heatIds = new Set(bundle.state.brackets.flatMap((bracket) => [...bracket.event.matches, ...bracket.event.finals].map((heat) => heat.id)));
   const snapshots = new Map<string, AdvancementHistorySnapshot>();
   bundle.history.snapshots.forEach((snapshot, index) => {
@@ -172,16 +173,36 @@ function validateBundleRelations(bundle: PortableHostedMeetBundle): ValidationIs
   for (const [index, snapshot] of bundle.history.snapshots.entries()) {
     if (snapshot.replacedBySnapshotId) {
       const replacement = snapshots.get(snapshot.replacedBySnapshotId);
-      if (!replacement || replacement.ruleId !== snapshot.ruleId || replacement.sourceBracketId !== snapshot.sourceBracketId) issues.push(issue("invalid_history_replacement", ["history", "snapshots", index, "replacedBySnapshotId"], "Historical replacement must reference a snapshot for the same rule and source"));
+      if (snapshot.replacedBySnapshotId === snapshot.id || !replacement || replacement.ruleId !== snapshot.ruleId || replacement.sourceBracketId !== snapshot.sourceBracketId) issues.push(issue("invalid_history_replacement", ["history", "snapshots", index, "replacedBySnapshotId"], "Historical replacement must reference another snapshot for the same rule and source"));
+      const visited = new Set([snapshot.id]);
+      let cursor: AdvancementHistorySnapshot | undefined = replacement;
+      while (cursor) {
+        if (visited.has(cursor.id)) {
+          issues.push(issue("history_replacement_cycle", ["history", "snapshots", index, "replacedBySnapshotId"], "Historical replacement chains must not contain a cycle"));
+          break;
+        }
+        visited.add(cursor.id);
+        cursor = cursor.replacedBySnapshotId ? snapshots.get(cursor.replacedBySnapshotId) : undefined;
+      }
     }
   }
   const selectionIds = new Set<string>();
+  const snapshotSelectionKeys = new Map<string, { sources: Set<string>; ranks: Set<number>; destinations: Set<string> }>();
   bundle.history.selections.forEach((selection, index) => {
     if (selectionIds.has(selection.id)) issues.push(issue("duplicate_history_selection", ["history", "selections", index, "id"], "Historical selection ids must be unique"));
     selectionIds.add(selection.id);
     const snapshot = snapshots.get(selection.snapshotId);
     if (!snapshot || snapshot.ruleId !== selection.ruleId || snapshot.sourceBracketId !== selection.sourceBracketId) issues.push(issue("invalid_history_selection", ["history", "selections", index], "Historical selection does not match its snapshot"));
     if (!cars.has(selection.sourceCarId) || !brackets.has(selection.destinationBracketId) || (selection.destinationCarId && !cars.has(selection.destinationCarId))) issues.push(issue("unknown_history_entity", ["history", "selections", index], "Historical selection references an unknown car or bracket"));
+    if (snapshot && carBrackets.get(selection.sourceCarId) !== snapshot.sourceBracketId) issues.push(issue("invalid_history_source_car", ["history", "selections", index, "sourceCarId"], "Historical source car must belong to the snapshot source bracket"));
+    const rule = snapshot ? rules.get(snapshot.ruleId) : undefined;
+    if (rule && !rule.destinationBracketIds.includes(selection.destinationBracketId)) issues.push(issue("invalid_history_destination", ["history", "selections", index, "destinationBracketId"], "Historical destination must be allowed by the advancement rule"));
+    if (selection.destinationCarId && carBrackets.get(selection.destinationCarId) !== selection.destinationBracketId) issues.push(issue("invalid_history_destination_car", ["history", "selections", index, "destinationCarId"], "Historical destination car must belong to the selected destination bracket"));
+    const keys = snapshotSelectionKeys.get(selection.snapshotId) ?? { sources: new Set<string>(), ranks: new Set<number>(), destinations: new Set<string>() };
+    if (keys.sources.has(selection.sourceCarId) || keys.ranks.has(selection.rank) || (selection.destinationCarId !== null && keys.destinations.has(selection.destinationCarId))) issues.push(issue("duplicate_history_selection_value", ["history", "selections", index], "Historical source cars, ranks and destination cars must be unique within a snapshot"));
+    keys.sources.add(selection.sourceCarId); keys.ranks.add(selection.rank);
+    if (selection.destinationCarId !== null) keys.destinations.add(selection.destinationCarId);
+    snapshotSelectionKeys.set(selection.snapshotId, keys);
   });
   for (const [index, current] of bundle.state.advancementSnapshots.entries()) {
     const historical = snapshots.get(current.id);
@@ -191,6 +212,9 @@ function validateBundleRelations(bundle: PortableHostedMeetBundle): ValidationIs
   }
   for (const [heatId, version] of Object.entries(bundle.heatVersions)) {
     if (!heatIds.has(heatId) || !Number.isSafeInteger(version) || version <= 0) issues.push(issue("invalid_heat_version", ["heatVersions", heatId], "Heat versions must identify a known heat with a positive safe integer"));
+  }
+  for (const heatId of heatIds) {
+    if (!Object.prototype.hasOwnProperty.call(bundle.heatVersions, heatId)) issues.push(issue("missing_heat_version", ["heatVersions", heatId], "Heat versions must include exactly every heat"));
   }
   return issues;
 }
@@ -244,22 +268,28 @@ async function mapEventToMeet(source: EventStateV1): Promise<PortableHostedMeetB
   const carIds = await idMap(source.entries.map((entry) => entry.id), `${seed}:car`);
   const heatIds = await idMap([...source.matches, ...source.finals].map((heat) => heat.id), `${seed}:heat`);
   const auditIds = await idMap(source.auditLog.map((event) => event.id), `${seed}:audit`);
+  const categoryIds = await idMap([...source.entries.map((entry) => entry.categoryId), ...Object.keys(source.settings.prices)], `${seed}:category`);
   const remapHeat = (heat: EventStateV1["matches"][number]) => ({ ...heat, id: heatIds.get(heat.id)!, lanes: heat.lanes.map((carId) => carId ? carIds.get(carId)! : null) as typeof heat.lanes, winnerEntryId: heat.winnerEntryId ? carIds.get(heat.winnerEntryId)! : null });
   const event: EventStateV1 = {
     ...structuredClone(source),
     event: { ...source.event, id: bracketId },
     participants: source.participants.map((participant) => ({ ...participant, id: participantIds.get(participant.id)! })),
-    entries: source.entries.map((entry) => ({ ...entry, id: carIds.get(entry.id)!, participantId: participantIds.get(entry.participantId)!, categoryId: bracketId })),
+    entries: source.entries.map((entry) => ({ ...entry, id: carIds.get(entry.id)!, participantId: participantIds.get(entry.participantId)!, categoryId: categoryIds.get(entry.categoryId)! })),
     matches: source.matches.map(remapHeat), finals: source.finals.map(remapHeat), payments: [],
+    settings: { ...structuredClone(source.settings), prices: Object.fromEntries(Object.entries(source.settings.prices).map(([categoryId, price]) => [categoryIds.get(categoryId)!, price])) },
     auditLog: source.auditLog.map((entry) => ({ ...entry, id: auditIds.get(entry.id)!, entityId: entry.entityId ? heatIds.get(entry.entityId) ?? carIds.get(entry.entityId) ?? participantIds.get(entry.entityId) ?? entry.entityId : null })),
   };
+  const normalizedEvent = validateEventState(event);
+  if (!normalizedEvent.success) throw new Error(`Invalid mapped event state: ${normalizedEvent.issues[0]?.message ?? "unknown issue"}`);
   const meet: MeetStateV1 = {
     version: 1,
     meet: { id: meetId, name: source.event.name, venue: source.event.venue, date: source.event.date, status: source.event.status, createdAt: source.event.createdAt, updatedAt: source.event.updatedAt, version: 1 },
-    brackets: [{ id: bracketId, name: source.event.name, stage: "qualifier", displayOrder: 1, status: source.event.status, version: 1, event, lineage: [] }],
+    brackets: [{ id: bracketId, name: source.event.name, stage: "qualifier", displayOrder: 1, status: source.event.status, version: 1, event: normalizedEvent.data, lineage: [] }],
     advancementRules: [], advancementSnapshots: [], auditLog: [],
   };
-  return { state: meet, history: { snapshots: [], selections: [] }, heatVersions: Object.fromEntries([...source.matches, ...source.finals].map((heat) => [heatIds.get(heat.id)!, 1])) };
+  const normalizedMeet = validateMeetState(meet);
+  if (!normalizedMeet.success) throw new Error(`Invalid mapped meet state: ${normalizedMeet.issues[0]?.message ?? "unknown issue"}`);
+  return { state: normalizedMeet.data, history: { snapshots: [], selections: [] }, heatVersions: Object.fromEntries([...source.matches, ...source.finals].map((heat) => [heatIds.get(heat.id)!, 1])) };
 }
 
 async function remapMeetBundle(bundle: PortableHostedMeetBundle, seed: string): Promise<PortableHostedMeetBundle> {

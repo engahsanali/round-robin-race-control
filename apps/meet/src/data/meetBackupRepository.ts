@@ -3,7 +3,8 @@ import type { DataPort, PortError, RepositoryFailureKind } from "./meetRepositor
 
 export type BackupReceipt<T> =
   | { ok: true; value: T; requestId?: string }
-  | { ok: false; kind: RepositoryFailureKind; message: string; statePreserved: true; requestId?: string };
+  | { ok: false; kind: RepositoryFailureKind; message: string; committed: "no"; statePreserved: true; requestId?: string }
+  | { ok: false; kind: RepositoryFailureKind; message: string; committed: "unknown"; requestId: string; retry: { requestId: string } };
 export type MeetRevisionKind = "manual" | "pre_restore" | "imported_source";
 export type MeetRevisionSummary = {
   id: string; organisationId: string; meetId: string; sequence: number; kind: MeetRevisionKind;
@@ -28,11 +29,13 @@ export class MeetBackupRepository {
     catch { return failure("validation", "The server returned an invalid meet graph for export."); }
   }
 
-  createCheckpoint(organisationId: string, meetId: string, expectedVersion: number, label: string, reason: string, requestId: string): Promise<BackupReceipt<{ revisionId: string; sequence: number; meetId: string }>> {
-    return this.mutate<{ revision_id: string; sequence: number; meet_id: string }, { revisionId: string; sequence: number; meetId: string }>("create_meet_revision", {
-      target_organisation_id: organisationId, target_meet_id: meetId, expected_version: expectedVersion,
-      revision_kind: "manual", revision_label: normalizeLabel(label), revision_reason: normalizeReason(reason), request_id: requestId,
-    }, requestId, (value) => ({ revisionId: asString(value.revision_id), sequence: asPositiveInteger(value.sequence), meetId: asString(value.meet_id) }));
+  async createCheckpoint(organisationId: string, meetId: string, expectedVersion: number, label: string, reason: string, requestId: string): Promise<BackupReceipt<{ revisionId: string; sequence: number; meetId: string }>> {
+    try {
+      return await this.mutate<{ revision_id: string; sequence: number; meet_id: string }, { revisionId: string; sequence: number; meetId: string }>("create_meet_revision", {
+        target_organisation_id: organisationId, target_meet_id: meetId, expected_version: expectedVersion,
+        revision_kind: "manual", revision_label: normalizeLabel(label), revision_reason: normalizeReason(reason), request_id: requestId,
+      }, requestId, (value) => ({ revisionId: asString(value.revision_id), sequence: asPositiveInteger(value.sequence), meetId: asString(value.meet_id) }));
+    } catch { return failure("validation", "A checkpoint label and reason within the allowed limits are required.", requestId); }
   }
 
   async listRevisions(organisationId: string, meetId: string, page: { limit?: number; beforeSequence?: number | null } = {}): Promise<MeetRevisionSummary[]> {
@@ -61,30 +64,37 @@ export class MeetBackupRepository {
   async importAsNewMeet(organisationId: string, text: string, reason: string, confirmed: boolean, requestId: string): Promise<BackupReceipt<{ meetId: string; sourceRevisionId: string; version: number }>> {
     const parsed = await parseMeetBackup(text);
     if (!parsed.ok) return failure("validation", "The portable backup failed validation and was not imported.", requestId);
-    return this.mutate<{ meet_id: string; source_revision_id: string; version: number }, { meetId: string; sourceRevisionId: string; version: number }>("import_meet_backup", {
-      target_organisation_id: organisationId, backup: parsed.data, reason: normalizeReason(reason), confirm_import: confirmed, request_id: requestId,
-    }, requestId, importReceipt);
+    try {
+      return await this.mutate<{ meet_id: string; source_revision_id: string; version: number }, { meetId: string; sourceRevisionId: string; version: number }>("import_meet_backup", {
+        target_organisation_id: organisationId, backup: parsed.data, reason: normalizeReason(reason), confirm_import: confirmed, request_id: requestId,
+      }, requestId, importReceipt);
+    } catch { return failure("validation", "A recovery reason within the allowed limits is required.", requestId); }
   }
 
-  restoreRevisionAsNewMeet(organisationId: string, revisionId: string, reason: string, confirmed: boolean, requestId: string): Promise<BackupReceipt<{ meetId: string; sourceRevisionId: string; version: number }>> {
-    return this.mutate<{ meet_id: string; source_revision_id: string; version: number }, { meetId: string; sourceRevisionId: string; version: number }>("restore_meet_revision_copy", {
-      target_organisation_id: organisationId, revision_id: revisionId, reason: normalizeReason(reason), confirm_restore: confirmed, request_id: requestId,
-    }, requestId, importReceipt);
+  async restoreRevisionAsNewMeet(organisationId: string, revisionId: string, reason: string, confirmed: boolean, requestId: string): Promise<BackupReceipt<{ meetId: string; sourceRevisionId: string; version: number }>> {
+    try {
+      return await this.mutate<{ meet_id: string; source_revision_id: string; version: number }, { meetId: string; sourceRevisionId: string; version: number }>("restore_meet_revision_copy", {
+        target_organisation_id: organisationId, revision_id: revisionId, reason: normalizeReason(reason), confirm_restore: confirmed, request_id: requestId,
+      }, requestId, importReceipt);
+    } catch { return failure("validation", "A recovery reason within the allowed limits is required.", requestId); }
   }
 
-  private async call<T>(name: string, args: Record<string, unknown>): Promise<BackupReceipt<T>> {
+  private async call<T>(name: string, args: Record<string, unknown>, mutationRequestId?: string): Promise<BackupReceipt<T>> {
     try {
       const response = await this.port.rpc<T>(name, args);
-      if (response.error || response.data === null) return failure(mapError(response.error), safeMessage(response.error));
+      if (response.error || response.data === null) return failure(mapError(response.error), safeMessage(response.error), mutationRequestId);
       return { ok: true, value: response.data };
-    } catch { return failure("network", "The hosted service is unreachable. The current meet was preserved."); }
+    } catch {
+      if (mutationRequestId) return uncertainFailure("network", "The recovery request may have committed before the connection was lost. Retry only with the same request ID.", mutationRequestId);
+      return failure("network", "The hosted service is unreachable. The current meet was preserved.");
+    }
   }
 
   private async mutate<TRaw, TValue>(name: string, args: Record<string, unknown>, requestId: string, map: (value: TRaw) => TValue): Promise<BackupReceipt<TValue>> {
-    const response = await this.call<TRaw>(name, args);
-    if (!response.ok) return { ...response, requestId };
+    const response = await this.call<TRaw>(name, args, requestId);
+    if (!response.ok) return response;
     try { return { ok: true, value: map(response.value), requestId }; }
-    catch { return failure("validation", "The server returned an invalid recovery receipt.", requestId); }
+    catch { return uncertainFailure("validation", "The server returned an invalid recovery receipt. Resolve it by retrying with the same request ID.", requestId); }
   }
 }
 
@@ -97,4 +107,5 @@ function asRevisionKind(value: unknown): MeetRevisionKind { if (value !== "manua
 function isRecord(value: unknown): value is Record<string, unknown> { return value !== null && typeof value === "object" && !Array.isArray(value); }
 function mapError(error: PortError | null): RepositoryFailureKind { const message = `${error?.code ?? ""} ${error?.message ?? ""}`; if (/FORBIDDEN|permission|row-level security/i.test(message)) return "permission"; if (/VERSION_CONFLICT|REVISION_CONFLICT/i.test(message)) return "conflict"; if (/INVALID|HASH|GRAPH|CONFIRM|REASON|NOT_FOUND/i.test(message)) return "validation"; if (/offline/i.test(message)) return "offline"; if (/network|fetch/i.test(message)) return "network"; return "unknown"; }
 function safeMessage(error: PortError | null): string { const kind = mapError(error); if (kind === "permission") return "Your role does not allow this recovery operation."; if (kind === "conflict") return "The meet changed before recovery could complete. Refresh and review the authoritative version."; if (kind === "validation") return "The server rejected invalid recovery data."; if (kind === "offline" || kind === "network") return "The hosted service is unreachable. The current meet was preserved."; return "The hosted recovery operation failed safely."; }
-function failure(kind: RepositoryFailureKind, message: string, requestId?: string): { ok: false; kind: RepositoryFailureKind; message: string; statePreserved: true; requestId?: string } { return { ok: false, kind, message, statePreserved: true, ...(requestId ? { requestId } : {}) }; }
+function failure(kind: RepositoryFailureKind, message: string, requestId?: string): { ok: false; kind: RepositoryFailureKind; message: string; committed: "no"; statePreserved: true; requestId?: string } { return { ok: false, kind, message, committed: "no", statePreserved: true, ...(requestId ? { requestId } : {}) }; }
+function uncertainFailure(kind: RepositoryFailureKind, message: string, requestId: string): { ok: false; kind: RepositoryFailureKind; message: string; committed: "unknown"; requestId: string; retry: { requestId: string } } { return { ok: false, kind, message, committed: "unknown", requestId, retry: { requestId } }; }

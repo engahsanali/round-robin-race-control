@@ -28,7 +28,7 @@ test("accepts the checked-in Meet migration security contract", async () => {
   const result = await verifier.verifyMeetMigrations(migrationsDir);
   assert.deepEqual(result.issues, []);
   assert.equal(result.ok, true);
-  assert.equal(result.schemaVersion, 11);
+  assert.equal(result.schemaVersion, 12);
 });
 
 test("backup invariant requires forced RLS, consistent graph export and guarded new-meet recovery", async () => {
@@ -36,6 +36,25 @@ test("backup invariant requires forced RLS, consistent graph export and guarded 
   const source = await readFile(path.join(migrationsDir, "202608140011_meet_backup_recovery.sql"), "utf8");
   assert.deepEqual(verifier.verifyBackupInvariant(source), []);
 });
+
+test("backup review invariant requires early idempotency and strict server graph validation", async () => {
+  assert.equal(typeof verifier.verifyBackupReviewFixInvariant, "function");
+  const source = await readFile(path.join(migrationsDir, "202608140012_meet_backup_review_fixes.sql"), "utf8");
+  assert.deepEqual(verifier.verifyBackupReviewFixInvariant(source), []);
+});
+
+for (const fixture of [
+  { name: "import idempotency is after fresh validation", find: "-- BACKUP IDEMPOTENCY BEFORE FRESH VALIDATION", replace: "-- late idempotency", code: "backup_late_idempotency" },
+  { name: "portable product is not required", find: "Round Robin Race Control Meet", replace: "Any product", code: "backup_envelope_not_strict" },
+  { name: "imports exceed 15 brackets", find: "not between 1 and 15", replace: "not between 1 and 100", code: "backup_bracket_limit" },
+  { name: "history relations are not strict", find: "-- STRICT HISTORY REPLACEMENT AND SELECTIONS", replace: "-- history validation missing", code: "backup_graph_validation_incomplete" },
+]) {
+  test(`backup review invariant rejects when ${fixture.name}`, async () => {
+    const source = await readFile(path.join(migrationsDir, "202608140012_meet_backup_review_fixes.sql"), "utf8");
+    const issues = verifier.verifyBackupReviewFixInvariant(source.replace(fixture.find, fixture.replace));
+    assert.ok(issues.some((issue) => issue.code === fixture.code), `${fixture.name} should report ${fixture.code}; got ${JSON.stringify(issues)}`);
+  });
+}
 
 for (const fixture of [
   { name: "revision RLS is not forced", find: "alter table public.meet_revisions force row level security", replace: "-- missing forced rls", code: "backup_revision_rls" },
@@ -98,6 +117,7 @@ for (const fixture of fixtures) {
         "202608140009_advancement_accountability.sql",
         "202608140010_advancement_review_fixes.sql",
         "202608140011_meet_backup_recovery.sql",
+        "202608140012_meet_backup_review_fixes.sql",
       ]) {
         const original = await readFile(path.join(migrationsDir, fileName), "utf8");
         const mutated = fileName === fixture.file

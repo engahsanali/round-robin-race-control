@@ -30,8 +30,9 @@ class FakePort implements DataPort {
   calls: Array<{ name: string; args: Record<string, unknown> }> = [];
   results = new Map<string, unknown>();
   error: PortError | null = null;
+  thrown: unknown = null;
   async query<T>(_request: QueryRequest): Promise<{ data: T[] | null; error: PortError | null }> { return { data: [], error: null }; }
-  async rpc<T>(name: string, args: Record<string, unknown>): Promise<{ data: T | null; error: PortError | null }> { this.calls.push({ name, args }); return { data: (this.results.get(name) ?? null) as T | null, error: this.error }; }
+  async rpc<T>(name: string, args: Record<string, unknown>): Promise<{ data: T | null; error: PortError | null }> { this.calls.push({ name, args }); if (this.thrown) { const thrown = this.thrown; this.thrown = null; throw thrown; } return { data: (this.results.get(name) ?? null) as T | null, error: this.error }; }
   subscribe(_request: RealtimeRequest, _onInvalidate: () => void, _onStatus?: (status: ConnectionStatus) => void): () => void { return () => undefined; }
 }
 
@@ -90,5 +91,31 @@ describe("Meet backup repository", () => {
     const receipt = await repository.importAsNewMeet(ORG, JSON.stringify(tampered), "Unsafe", true, REQUEST);
     expect(receipt).toMatchObject({ ok: false, kind: "validation", statePreserved: true });
     expect(port.calls).toEqual([]);
+  });
+
+  it("returns discriminated validation receipts instead of throwing for invalid recovery drafts", async () => {
+    const port = new FakePort();
+    const repository = new MeetBackupRepository(port);
+    const text = await serializeMeetBackup(hostedBundle(), { exportedAt: "2026-08-14T12:00:00.000Z", applicationVersion: "0.1.0" });
+
+    await expect(repository.createCheckpoint(ORG, MEET, 4, "  ", "reason", REQUEST)).resolves.toMatchObject({ ok: false, kind: "validation", committed: "no", statePreserved: true, requestId: REQUEST });
+    await expect(repository.importAsNewMeet(ORG, text, "  ", true, REQUEST)).resolves.toMatchObject({ ok: false, kind: "validation", committed: "no", statePreserved: true, requestId: REQUEST });
+    await expect(repository.restoreRevisionAsNewMeet(ORG, REVISION, "x".repeat(501), true, REQUEST)).resolves.toMatchObject({ ok: false, kind: "validation", committed: "no", statePreserved: true, requestId: REQUEST });
+    expect(port.calls).toEqual([]);
+  });
+
+  it("reports uncertain post-commit transport loss and preserves the same request id for retry resolution", async () => {
+    const port = new FakePort();
+    const repository = new MeetBackupRepository(port);
+    port.thrown = new TypeError("fetch failed after response was lost");
+
+    const uncertain = await repository.restoreRevisionAsNewMeet(ORG, REVISION, "Restore for rerun", true, REQUEST);
+    expect(uncertain).toEqual(expect.objectContaining({ ok: false, kind: "network", committed: "unknown", requestId: REQUEST, retry: { requestId: REQUEST } }));
+    expect(uncertain).not.toHaveProperty("statePreserved");
+
+    port.results.set("restore_meet_revision_copy", { meet_id: "restored-meet", source_revision_id: REVISION, version: 1 });
+    const resolved = await repository.restoreRevisionAsNewMeet(ORG, REVISION, "Restore for rerun", true, REQUEST);
+    expect(resolved).toMatchObject({ ok: true, requestId: REQUEST, value: { meetId: "restored-meet" } });
+    expect(port.calls.map((call) => call.args.request_id)).toEqual([REQUEST, REQUEST]);
   });
 });

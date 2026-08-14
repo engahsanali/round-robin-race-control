@@ -14,6 +14,7 @@ const REQUIRED_FILES = [
   "202608140009_advancement_accountability.sql",
   "202608140010_advancement_review_fixes.sql",
   "202608140011_meet_backup_recovery.sql",
+  "202608140012_meet_backup_review_fixes.sql",
 ];
 
 const OWNED_TABLES = [
@@ -115,6 +116,41 @@ export function verifyBackupInvariant(source) {
   );
   for (const name of ["export_meet_bundle", "create_meet_revision", "list_meet_revisions", "preview_meet_revision", "import_meet_backup", "restore_meet_revision_copy"]) {
     requireMarker(new RegExp(`function\\s+public\\.${name}[\\s\\S]*?security\\s+definer[\\s\\S]*?set\\s+search_path\\s*=\\s*''`, "i").test(sql), "backup_unsafe_definer", name, `${name} must be a fixed-search-path definer`);
+  }
+  return issues;
+}
+
+export function verifyBackupReviewFixInvariant(source) {
+  const sql = normalize(source ?? "");
+  const issues = [];
+  const requireMarker = (condition, code, target, message) => { if (!condition) issues.push(issue(code, target, message)); };
+  requireMarker(
+    /-- BACKUP IDEMPOTENCY BEFORE FRESH VALIDATION/i.test(sql)
+      && (sql.match(/select\s+\*\s+into\s+prior[\s\S]*?if\s+found\s+then\s+return/gi) ?? []).length >= 2,
+    "backup_late_idempotency", "import/restore", "Import and restore must resolve a durable request receipt before validating fresh inputs",
+  );
+  requireMarker(
+    /function\s+private_meet\.validate_portable_backup_v12/i.test(sql)
+      && /Round Robin Race Control Meet/i.test(sql)
+      && /Made by Cesar Lacsamana and Ahsan Ali/i.test(sql)
+      && /array\['meetId','meetVersion','applicationVersion'\]/i.test(sql)
+      && /array\['meetVersion','bracketCount','participantCount','carCount','heatCount','ruleCount','currentAdvancementSnapshotCount','historicalAdvancementSnapshotCount','advancementSelectionCount','auditEventCount','bundleSha256'\]/i.test(sql),
+    "backup_envelope_not_strict", "portable envelope", "Every required portable-envelope field and manifest count must be non-null and exact",
+  );
+  requireMarker(
+    /jsonb_array_length\((?:bundle#>'\{state,brackets\}'|state_value->'brackets')\)\s+not\s+between\s+1\s+and\s+15/i.test(sql)
+      && /MEET_BACKUP_GRAPH_INVALID/i.test(sql),
+    "backup_bracket_limit", "bundle graph", "Server import must enforce the hosted 15-bracket limit",
+  );
+  requireMarker(
+    /-- STRICT GRAPH IDS AND RELATIONS/i.test(sql)
+      && /-- STRICT ADVANCEMENT DAG AND DESTINATIONS/i.test(sql)
+      && /-- STRICT HISTORY REPLACEMENT AND SELECTIONS/i.test(sql)
+      && /-- EXACT HEAT VERSION SET/i.test(sql),
+    "backup_graph_validation_incomplete", "bundle graph", "Direct RPC imports must enforce IDs, relations, DAG, history and exact heat versions",
+  );
+  for (const name of ["import_meet_backup", "restore_meet_revision_copy"]) {
+    requireMarker(new RegExp(`function\\s+public\\.${name}[\\s\\S]*?security\\s+definer[\\s\\S]*?set\\s+search_path\\s*=\\s*''`, "i").test(sql), "backup_review_unsafe_definer", name, `${name} must remain a fixed-search-path definer`);
   }
   return issues;
 }
@@ -593,6 +629,7 @@ export async function verifyMeetMigrations(migrationsDirectory) {
   issues.push(...verifyAdvancementAccountabilityInvariant(sources.get(REQUIRED_FILES[8])));
   issues.push(...verifyAdvancementReviewFixInvariant(sources.get(REQUIRED_FILES[9])));
   issues.push(...verifyBackupInvariant(sources.get(REQUIRED_FILES[10])));
+  issues.push(...verifyBackupReviewFixInvariant(sources.get(REQUIRED_FILES[11])));
   return { ok: issues.length === 0, issues, schemaVersion: REQUIRED_FILES.length };
 }
 
