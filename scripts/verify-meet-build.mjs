@@ -8,7 +8,19 @@ import { verifyMeetMigrations } from "./verify-meet-migrations.mjs";
 const RELEASE_VERSION = "0.1.0";
 const CANONICAL_URL = "https://round-robin-race-control-meet.netlify.app/";
 const execute = promisify(execFile);
-const credentialPattern = /(?:AKIA[0-9A-Z]{16}|AIza[0-9A-Za-z_-]{30,}|gh[pousr]_[0-9A-Za-z]{20,}|-----BEGIN (?:RSA |EC |OPENSSH )?PRIVATE KEY-----|service_role\s*[:=]\s*["'][^"']{12,})/i;
+const credentialPattern = /(?:AKIA[0-9A-Z]{16}|AIza[0-9A-Za-z_-]{30,}|gh[pousr]_[0-9A-Za-z]{20,}|sb_secret_[0-9A-Za-z_-]{20,}|sbp_[0-9A-Za-z_-]{20,}|nfp(?:at)?_[0-9A-Za-z_-]{20,}|-----BEGIN (?:RSA |EC |OPENSSH )?PRIVATE KEY-----|(?:service_role|NETLIFY_AUTH_TOKEN|SUPABASE_ACCESS_TOKEN|SUPABASE_DB_PASSWORD|POSTGRES_PASSWORD|DATABASE_PASSWORD|DB_PASSWORD)\s*[:=]\s*["']?[0-9A-Za-z_./+=-]{12,}|postgres(?:ql)?:\/\/[^\s:/@]+:[^\s/@]+@)/i;
+const jwtPattern = /eyJ[0-9A-Za-z_-]{8,}\.[0-9A-Za-z_-]{8,}\.[0-9A-Za-z_-]{16,}/g;
+
+function containsCredential(text) {
+  if (credentialPattern.test(text)) return true;
+  for (const token of text.match(jwtPattern) ?? []) {
+    try {
+      const payload = JSON.parse(Buffer.from(token.split(".")[1], "base64url").toString("utf8"));
+      if (payload?.role === "service_role") return true;
+    } catch { /* Invalid JWT-shaped text is not itself a secret. */ }
+  }
+  return false;
+}
 
 async function filesWithin(directory) {
   const files = [];
@@ -83,7 +95,7 @@ export async function verifyMeetBuild(repositoryRoot = resolve(dirname(fileURLTo
 
   requireCondition(builtText.includes("Made by Cesar Lacsamana and Ahsan Ali"), "Exact creator credit is missing from compiled Meet content.");
   for (const phrase of [RELEASE_VERSION, "Explore local read-only demo", "Open official workspace", "No advertising trackers.", "Backup, import and recovery", "Reports & Event Pack", "Advancement", "Audit timeline"]) requireCondition(builtText.includes(phrase), `Compiled Meet content is missing: ${phrase}`);
-  requireCondition(!credentialPattern.test(builtText), "Production output contains a credential-like secret.");
+  requireCondition(!containsCredential(builtText), "Production output contains a credential-like secret.");
   requireCondition(!/\b(?:TODO|FIXME|implement later|starter app|lorem ipsum)\b/i.test(builtText), "Production output contains an incomplete or starter marker.");
   for (const { path, text } of textParts) {
     const remoteRuntime = /\b(?:import|from)\s*(?:\(|)\s*["']https?:\/\//i.test(text)
@@ -103,6 +115,13 @@ export async function verifyMeetBuild(repositoryRoot = resolve(dirname(fileURLTo
     const rel = relative(meetRoot, path).replaceAll("\\", "/");
     if (!rel.startsWith("dist/") && (/(^|\/)\.env(?:\.|$)/i.test(rel) || /(^|\/)\.netlify\//i.test(rel) || /(^|\/)(?:tmp|temp)\//i.test(rel))) failures.push(`Committed environment or temporary artifact is forbidden: apps/meet/${rel}.`);
   }
+  try {
+    for (const entry of await readdir(repositoryRoot, { withFileTypes: true })) {
+      if (entry.isFile() && /^\.env(?:\.|$)/i.test(entry.name)) failures.push(`Committed environment or temporary artifact is forbidden: ${entry.name}.`);
+    }
+  } catch (cause) {
+    failures.push(`Repository root environment scan could not complete: ${cause instanceof Error ? cause.message : String(cause)}.`);
+  }
   let releaseFiles;
   let gitAvailable = false;
   try {
@@ -110,19 +129,23 @@ export async function verifyMeetBuild(repositoryRoot = resolve(dirname(fileURLTo
     releaseFiles = result.stdout.toString("utf8").split("\0").filter(Boolean).map((path) => join(repositoryRoot, path));
     gitAvailable = true;
   } catch {
-    releaseFiles = await safeFiles(repositoryRoot);
+    releaseFiles = [];
+    failures.push("Git release inventory unavailable; repository and history secret verification cannot be trusted.");
   }
-  const repositoryTextExtensions = new Set([".css", ".html", ".js", ".json", ".md", ".mjs", ".sql", ".svg", ".toml", ".ts", ".tsx", ".txt", ".yaml", ".yml"]);
+  const repositoryBinaryExtensions = new Set([".avif", ".bin", ".doc", ".docx", ".gif", ".ico", ".jpeg", ".jpg", ".mp3", ".mp4", ".pdf", ".png", ".ppt", ".pptx", ".webp", ".woff", ".woff2", ".xls", ".xlsx", ".zip"]);
   for (const path of releaseFiles) {
     const rel = relative(repositoryRoot, path).replaceAll("\\", "/");
-    if (rel.startsWith(".git/") || rel.includes("/node_modules/") || rel.startsWith("apps/meet/dist/") || !repositoryTextExtensions.has(extname(path))) continue;
-    try { if (credentialPattern.test(await readFile(path, "utf8"))) failures.push(`Repository source contains a credential-like secret: ${rel}.`); }
+    if (rel.startsWith(".git/") || rel.includes("/node_modules/") || rel.startsWith("apps/meet/dist/") || repositoryBinaryExtensions.has(extname(path).toLowerCase())) continue;
+    try {
+      const info = await stat(path);
+      if (info.size <= 5 * 1024 * 1024 && containsCredential(await readFile(path, "utf8"))) failures.push(`Repository source contains a credential-like secret: ${rel}.`);
+    }
     catch { /* A concurrently removed release artifact is handled by the diff/clean-worktree gate. */ }
   }
   if (gitAvailable) {
     try {
       const history = await execute("git", ["-C", repositoryRoot, "log", "-p", "--all", "--format="], { encoding: "utf8", maxBuffer: 64 * 1024 * 1024 });
-      requireCondition(!credentialPattern.test(history.stdout), "Git history contains a credential-like secret.");
+      requireCondition(!containsCredential(history.stdout), "Git history contains a credential-like secret.");
     } catch (cause) {
       failures.push(`Git history secret scan could not complete: ${cause instanceof Error ? cause.message : String(cause)}.`);
     }

@@ -34,6 +34,12 @@ async function fixture() {
   await writeFile(join(dist, "assets", "index-fixture.js"), "Made by Cesar Lacsamana and Ahsan Ali 0.1.0 Explore local read-only demo Open official workspace No advertising trackers. Backup, import and recovery Reports & Event Pack Advancement Audit timeline");
   await writeFile(join(root, "supabase", "config.toml"), `[auth]\nsite_url = "http://127.0.0.1:4399"\nadditional_redirect_urls = ["http://localhost:4399"]`);
   await writeFile(join(root, "supabase", "migrations", "001.sql"), "alter table public.meets enable row level security; alter publication supabase_realtime add table public.meets;");
+  await writeFile(join(root, ".gitignore"), ".env*\n");
+  await execute("git", ["init"], { cwd: root });
+  await execute("git", ["config", "user.email", "release-test@example.invalid"], { cwd: root });
+  await execute("git", ["config", "user.name", "Release verifier"], { cwd: root });
+  await execute("git", ["add", "."], { cwd: root });
+  await execute("git", ["commit", "-m", "baseline fixture"], { cwd: root });
   return { root, meet, dist };
 }
 
@@ -58,6 +64,13 @@ describe("Meet production verifier", () => {
     ["inline handler", async ({ dist }) => writeFile(join(dist, "unsafe.html"), `<button onclick="bad()">bad</button>`), /inline event/i],
     ["credential", async ({ dist }) => writeFile(join(dist, "assets", "leak.js"), `ghp_${"1".repeat(36)}`), /secret|credential/i],
     ["credential in repository migration", async ({ root }) => writeFile(join(root, "supabase", "migrations", "leak.sql"), `select 'ghp_${"2".repeat(36)}';`), /repository.*secret|credential/i],
+    ["Supabase secret key", async ({ root }) => writeFile(join(root, "release.pem"), `sb_secret_${"a".repeat(40)}`), /repository.*secret|credential/i],
+    ["Supabase access token", async ({ root }) => writeFile(join(root, "credentials"), `sbp_${"b".repeat(40)}`), /repository.*secret|credential/i],
+    ["Netlify access token", async ({ root }) => writeFile(join(root, "netlify-token"), `nfp_${"c".repeat(40)}`), /repository.*secret|credential/i],
+    ["credentialed database URL", async ({ root }) => writeFile(join(root, "database-url"), ["postgresql://meet_admin", "do-not-commit@db.example.invalid:5432/postgres"].join(":")), /repository.*secret|credential/i],
+    ["database password", async ({ root }) => writeFile(join(root, "database.env.example"), `SUPABASE_DB_PASSWORD=${"d".repeat(32)}`), /repository.*secret|credential/i],
+    ["service-role JWT", async ({ root }) => writeFile(join(root, "service-jwt"), serviceRoleJwt()), /repository.*secret|credential/i],
+    ["ignored root environment", async ({ root }) => writeFile(join(root, ".env.production"), "SAFE_LOOKING=value"), /environment|\.env/i],
     ["committed environment", async ({ meet }) => writeFile(join(meet, ".env.production"), "VITE_SECRET=x"), /environment|\.env/i],
     ["missing security headers", async ({ meet }) => writeFile(join(meet, "netlify.toml"), `[[redirects]]\nfrom="/*"\nto="/index.html"\nstatus=200`), /content-security-policy|header/i],
     ["missing resource isolation", async ({ meet }) => writeFile(join(meet, "netlify.toml"), (netlifyBuild + headers).replace('Cross-Origin-Resource-Policy = "same-origin"', "")), /Cross-Origin-Resource-Policy/i],
@@ -75,9 +88,6 @@ describe("Meet production verifier", () => {
 
   it("rejects a credential removed from the worktree but retained in Git history", async () => {
     const paths = await fixture();
-    await execute("git", ["init"], { cwd: paths.root });
-    await execute("git", ["config", "user.email", "release-test@example.invalid"], { cwd: paths.root });
-    await execute("git", ["config", "user.name", "Release verifier"], { cwd: paths.root });
     await writeFile(join(paths.root, "history-secret.txt"), `ghp_${"3".repeat(36)}`);
     await execute("git", ["add", "."], { cwd: paths.root });
     await execute("git", ["commit", "-m", "fixture secret"], { cwd: paths.root });
@@ -87,4 +97,15 @@ describe("Meet production verifier", () => {
 
     assert.match((await verifyMeetBuild(paths.root)).failures.join("\n"), /history.*secret|credential/i);
   });
+
+  it("fails closed when Git inventory and history are unavailable", async () => {
+    const paths = await fixture();
+    await rm(join(paths.root, ".git"), { recursive: true, force: true });
+    assert.match((await verifyMeetBuild(paths.root)).failures.join("\n"), /Git.*unavailable|cannot.*history/i);
+  });
 });
+
+function serviceRoleJwt() {
+  const encode = (value) => Buffer.from(JSON.stringify(value)).toString("base64url");
+  return `${encode({ alg: "HS256", typ: "JWT" })}.${encode({ role: "service_role", ref: "fixture" })}.${"e".repeat(43)}`;
+}
