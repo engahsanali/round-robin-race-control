@@ -2,7 +2,8 @@ import { render, screen } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { describe, expect, it, vi } from "vitest";
 import { AuthoritativeWorkbook, MeetApp, OperatorConflictNotice } from "./MeetApp";
-import type { MeetRepository } from "../data/meetRepository";
+import type { AuthPort } from "./AuthBoundary";
+import type { CommandReceipt, MeetRepository, OrganisationSummary } from "../data/meetRepository";
 import { MeetStoreProvider } from "../state/MeetStore";
 import { makeMeet, withSchedule } from "../test/workbookFixtures";
 import type { WorkbookActions } from "../features/workbook/WorkbookWorkspace";
@@ -58,4 +59,76 @@ describe("Meet application shell", () => {
     expect(screen.queryByRole("dialog", { name: /correct official result/i })).toBeNull();
     expect(workbookActions.correctWinner).not.toHaveBeenCalled();
   });
+
+  it("closes organisation-scoped team/admin state before failed reads for the next organisation", async () => {
+    const organisations: OrganisationSummary[] = [
+      { id: "org-a", name: "Alpha Club", slug: "alpha", role: "owner", version: 1 },
+      { id: "org-b", name: "Beta Club", slug: "beta", role: "owner", version: 1 },
+    ];
+    const repository = officialRepository({
+      listOrganisations: async () => organisations,
+      listMembers: async (organisationId: string) => organisationId === "org-a" ? [{ userId: "alpha-user", role: "viewer", displayName: "Alpha Viewer", email: null }] : Promise.reject(new Error("unavailable")),
+      loadAdminOverview: async (organisationId: string) => organisationId === "org-a" ? { activeMeetCount: 1, runningMeetCount: 1, staleAdvancementCount: 0, unresolvedTieCount: 0, recentActivity: [{ id: "alpha-audit", meetId: null, action: "alpha.secret", actorId: "alpha-user", occurredAt: "2026-08-14T10:00:00Z" }] } : Promise.reject(new Error("unavailable")),
+      listSecurityEvents: async (organisationId: string) => organisationId === "org-a" ? [{ id: "alpha-security", organisationId: "org-a", actorId: "alpha-user", subjectUserId: null, eventType: "alpha.sign_in", occurredAt: "2026-08-14T10:00:00Z", metadata: {} }] : Promise.reject(new Error("unavailable")),
+    });
+    render(<MeetApp productionRepository={repository} auth={signedInAuth()} />);
+    expect(await screen.findByRole("heading", { name: "Alpha Club" })).not.toBeNull();
+    expect(await screen.findByText(/alpha\.secret/i)).not.toBeNull();
+    await userEvent.click(screen.getByRole("button", { name: /open team/i }));
+    expect(await screen.findByText("Alpha Viewer")).not.toBeNull();
+
+    await userEvent.selectOptions(screen.getByLabelText(/^organisation$/i), "org-b");
+    expect(await screen.findByRole("heading", { name: "Beta Club" })).not.toBeNull();
+    expect(screen.queryByText("Alpha Viewer")).toBeNull();
+    expect(screen.queryByText(/alpha\.secret/i)).toBeNull();
+    expect(screen.queryByText(/alpha\.sign_in/i)).toBeNull();
+    expect(screen.queryByRole("heading", { name: /team directory/i })).toBeNull();
+    expect(await screen.findByText(/admin activity is temporarily unavailable/i)).not.toBeNull();
+    expect(screen.queryByText(/alpha\.secret/i)).toBeNull();
+  });
+
+  it("reuses one request ID across uncertain failures and clears it only after a known terminal receipt", async () => {
+    const requestIds: string[] = [];
+    const receipts: Array<"network" | "offline" | "unknown" | "success" | "validation" | "success"> = ["network", "offline", "unknown", "success", "validation", "success"];
+    const repository = officialRepository({
+      saveMeetWorkbook: async (_organisationId: string, _meetId: string | null, _version: number | null, _workbook: Record<string, unknown>, requestId: string): Promise<CommandReceipt<{ meet_id: string; version: number; bracket_count: number; rule_count: number }>> => {
+        requestIds.push(requestId);
+        const next = receipts.shift()!;
+        if (next === "success") return { ok: true, value: { meet_id: "saved-meet", version: 1, bracket_count: 1, rule_count: 0 }, requestId };
+        return { ok: false, kind: next, message: `${next} failure`, requestId, statePreserved: true };
+      },
+    });
+    render(<MeetApp productionRepository={repository} auth={signedInAuth()} />);
+    expect(await screen.findByRole("heading", { name: "Alpha Club" })).not.toBeNull();
+    await userEvent.click(await screen.findByRole("button", { name: /meet setup/i }));
+    for (let attempt = 0; attempt < 4; attempt += 1) await userEvent.click(screen.getByRole("button", { name: /save workbook/i }));
+    expect(new Set(requestIds.slice(0, 4))).toEqual(new Set([requestIds[0]!]));
+
+    await userEvent.click(await screen.findByRole("button", { name: /meet setup/i }));
+    await userEvent.click(screen.getByRole("button", { name: /save workbook/i }));
+    await userEvent.click(screen.getByRole("button", { name: /save workbook/i }));
+    expect(requestIds[4]).not.toBe(requestIds[3]);
+    expect(requestIds[5]).not.toBe(requestIds[4]);
+  });
 });
+
+function signedInAuth(): AuthPort {
+  return {
+    getSession: async () => ({ session: { user: { id: "official-user", email: "official@example.com" } } }),
+    onAuthStateChange: () => () => undefined,
+    exchangeCodeForSession: async () => ({ session: null }), signUp: async () => ({ session: null, confirmationPending: true }),
+    signIn: async () => ({ session: null }), signOut: async () => undefined, requestPasswordRecovery: async () => undefined, updatePassword: async () => undefined,
+  };
+}
+
+function officialRepository(overrides: Record<string, unknown> = {}): MeetRepository {
+  const organisation = { id: "org-a", name: "Alpha Club", slug: "alpha", role: "owner", version: 1 } satisfies OrganisationSummary;
+  return {
+    listOrganisations: async () => [organisation], listMembers: async () => [], listMeets: async () => [],
+    loadAdminOverview: async () => ({ activeMeetCount: 0, runningMeetCount: 0, staleAdvancementCount: 0, unresolvedTieCount: 0, recentActivity: [] }),
+    listSecurityEvents: async () => [], loadMeet: async () => ({ ok: false, kind: "network", message: "refresh unavailable" }),
+    watchMeet: () => () => undefined,
+    saveMeetWorkbook: async (_organisationId: string, _meetId: string | null, _version: number | null, _workbook: Record<string, unknown>, requestId: string) => ({ ok: true, value: { meet_id: "saved-meet", version: 1, bracket_count: 1, rule_count: 0 }, requestId }),
+    ...overrides,
+  } as unknown as MeetRepository;
+}

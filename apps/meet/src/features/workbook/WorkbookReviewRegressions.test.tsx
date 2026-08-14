@@ -97,6 +97,17 @@ describe("reviewed workbook interactions", () => {
     expect(dirty).toHaveBeenLastCalledWith(`schedule:${meet.brackets[0]!.id}`, false);
   });
 
+  it("clears a generated schedule dirty source when its lazy sheet detail unmounts", async () => {
+    const dirty = vi.fn();
+    const meet = makeMeet(2, 3);
+    mount(meet, actionSet(), dirty);
+    await userEvent.click(screen.getByRole("button", { name: /generate candidate/i }));
+    expect(dirty).toHaveBeenLastCalledWith(`schedule:${meet.brackets[0]!.id}`, true);
+    await userEvent.click(screen.getByRole("link", { name: /qualifier 2/i }));
+    await userEvent.click(screen.getByRole("button", { name: /collapse qualifier 1/i }));
+    expect(dirty).toHaveBeenLastCalledWith(`schedule:${meet.brackets[0]!.id}`, false);
+  });
+
   it("keeps a failed correction draft dirty and clears it after explicit cancel", async () => {
     const meet = withSchedule(makeMeet(1, 3));
     const heat = meet.brackets[0]!.event.matches[0]!;

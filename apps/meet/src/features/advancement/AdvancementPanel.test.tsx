@@ -150,4 +150,61 @@ describe("AdvancementPanel", () => {
     expect(screen.getByText(/awaiting results/i)).not.toBeNull();
     expect(screen.getByRole("button", { name: /review advancement/i }).hasAttribute("disabled")).toBe(true);
   });
+
+  it("never lets a viewer open either a new confirmation or a current-snapshot reconfirmation", async () => {
+    const onCommit = vi.fn(async () => ({ ok: true, message: "Unexpected" }));
+    const unconfirmed = progression(3);
+    const view = render(<AdvancementPanel meet={unconfirmed} history={emptyHistory} canManage={false} onCommit={onCommit} />);
+    const confirm = screen.getByRole("button", { name: /review advancement/i });
+    expect(confirm.hasAttribute("disabled")).toBe(true);
+    await userEvent.click(confirm);
+    expect(screen.queryByRole("dialog")).toBeNull();
+
+    const confirmed = confirmAdvancementPure(unconfirmed, "rule-source", { actorId: "official", confirmedAt: "2026-08-14T10:00:00Z" });
+    view.rerender(<AdvancementPanel meet={confirmed} history={emptyHistory} canManage={false} onCommit={onCommit} />);
+    const reconfirm = screen.getByRole("button", { name: /review and reconfirm/i });
+    expect(reconfirm.hasAttribute("disabled")).toBe(true);
+    await userEvent.click(reconfirm);
+    expect(screen.queryByRole("dialog")).toBeNull();
+    expect(onCommit).not.toHaveBeenCalled();
+  });
+
+  it("registers a keyed advancement draft and clears it on cancel, success and unmount", async () => {
+    const dirty = vi.fn();
+    const meet = progression(2);
+    const onCommit = vi.fn(async () => ({ ok: true, message: "Confirmed" }));
+    const view = render(<AdvancementPanel meet={meet} history={emptyHistory} canManage onDirtyChange={dirty} onCommit={onCommit} />);
+
+    await userEvent.click(screen.getByRole("button", { name: /review advancement/i }));
+    expect(dirty).toHaveBeenLastCalledWith("advancement:rule-source", true);
+    await userEvent.click(screen.getByRole("button", { name: /^cancel$/i }));
+    expect(dirty).toHaveBeenLastCalledWith("advancement:rule-source", false);
+
+    await userEvent.click(screen.getByRole("button", { name: /review advancement/i }));
+    await userEvent.click(screen.getAllByRole("checkbox")[0]!);
+    await userEvent.type(screen.getByLabelText(/decision reason/i), "Cutoff playoff result");
+    await userEvent.click(screen.getByRole("button", { name: /^confirm advancement$/i }));
+    expect(dirty).toHaveBeenLastCalledWith("advancement:rule-source", false);
+
+    view.unmount();
+    const unresolved = render(<AdvancementPanel meet={meet} history={emptyHistory} canManage onDirtyChange={dirty} onCommit={onCommit} />);
+    await userEvent.click(within(unresolved.container).getByRole("button", { name: /review advancement/i }));
+    unresolved.unmount();
+    expect(dirty).toHaveBeenLastCalledWith("advancement:rule-source", false);
+  });
+
+  it("blocks a current replacement when a named transitive upstream snapshot is stale", () => {
+    const meet = progression(3);
+    const source = meet.brackets[0]!;
+    const current = { id: "snapshot-current", ruleId: "rule-source", sourceBracketId: source.id, sourceResultVersion: source.version, selections: [], confirmedBy: "official", reason: null, confirmedAt: "2026-08-14T10:00:00Z", stale: false };
+    const upstream = { id: "snapshot-upstream", ruleId: "rule-upstream", sourceBracketId: source.id, sourceResultVersion: source.version, selections: [], confirmedBy: "official", reason: null, confirmedAt: "2026-08-14T09:00:00Z", stale: true };
+    source.lineage = [{ sourceBracketId: source.id, sourceCarId: source.event.entries[0]!.id, ruleId: upstream.ruleId, snapshotId: upstream.id }];
+    meet.advancementSnapshots = [upstream, current];
+
+    render(<AdvancementPanel meet={meet} history={emptyHistory} canManage onCommit={async () => ({ ok: true, message: "Unexpected" })} />);
+    const advisory = screen.getByRole("alert");
+    expect(advisory.textContent).toMatch(/Qualifier 1.*upstream.*refresh.*reconfirm/i);
+    expect(within(advisory).getByRole("link", { name: /open qualifier 1/i })).not.toBeNull();
+    expect(screen.getByRole("button", { name: /review and reconfirm/i }).hasAttribute("disabled")).toBe(true);
+  });
 });

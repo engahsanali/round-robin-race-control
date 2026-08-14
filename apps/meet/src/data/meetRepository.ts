@@ -218,7 +218,9 @@ export class MeetRepository {
       before_occurred_at: page.beforeOccurredAt ?? null, before_id: page.beforeId ?? null,
     });
     if (response.error) throw new Error(safeMessage(response.error));
-    return (response.data ?? []).map((row) => ({
+    const rows = response.data ?? [];
+    if (rows.some((row) => row.organisation_id !== organisationId)) throw new Error("Security events contained data from another organisation.");
+    return rows.map((row) => ({
       id: asString(row.id), organisationId: asString(row.organisation_id), actorId: nullableString(row.actor_id),
       subjectUserId: nullableString(row.subject_user_id), eventType: asString(row.event_type),
       occurredAt: asString(row.occurred_at), metadata: isRecord(row.metadata) ? row.metadata as Record<string, JsonValue> : {},
@@ -232,6 +234,9 @@ export class MeetRepository {
     if (response.error || response.data === null) throw new Error(safeMessage(response.error ?? { message: "Empty admin overview" }));
     const value = response.data;
     const activity = Array.isArray(value.recent_activity) ? value.recent_activity.map(asRecord) : [];
+    if (("organisation_id" in value && value.organisation_id !== organisationId) || activity.some((row) => "organisation_id" in row && row.organisation_id !== organisationId)) {
+      throw new Error("Admin overview contained data from another organisation.");
+    }
     return {
       activeMeetCount: asInteger(value.active_meet_count), runningMeetCount: asInteger(value.running_meet_count),
       staleAdvancementCount: asInteger(value.stale_advancement_count), unresolvedTieCount: asInteger(value.unresolved_tie_count),

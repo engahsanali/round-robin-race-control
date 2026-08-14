@@ -180,6 +180,20 @@ describe("MeetRepository", () => {
     ]);
   });
 
+  it("fails closed when security or admin RPC rows claim another organisation", async () => {
+    const port = new FakeDataPort();
+    port.rpc = async <T,>(name: string) => ({
+      data: (name === "list_security_events" ? [{ id: "event-1", organisation_id: "other-org", actor_id: null, subject_user_id: null, event_type: "account.sign_in", occurred_at: "2026-08-14T10:00:00Z", metadata: {} }] : {
+        organisation_id: "other-org", active_meet_count: 1, running_meet_count: 1, stale_advancement_count: 0, unresolved_tie_count: 0,
+        recent_activity: [{ id: "audit-1", organisation_id: "other-org", meet_id: null, action: "meet.created", actor_id: IDS.user, occurred_at: "2026-08-14T10:00:00Z" }],
+      }) as T,
+      error: null,
+    });
+    const repository = new MeetRepository(port);
+    await expect(repository.listSecurityEvents(IDS.org)).rejects.toThrow(/organisation/i);
+    await expect(repository.loadAdminOverview(IDS.org)).rejects.toThrow(/organisation/i);
+  });
+
   it("shapes workbook, registration, schedule and millisecond winner RPC contracts", async () => {
     const port = new FakeDataPort();
     const repository = new MeetRepository(port);

@@ -97,6 +97,17 @@ describe("Meet store", () => {
     expect(meetStoreReducer(state, { type: "realtime.bundle", bundle: remote, syncedAt: "2026-08-14T10:01:00Z" }).queuedRemoteBundle).toEqual(remote);
   });
 
+  it("queues realtime while a keyed advancement decision is dirty", () => {
+    const current = bundle();
+    const remote = bundle({ ...validMeet(), meet: { ...validMeet().meet, version: 7 } });
+    let state = meetStoreReducer(createInitialMeetStoreState(), { type: "bundle.loaded", bundle: current, syncedAt: "2026-08-14T10:00:00Z" });
+    state = meetStoreReducer(state, { type: "form.dirty", source: "advancement:rule-source", dirty: true });
+    state = meetStoreReducer(state, { type: "realtime.bundle", bundle: remote, syncedAt: "2026-08-14T10:01:00Z" });
+    expect(state.bundle).toEqual(current);
+    expect(state.queuedRemoteBundle).toEqual(remote);
+    expect(state.dirtySources).toEqual(["advancement:rule-source"]);
+  });
+
   it("increments the draft epoch only when authoritative data replaces local drafts", () => {
     const current = bundle();
     const remote = bundle({ ...validMeet(), meet: { ...validMeet().meet, version: 6 } });

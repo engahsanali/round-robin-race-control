@@ -114,7 +114,7 @@ export function WorkbookWorkspace({ meet, role, readOnly, actions, heatVersions 
 
         <div className="workbook-content">
           <ProgressionSummary meet={meet} />
-          <AdvancementPanel meet={meet} history={advancementHistory} canManage={!readOnly && ["owner", "admin", "organiser"].includes(role)} onNavigateBracket={(id) => selectBracket(id, true)} onCommit={(input) => input.mode === "replace" ? actions.replaceAdvancement(input) : actions.confirmAdvancement(input)} />
+          <AdvancementPanel meet={meet} history={advancementHistory} canManage={!readOnly && ["owner", "admin", "organiser"].includes(role)} onDirtyChange={onFormDirtyChange} onNavigateBracket={(id) => selectBracket(id, true)} onCommit={(input) => input.mode === "replace" ? actions.replaceAdvancement(input) : actions.confirmAdvancement(input)} />
           <p className="sr-only" aria-live="polite">{notice || store.state.advisory || store.state.error}</p>
           <div className="bracket-stack">
             {ordered.map((bracket) => (
@@ -214,6 +214,9 @@ function ScheduleLab({ bracket, readOnly, role, actions, announce, onFormDirtyCh
   const [error, setError] = useState("");
   const [replacementReason, setReplacementReason] = useState("");
   const replacing = bracket.event.matches.length > 0 || bracket.event.finals.length > 0;
+  const dirtyCallback = useRef(onFormDirtyChange);
+  dirtyCallback.current = onFormDirtyChange;
+  useEffect(() => () => dirtyCallback.current?.(`schedule:${bracket.id}`, false), [bracket.id]);
   const dirty = (value: boolean) => onFormDirtyChange?.(`schedule:${bracket.id}`, value);
   const generate = () => { try { setCandidate(buildScheduleCandidate(bracket, { seed, rounds })); setError(""); dirty(true); } catch (cause) { setError(cause instanceof Error ? cause.message : "Schedule generation failed."); } };
   const activate = async () => {

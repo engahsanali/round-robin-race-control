@@ -104,7 +104,7 @@ function OrganisationOnboarding({ repository, onJoined, onSignOut, error }: { re
     const requestId = requestIds.current.get(key) ?? createRequestId();
     requestIds.current.set(key, requestId);
     const receipt = await runCommand(requestId, () => command(requestId));
-    if (!(receipt.ok === false && receipt.kind === "duplicate")) requestIds.current.delete(key);
+    if (receipt.ok || !["duplicate", "network", "offline", "unknown"].includes(receipt.kind)) requestIds.current.delete(key);
     return receipt;
   };
   const create = async (event: FormEvent) => {
@@ -146,7 +146,7 @@ function OfficialWorkspace({ repository, organisation, organisations, onSelect, 
     const requestId = requestIds.current.get(key) ?? createRequestId();
     requestIds.current.set(key, requestId);
     const receipt = await runCommand(requestId, () => command(requestId));
-    if (!(receipt.ok === false && receipt.kind === "duplicate")) requestIds.current.delete(key);
+    if (receipt.ok || !["duplicate", "network", "offline", "unknown"].includes(receipt.kind)) requestIds.current.delete(key);
     return receipt;
   };
   useEffect(() => {
@@ -220,8 +220,7 @@ function OfficialWorkspace({ repository, organisation, organisations, onSelect, 
   }, [reloadMeet, runCommand]);
   const workbookActions = useMemo<WorkbookActions>(() => ({
     saveSetup: async (snapshot) => {
-      const requestId = createRequestId();
-      const receipt = await runCommand(requestId, () => repository.saveMeetWorkbook(organisation.id, selectedMeetId, selectedMeetId ? snapshot.meet.version : null, workbookPayload(snapshot), requestId));
+      const receipt = await run("setup", (requestId) => repository.saveMeetWorkbook(organisation.id, selectedMeetId, selectedMeetId ? snapshot.meet.version : null, workbookPayload(snapshot), requestId));
       if (!receipt.ok) return { ok: false, message: receipt.message };
       const meetId = receipt.value.meet_id;
       setSelectedMeetId(meetId);
