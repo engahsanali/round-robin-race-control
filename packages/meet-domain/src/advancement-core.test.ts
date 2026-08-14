@@ -128,4 +128,28 @@ describe("Meet advancement core contract", () => {
     expect(retained.find((item) => item.id === "s1")!.count + replacement.filter((selection) => selection.destinationBracketId === "s1").length).toBe(6);
     expect(retained.find((item) => item.id === "s2")!.count + replacement.filter((selection) => selection.destinationBracketId === "s2").length).toBe(6);
   });
+
+  test("allows replacement when only the named current rule snapshot is stale", () => {
+    const meet = state([tiedQualifier("q"), bracket("f", "final")]);
+    meet.advancementRules = [rule("q-f", "q", ["f"], 2, 2)];
+    const confirmed = confirmAdvancementPure(meet, "q-f", { actorId: "organiser", confirmedAt: "2026-08-14T10:00:00Z", selectedCarIds: ["q-1", "q-2"], reason: "Cutoff decision" });
+    const current = { ...confirmed, advancementSnapshots: confirmed.advancementSnapshots.map((snapshot) => ({ ...snapshot, stale: true })) };
+    const snapshotId = current.advancementSnapshots[0]!.id;
+
+    expect(prepareReplacementAdvancementSelections(current, "q-f", ["q-1", "q-2"], snapshotId).map((selection) => selection.sourceCarId)).toEqual(["q-1", "q-2"]);
+    expect(prepareReplacementAdvancementSelections(current, "q-f", ["q-1", "q-3"], snapshotId).map((selection) => selection.sourceCarId)).toEqual(["q-1", "q-3"]);
+  });
+
+  test("still blocks replacement when the source bracket has transitive stale lineage", () => {
+    const semifinal = completed("s");
+    semifinal.stage = "semifinal";
+    let meet = state([completed("q"), semifinal, bracket("f", "final")]);
+    meet.advancementRules = [rule("q-s", "q", ["s"], 1, 6), rule("s-f", "s", ["f"], 1, 6)];
+    meet = confirmAdvancementPure(meet, "q-s", { actorId: "organiser", confirmedAt: "2026-08-14T09:00:00Z" });
+    meet = confirmAdvancementPure(meet, "s-f", { actorId: "organiser", confirmedAt: "2026-08-14T10:00:00Z" });
+    const currentSnapshotId = meet.advancementSnapshots.find((snapshot) => snapshot.ruleId === "s-f")!.id;
+    const upstreamStale = { ...meet, advancementSnapshots: meet.advancementSnapshots.map((snapshot) => snapshot.ruleId === "q-s" ? { ...snapshot, stale: true } : snapshot) };
+
+    expect(() => prepareReplacementAdvancementSelections(upstreamStale, "s-f", ["s-1"], currentSnapshotId)).toThrow(/cannot be confirmed/i);
+  });
 });

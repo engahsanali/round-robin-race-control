@@ -62,7 +62,10 @@ export function prepareReplacementAdvancementSelections(state: MeetStateV1, rule
 function prepareSelections(state: MeetStateV1, ruleId: string, selectedIds: readonly string[], ignoredSnapshotId?: string): AdvancementPreview["selected"] {
   const rule = ruleFor(state, ruleId);
   const preview = previewAdvancement(state, ruleId);
-  if (rule.status !== "active" || preview.staleSource) throw new Error("Advancement preview cannot be confirmed");
+  const staleSource = ignoredSnapshotId
+    ? sourceHasStaleDependency(state, rule.sourceBracketId) || state.advancementSnapshots.some((snapshot) => snapshot.ruleId === ruleId && snapshot.id !== ignoredSnapshotId && snapshot.stale)
+    : preview.staleSource;
+  if (rule.status !== "active" || staleSource) throw new Error("Advancement preview cannot be confirmed");
   if (selectedIds.length !== rule.topN) throw new Error(`Advancement must select exactly ${rule.topN} cars`);
   if (new Set(selectedIds).size !== selectedIds.length) throw new Error("Advancement selections must be unique");
 
