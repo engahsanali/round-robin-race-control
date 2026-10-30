@@ -1,7 +1,0 @@
-<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 192 192" role="img" aria-labelledby="title">
-  <title id="title">RR 3</title>
-  <rect width="192" height="192" rx="40" fill="#071117"/>
-  <path d="M30 46h82c30 0 45 13 45 38 0 17-8 28-24 34l27 31h-39L98 121H68v28H30V46Zm38 30v18h40c8 0 12-3 12-9s-4-9-12-9H68Z" fill="#55e6ff"/>
-  <circle cx="145" cy="49" r="24" fill="#b8ff52"/>
-  <path d="M136 35h17l-11 12c8 1 13 6 13 14 0 11-8 18-21 18-7 0-13-2-18-6l8-12c3 3 7 4 10 4 4 0 7-2 7-5 0-4-3-5-9-5h-5v-9l9-11Z" fill="#071117"/>
-</svg>

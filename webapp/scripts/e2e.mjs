@@ -1,0 +1,91 @@
+import { chromium } from 'playwright-core'
+import { mkdir, writeFile } from 'node:fs/promises'
+import { fileURLToPath } from 'node:url'
+
+const root = new URL('../artifacts/', import.meta.url)
+const path = name => fileURLToPath(new URL(name, root))
+const baseUrl = (process.env.BASE_URL || 'http://127.0.0.1:4173').replace(/\/$/, '')
+const deployed = !baseUrl.includes('127.0.0.1') && !baseUrl.includes('localhost')
+await mkdir(root, { recursive: true })
+const browser = await chromium.launch({ executablePath: 'C:/Program Files/Google/Chrome/Application/chrome.exe', headless: true })
+const context = await browser.newContext({ viewport: { width: 1440, height: 1000 } })
+const page = await context.newPage()
+const errors = []
+page.on('console', message => { if (message.type() === 'error' && !message.text().startsWith('Failed to load resource:')) errors.push(message.text()) })
+page.on('pageerror', error => errors.push(error.message))
+
+await page.goto(`${baseUrl}/`, { waitUntil: 'networkidle' })
+await page.screenshot({ path: path('landing-desktop.png') })
+await page.getByLabel('Event name').fill('Web App Acceptance Race')
+await page.getByLabel('Venue').fill('Test Track')
+await page.getByRole('button', { name: 'Create event' }).click()
+await page.getByRole('heading', { name: 'Overview' }).waitFor()
+await page.getByRole('button', { name: 'Entries', exact: true }).click()
+for (let i = 1; i <= 6; i++) {
+  await page.getByLabel(`Competitor ${i} name`).fill(i <= 4 ? 'Shared Owner' : `Racer ${i}`)
+  await page.getByLabel(`Competitor ${i} car number`).fill(`${i}`)
+}
+await page.getByText(/Schedule ready · 8 heats/).waitFor()
+await page.screenshot({ path: path('duplicate-owner-entries-desktop.png'), fullPage: true })
+await page.setViewportSize({ width: 390, height: 844 })
+await page.screenshot({ path: path('duplicate-owner-entries-mobile.png'), fullPage: true })
+await page.setViewportSize({ width: 1440, height: 1000 })
+await page.getByRole('button', { name: 'Race day' }).click()
+await page.locator('.lanes button').first().click()
+await page.getByText(/Racing · 1 of 8 heats complete/).first().waitFor()
+if (!(await page.getByLabel('Competitor 1 name').isDisabled())) throw new Error('Roster did not lock after result')
+
+await page.getByRole('button', { name: 'Fees', exact: true }).click()
+const sharedOwnerFee = page.locator('.fees-row').filter({ hasText: 'Shared Owner' })
+await sharedOwnerFee.waitFor()
+if ((await page.locator('.fees-row').count()) !== 3) throw new Error('Repeated owner names were not consolidated in the fee tally')
+if ((await sharedOwnerFee.locator(':scope > span').nth(0).textContent())?.trim() !== '4') throw new Error('Shared owner fee row did not count four cars')
+if (!(await sharedOwnerFee.textContent())?.includes('$60.00')) throw new Error('Shared owner fee row did not total four entry fees')
+
+await page.getByRole('button', { name: 'Reraces', exact: true }).click()
+for (let i = 1; i <= 4; i++) {
+  await page.getByLabel(`Competitor ${i} name`).fill(`Tie Racer ${i}`)
+  await page.getByLabel(`Competitor ${i} car number`).fill(`${100 + i}`)
+}
+await page.getByText(/Schedule ready · 6 heats/).first().waitFor()
+if ((await page.locator('.schedule-panel .heat-card').count()) !== 6) throw new Error('Four-car rerace did not create six heats')
+const pairs = await page.locator('.schedule-panel .heat-card').evaluateAll(cards => cards.map(card => [...card.querySelectorAll('.lanes strong')].map(node => node.textContent).sort().join('|')))
+if (new Set(pairs).size !== 6) throw new Error('Four-car rerace pair repeated')
+await page.locator('.schedule-panel .lanes button').first().click()
+await page.getByText(/Racing · 1 of 6 heats complete/).first().waitFor()
+if (deployed) {
+  await page.waitForFunction(() => document.querySelector('.sync')?.textContent?.includes('Saved'), undefined, { timeout: 20000 })
+  await page.waitForTimeout(1200)
+  await page.reload({ waitUntil: 'networkidle' })
+  await page.getByRole('button', { name: 'Reraces', exact: true }).click()
+  await page.locator('input[value="Tie Racer 1"]').waitFor()
+  const adminUrl = new URL(page.url())
+  const id = adminUrl.searchParams.get('event')
+  const key = new URLSearchParams(adminUrl.hash.slice(1)).get('key')
+  const ownerResponse = await fetch(`${baseUrl}/api/events/${id}`, { headers: { 'x-event-key': key } })
+  const ownerData = await ownerResponse.json()
+  if (!ownerResponse.ok || ownerData.role !== 'owner') throw new Error('Admin event could not be reloaded from Netlify storage')
+  const unauthorized = await fetch(`${baseUrl}/api/events/${id}`, { method: 'PUT', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ event: ownerData.event, expectedVersion: ownerData.event.version }) })
+  if (unauthorized.status !== 401) throw new Error('Public event update was not rejected')
+  const viewer = await browser.newContext({ viewport: { width: 1024, height: 768 } })
+  const viewerPage = await viewer.newPage()
+  await viewerPage.goto(`${baseUrl}/?event=${id}&mode=display`, { waitUntil: 'networkidle' })
+  await viewerPage.getByRole('heading', { name: 'Web App Acceptance Race' }).waitFor()
+  if (await viewerPage.locator('.main-nav').count()) throw new Error('Public display exposed admin navigation')
+  await viewer.close()
+}
+await page.screenshot({ path: path('rerace-desktop.png'), fullPage: true })
+
+const mobile = await context.newPage()
+await mobile.setViewportSize({ width: 390, height: 844 })
+await mobile.goto(page.url(), { waitUntil: 'networkidle' })
+await mobile.getByRole('button', { name: 'Reraces', exact: true }).click()
+await mobile.getByRole('heading', { name: 'Reraces' }).waitFor()
+await mobile.screenshot({ path: path('rerace-mobile.png'), fullPage: true })
+
+const result = { status: 'PASS', baseUrl, deployedStorage: deployed, desktop: { width: 1440, height: 1000 }, mobile: { width: 390, height: 844 }, duplicateOwnerCars: 4, feeRows: 3, sharedOwnerEntries: 4, mainHeats: 8, reraceHeats: 6, uniqueReracePairs: new Set(pairs).size, consoleErrors: errors }
+if (errors.length) throw new Error(`Browser errors: ${errors.join('; ')}`)
+await writeFile(new URL('e2e-result.json', root), JSON.stringify(result, null, 2))
+console.log(JSON.stringify(result))
+await Promise.race([browser.close(), new Promise(resolve => setTimeout(resolve, 3000))])
+process.exit(0)
