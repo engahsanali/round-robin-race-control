@@ -14,9 +14,20 @@ All production changes to Round Robin Race Manager are recorded here using seman
 ### Validation
 
 - 14 domain and synchronization unit tests passed; TypeScript and production build passed.
-- Added an isolated six-viewport browser regression for pinning, all 21 competitors, score/clear updates, keyboard collapse/expand, printing, and public display.
-- Browser regression, desktop/mobile screenshots, standard E2E, and deployed concurrency E2E remain pending. The cloud executor cannot launch Chromium because local socket creation is unavailable.
+- Isolated seven-viewport Chrome regression passed for pinning through the final round, all 21 competitors, score/clear updates, keyboard collapse/expand, printing, and unauthenticated public display.
+- Standard local desktop/mobile E2E passed with zero browser errors. Desktop and mobile release screenshots were inspected.
+- Production standard E2E and deployed concurrency E2E remain pending until deployment. The cloud browser limitation was resolved by testing the candidate locally on Windows.
 - No production deployment has been made for this candidate.
+
+### Screenshots
+
+Standings remain pinned while scoring the final round:
+
+![Pinned desktop standings](docs/screenshots/v1.1.1-standings-desktop.png)
+
+Compact standings remain visible above phone scoring controls:
+
+![Pinned mobile standings](docs/screenshots/v1.1.1-standings-mobile.png)
 
 ### Test tooling
 

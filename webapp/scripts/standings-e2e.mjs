@@ -12,6 +12,7 @@ await Promise.all([mkdir(artifacts, { recursive: true }), mkdir(screenshots, { r
 const browser = await chromium.launch({ executablePath, headless: true })
 const context = await browser.newContext({ viewport: { width: 1440, height: 1000 } })
 const page = await context.newPage()
+let activePage = page
 const errors = []
 page.on('pageerror', error => errors.push(error.message))
 page.on('console', message => {
@@ -21,7 +22,8 @@ page.on('console', message => {
 // This regression checks the rendered production UI with an isolated in-memory
 // event API. It never creates or changes a real race or its stored results.
 let fixture
-await context.route('**/api/events**', async route => {
+let lastReadOwnerKey
+const routeEvent = async route => {
   const request = route.request()
   let body
   if (request.method() === 'POST') {
@@ -43,8 +45,10 @@ await context.route('**/api/events**', async route => {
     fixture = { ...body.event, version: fixture.version + 1 }
     return route.fulfill({ json: { event: fixture } })
   }
-  return route.fulfill({ json: { event: fixture, role: request.headers()['x-event-key'] ? 'owner' : 'viewer' } })
-})
+  lastReadOwnerKey = request.headers()['x-event-key']
+  return route.fulfill({ json: { event: fixture, role: lastReadOwnerKey ? 'owner' : 'viewer' } })
+}
+await context.route('**/api/events**', routeEvent)
 
 try {
   await page.goto(baseUrl)
@@ -62,12 +66,13 @@ try {
   const heats = page.locator('.heat-card')
   assert.equal(await table.locator(':scope > div').count(), 22)
   const results = []
-  for (const [width, height] of [[1440, 1000], [1100, 800], [1024, 768], [390, 844], [320, 640], [844, 390]]) {
+  for (const [width, height] of [[1440, 1000], [1100, 800], [1024, 768], [390, 844], [320, 640], [844, 390], [320, 300]]) {
     await page.setViewportSize({ width, height })
     await heats.last().scrollIntoViewIfNeeded()
     await page.waitForTimeout(100)
     const rect = await panel.boundingBox()
     const chrome = await page.locator('.main-nav').boundingBox()
+    console.log(JSON.stringify({ viewport: { width, height }, standings: rect, navigation: chrome }))
     assert(rect.y >= chrome.y + chrome.height, `${width}: standings overlaps navigation`)
     assert(rect.y < chrome.y + chrome.height + 20, `${width}: standings is not pinned while scoring the last round`)
     assert(rect.y + rect.height <= height, `${width}: standings extends below viewport`)
@@ -108,17 +113,27 @@ try {
   assert.equal(await table.isVisible(), true, 'Collapsed standings missing from print')
   await page.emulateMedia({ media: 'screen' })
   const id = new URL(page.url()).searchParams.get('event')
-  await page.goto(`${baseUrl}/?event=${id}&mode=display`)
-  await page.locator('.heat-card').last().scrollIntoViewIfNeeded()
-  const displayRect = await panel.boundingBox()
-  const headerRect = await page.locator('.topbar').boundingBox()
+  await page.goto('about:blank')
+  const viewer = await browser.newContext({ viewport: { width: 390, height: 844 } })
+  await viewer.route('**/api/events**', routeEvent)
+  const viewerPage = await viewer.newPage()
+  activePage = viewerPage
+  viewerPage.on('pageerror', error => errors.push(error.message))
+  await viewerPage.goto(`${baseUrl}/?event=${id}&mode=display`)
+  await viewerPage.locator('.heat-card').last().scrollIntoViewIfNeeded()
+  assert.equal(lastReadOwnerKey, undefined, 'Public viewer request leaked the owner key')
+  const displayRect = await viewerPage.getByRole('complementary', { name: 'Live standings' }).boundingBox()
+  const headerRect = await viewerPage.locator('.topbar').boundingBox()
   assert(displayRect.y >= headerRect.height && displayRect.y < headerRect.height + 20, 'Public display pinned offset is incorrect')
-  assert.equal(await page.locator('.main-nav').count(), 0)
-  assert.equal(await page.locator('.lanes button:enabled').count(), 0)
+  assert.equal(await viewerPage.locator('.main-nav').count(), 0)
+  assert.equal(await viewerPage.locator('.lanes button:enabled').count(), 0)
   assert.deepEqual(errors, [])
   const result = { status: 'PASS', baseUrl, isolatedApi: true, viewports: results, scoreAndClear: true, keyboardToggle: true, print: true, publicDisplay: true, consoleErrors: errors }
   await writeFile(new URL('standings-result.json', artifacts), JSON.stringify(result, null, 2))
   console.log(JSON.stringify(result))
+} catch (error) {
+  await activePage.screenshot({ path: fileURLToPath(new URL('standings-failure.png', artifacts)) })
+  throw error
 } finally {
   await browser.close()
 }
