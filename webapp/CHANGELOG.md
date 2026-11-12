@@ -2,7 +2,7 @@
 
 All production changes to Round Robin Race Manager are recorded here using semantic versioning.
 
-## [1.1.1] — Unreleased
+## [1.1.1] - 2026-11-12
 
 ### Fixed
 
@@ -16,8 +16,8 @@ All production changes to Round Robin Race Manager are recorded here using seman
 - 14 domain and synchronization unit tests passed; TypeScript and production build passed.
 - Isolated seven-viewport Chrome regression passed for pinning through the final round, all 21 competitors, score/clear updates, keyboard collapse/expand, printing, and unauthenticated public display.
 - Standard local desktop/mobile E2E passed with zero browser errors. Desktop and mobile release screenshots were inspected.
-- Production standard E2E and deployed concurrency E2E remain pending until deployment. The cloud browser limitation was resolved by testing the candidate locally on Windows.
-- No production deployment has been made for this candidate.
+- Preview and permanent production URL passed standings, standard desktop/mobile E2E, and deployed concurrency E2E, with zero browser errors. Atomic same-bracket writes returned 200/409; unauthorized writes returned 401.
+- Production deploy: `6af54ff84554aa46f4382765`, from merged main commit `21e7cf9a9961ab334d24040e8b23cc7da2ad54cb`. Existing functions included; validation used isolated test events.
 
 ### Screenshots
 
@@ -34,7 +34,7 @@ Compact standings remain visible above phone scoring controls:
 - Browser tests accept `CHROME_PATH` and detect common Windows, macOS, and Linux Chrome installations.
 - Concurrency screenshots use the package version, preserving earlier release evidence.
 
-## [1.1.0] — 2026-09-11
+## [1.1.0] - 2026-09-11
 
 ### Added
 
@@ -94,10 +94,11 @@ Same-bracket conflict protected from data loss:
 
 ![Scoped same-bracket conflict](docs/screenshots/v1.1.0-conflict-protection.png)
 
-## [1.0.0] — 2026-09-10
+## [1.0.0] - 2026-09-10
 
 ### Added
 
 - Initial hosted React/Vite race manager based on the verified Excel workflow.
 - Four classes, six brackets, main racing, finals, reraces, rankings, W/L records, owner-based fees, backup/restore, CSV export, offline copy, private admin links, and read-only public links.
 - Duplicate owner names supported while retaining unique car-number identity.
+
