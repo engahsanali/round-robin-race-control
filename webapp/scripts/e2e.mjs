@@ -1,13 +1,14 @@
 import { chromium } from 'playwright-core'
 import { mkdir, writeFile } from 'node:fs/promises'
 import { fileURLToPath } from 'node:url'
+import { executablePath } from './browser.mjs'
 
 const root = new URL('../artifacts/', import.meta.url)
 const path = name => fileURLToPath(new URL(name, root))
 const baseUrl = (process.env.BASE_URL || 'http://127.0.0.1:4173').replace(/\/$/, '')
 const deployed = !baseUrl.includes('127.0.0.1') && !baseUrl.includes('localhost')
 await mkdir(root, { recursive: true })
-const browser = await chromium.launch({ executablePath: 'C:/Program Files/Google/Chrome/Application/chrome.exe', headless: true })
+const browser = await chromium.launch({ executablePath, headless: true })
 const context = await browser.newContext({ viewport: { width: 1440, height: 1000 } })
 const page = await context.newPage()
 const errors = []

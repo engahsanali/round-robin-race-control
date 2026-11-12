@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
+import { useCallback, useEffect, useId, useLayoutEffect, useMemo, useRef, useState } from 'react'
 import {
   addAudit, allGroups, cleanName, completedHeatCount, createEvent, eventToCsv, feeRows, findGroup,
   groupStatus, groupValidation, reconcileEvent, reconcileGroup, redrawGroup, replaceGroup, setWinner, standings, validEntrants,
@@ -37,6 +37,10 @@ function eventUrl(id: string, key?: string, display = false) {
 
 export default function App() {
   const initial = new URLSearchParams(location.search)
+  const publicMode = initial.get('mode') === 'display'
+  const shellRef = useRef<HTMLDivElement>(null)
+  const topbarRef = useRef<HTMLElement>(null)
+  const navRef = useRef<HTMLElement>(null)
   const [eventId, setEventId] = useState<string | null>(initial.get('event'))
   const [event, setEvent] = useState<EventData | null>(null)
   const eventRef = useRef<EventData | null>(null)
@@ -50,6 +54,26 @@ export default function App() {
   const [sync, setSync] = useState<'saved' | 'saving' | 'offline' | 'conflict'>('saved')
   const [conflict, setConflict] = useState<EventData | null>(null)
   const [groupConflicts, setGroupConflicts] = useState<Record<string, GroupConflict>>({})
+
+  // The header wraps on phones and the public display has no navigation.
+  // Measure both so pinned standings never cover the sticky app controls.
+  useLayoutEffect(() => {
+    const shell = shellRef.current
+    const topbar = topbarRef.current
+    const nav = navRef.current
+    if (!shell || !topbar) return
+    const measure = () => {
+      const headerHeight = topbar.getBoundingClientRect().height
+      const navHeight = nav?.getBoundingClientRect().height ?? 0
+      shell.style.setProperty('--topbar-height', `${headerHeight}px`)
+      shell.style.setProperty('--standings-top', `${headerHeight + navHeight + 12}px`)
+    }
+    measure()
+    const observer = new ResizeObserver(measure)
+    observer.observe(topbar)
+    if (nav) observer.observe(nav)
+    return () => observer.disconnect()
+  }, [event?.id, loading, publicMode])
 
   useEffect(() => { eventRef.current = event; if (event) saveLocal(event, ownerKey) }, [event, ownerKey])
 
@@ -236,7 +260,6 @@ export default function App() {
   if (loading) return <FullState title="Opening event" detail="Loading the latest saved race data…" />
   if (!event) return <FullState title="Event unavailable" detail={loadError || 'The event link is invalid or no longer available.'} action={<button onClick={close}>Back to events</button>} />
 
-  const publicMode = new URLSearchParams(location.search).get('mode') === 'display'
   const groupConflictEntry = Object.entries(groupConflicts)[0]
   const pendingCount = Object.keys(dirtyScopes).length
   const removeGroupConflict = (groupId: string) => setGroupConflicts(current => {
@@ -280,8 +303,8 @@ export default function App() {
     removeGroupConflict(groupId); markDirty(groupId); setSync('saving')
   }
   return (
-    <div className="app-shell">
-      <header className="topbar">
+    <div className="app-shell" ref={shellRef}>
+      <header className="topbar" ref={topbarRef}>
         <button className="brand" onClick={close} aria-label="Return to events"><span className="brand-mark">RR</span><span>Race Manager</span></button>
         <div className="event-title"><strong>{event.name}</strong><span>{event.date}{event.venue ? ` · ${event.venue}` : ''}</span></div>
         <div className="top-actions">
@@ -293,7 +316,7 @@ export default function App() {
       {conflict && <div className="conflict-banner" role="alert"><div><strong>Event settings changed on another device.</strong><span>Bracket results are safe. Choose which event details or payments to keep.</span></div><div><button onClick={useSavedEvent}>Use saved event</button><button className="danger" onClick={keepLocalEvent}>Keep this tab</button></div></div>}
       {groupConflictEntry && <div className="conflict-banner" role="alert"><div><strong>{findGroup(event, groupConflictEntry[0])?.label ?? 'This bracket'} changed in another tab.</strong><span>Only this bracket needs a decision; every other bracket can continue saving.</span></div><div><button onClick={() => useSavedGroup(groupConflictEntry[0], groupConflictEntry[1])}>Use saved bracket</button><button className="danger" onClick={() => keepLocalGroup(groupConflictEntry[0], groupConflictEntry[1])}>Keep this tab</button></div></div>}
 
-      {!publicMode && <nav className="main-nav" aria-label="Event sections">{views.map(item => <button key={item.id} className={view === item.id ? 'active' : ''} onClick={() => setView(item.id)}>{item.label}</button>)}</nav>}
+      {!publicMode && <nav className="main-nav" ref={navRef} aria-label="Event sections">{views.map(item => <button key={item.id} className={view === item.id ? 'active' : ''} onClick={() => setView(item.id)}>{item.label}</button>)}</nav>}
 
       <main>
         {publicMode || view === 'display' ? <DisplayPage event={event} /> : null}
@@ -432,7 +455,12 @@ function SchedulePanel({ group, event, change, readonly = false }: { group: Race
 }
 
 function Standings({ table }: { table: ReturnType<typeof standings> }) {
-  return <aside className="standings"><div className="standings-head"><span>Car</span><span>Competitor</span><span>W</span><span>L</span><span>Rank</span></div>{table.map(row => <div className={row.rank <= 3 ? 'top-rank' : ''} key={row.entrant.id}><span>{row.entrant.carNumber}</span><strong>{cleanName(row.entrant.name)}</strong><span>{row.wins}</span><span>{row.losses}</span><span>{row.rank}</span></div>)}</aside>
+  const [collapsed, setCollapsed] = useState(false)
+  const tableId = useId()
+  return <aside className={`standings${collapsed ? ' is-collapsed' : ''}`} aria-label="Live standings">
+    <div className="standings-toolbar"><h3>Live standings</h3><button className="standings-toggle compact" aria-expanded={!collapsed} aria-controls={tableId} onClick={() => setCollapsed(value => !value)}>{collapsed ? 'Expand' : 'Collapse'}</button></div>
+    <div className="standings-table" id={tableId} tabIndex={0} aria-label="Standings table, scroll for more competitors"><div className="standings-head"><span>Car</span><span>Competitor</span><span>W</span><span>L</span><span>Rank</span></div>{table.map(row => <div className={row.rank <= 3 ? 'top-rank' : ''} key={row.entrant.id}><span>{row.entrant.carNumber}</span><strong>{cleanName(row.entrant.name)}</strong><span>{row.wins}</span><span>{row.losses}</span><span>{row.rank}</span></div>)}</div>
+  </aside>
 }
 
 function FeesPage({ event, change }: { event: EventData; change: ChangeEvent }) {
