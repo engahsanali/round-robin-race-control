@@ -2,6 +2,27 @@
 
 All production changes to Round Robin Race Manager are recorded here using semantic versioning.
 
+## [1.1.1] — Unreleased
+
+### Fixed
+
+- Keep live standings pinned beside the scoring rounds on desktop. The schedule panel no longer traps sticky positioning in a non-scrolling clipping container.
+- Keep a compact, independently scrollable standings table above the rounds on phones and tablets, with an accessible collapse/expand control.
+- Measure the sticky header and navigation so standings do not overlap them when the header wraps or in public display mode.
+- Keep every competitor accessible on short screens, retain table headings while scrolling, and include the full standings when printing.
+
+### Validation
+
+- 14 domain and synchronization unit tests passed; TypeScript and production build passed.
+- Added an isolated six-viewport browser regression for pinning, all 21 competitors, score/clear updates, keyboard collapse/expand, printing, and public display.
+- Browser regression, desktop/mobile screenshots, standard E2E, and deployed concurrency E2E remain pending. The cloud executor cannot launch Chromium because local socket creation is unavailable.
+- No production deployment has been made for this candidate.
+
+### Test tooling
+
+- Browser tests accept `CHROME_PATH` and detect common Windows, macOS, and Linux Chrome installations.
+- Concurrency screenshots use the package version, preserving earlier release evidence.
+
 ## [1.1.0] — 2026-09-11
 
 ### Added

@@ -11,6 +11,16 @@
 
 Generated JSON evidence is written under `artifacts/` and is intentionally not versioned. Release screenshots are kept under `docs/screenshots/` and are versioned with the changelog.
 
+## v1.1.1 candidate — 12 November 2026
+
+- Unit tests: **PASS**, 14 tests.
+- Production build and TypeScript: **PASS**.
+- Standings browser regression: **NOT RUN**. This cloud executor cannot start Chromium because local socket creation is unavailable, including after approved escalation. Run `npm run test:standings` with `BASE_URL` set to the candidate server. The test intercepts its event API and uses an isolated synthetic event, so no live race is modified.
+- Required standard and deployed concurrency E2E: **PENDING**.
+- Production deployment: **NOT DEPLOYED**.
+
+The standings regression covers 1440 × 1000, 1100 × 800, 1024 × 768, 390 × 844, 320 × 640, and 844 × 390 viewports, plus scoring/clearing, all 21 competitors, keyboard expand/collapse, print output, and read-only public display. `CHROME_PATH` can select the browser executable explicitly.
+
 ## v1.1.0 production acceptance — 11 September 2026
 
 Target: <https://round-robin-race-manager.netlify.app>

@@ -1,6 +1,7 @@
 import { chromium } from 'playwright-core'
-import { mkdir, writeFile } from 'node:fs/promises'
+import { mkdir, readFile, writeFile } from 'node:fs/promises'
 import { fileURLToPath } from 'node:url'
+import { executablePath } from './browser.mjs'
 
 const baseUrl = (process.env.BASE_URL || '').replace(/\/$/, '')
 if (!baseUrl || baseUrl.includes('127.0.0.1') || baseUrl.includes('localhost')) {
@@ -10,9 +11,10 @@ if (!baseUrl || baseUrl.includes('127.0.0.1') || baseUrl.includes('localhost')) 
 const artifacts = new URL('../artifacts/', import.meta.url)
 const screenshots = new URL('../docs/screenshots/', import.meta.url)
 const localPath = (root, name) => fileURLToPath(new URL(name, root))
+const version = JSON.parse(await readFile(new URL('../package.json', import.meta.url), 'utf8')).version
 await Promise.all([mkdir(artifacts, { recursive: true }), mkdir(screenshots, { recursive: true })])
 
-const browser = await chromium.launch({ executablePath: 'C:/Program Files/Google/Chrome/Application/chrome.exe', headless: true })
+const browser = await chromium.launch({ executablePath, headless: true })
 const context = await browser.newContext({ viewport: { width: 1440, height: 1000 } })
 const tabA = await context.newPage()
 const tabB = await context.newPage()
@@ -50,8 +52,8 @@ const entrySaveB = groupSave(tabB)
 await Promise.all([fillBracket(tabA, 'Owner A', 101), fillBracket(tabB, 'Owner B', 201)])
 await Promise.all([entrySaveA, entrySaveB])
 
-await tabA.screenshot({ path: localPath(screenshots, 'v1.1.0-bracket-a.png'), fullPage: true })
-await tabB.screenshot({ path: localPath(screenshots, 'v1.1.0-bracket-b.png'), fullPage: true })
+await tabA.screenshot({ path: localPath(screenshots, `v${version}-bracket-a.png`), fullPage: true })
+await tabB.screenshot({ path: localPath(screenshots, `v${version}-bracket-b.png`), fullPage: true })
 
 await Promise.all([
   tabA.getByRole('button', { name: 'Race day', exact: true }).click(),
@@ -71,7 +73,7 @@ await Promise.all([
 ])
 await Promise.all([resultSaveA, resultSaveB])
 
-await tabA.screenshot({ path: localPath(screenshots, 'v1.1.0-simultaneous-results.png'), fullPage: true })
+await tabA.screenshot({ path: localPath(screenshots, `v${version}-simultaneous-results.png`), fullPage: true })
 
 const url = new URL(adminUrl)
 const eventId = url.searchParams.get('event')
@@ -110,7 +112,7 @@ const uiSameGroupStatuses = uiSameGroupResponses.map(response => response.status
 if (uiSameGroupStatuses.join(',') !== '200,409') throw new Error(`Same-bracket UI conflict check returned ${uiSameGroupStatuses.join(',')}.`)
 const losingTab = uiSameGroupResponses[0].status() === 409 ? tabA : tabB
 await losingTab.getByText(/changed in another tab/).waitFor()
-await losingTab.screenshot({ path: localPath(screenshots, 'v1.1.0-conflict-protection.png'), fullPage: true })
+await losingTab.screenshot({ path: localPath(screenshots, `v${version}-conflict-protection.png`), fullPage: true })
 await losingTab.getByRole('button', { name: 'Use saved bracket' }).click()
 
 const latestRead = await fetch(`${baseUrl}/api/events/${eventId}`, { headers: { 'x-event-key': ownerKey } })
@@ -135,7 +137,7 @@ if (errors.length) throw new Error(`Browser errors: ${errors.join('; ')}`)
 const result = {
   status: 'PASS', baseUrl, eventId, bracketARevision: bracketA.revision, bracketBRevision: bracketB.revision,
   bracketAWinners: 1, bracketBWinners: 1, uiSameGroupStatuses, sameGroupStatuses, unauthorizedStatus: unauthorized.status,
-  screenshots: ['docs/screenshots/v1.1.0-bracket-a.png', 'docs/screenshots/v1.1.0-bracket-b.png', 'docs/screenshots/v1.1.0-simultaneous-results.png', 'docs/screenshots/v1.1.0-conflict-protection.png'],
+  screenshots: [`docs/screenshots/v${version}-bracket-a.png`, `docs/screenshots/v${version}-bracket-b.png`, `docs/screenshots/v${version}-simultaneous-results.png`, `docs/screenshots/v${version}-conflict-protection.png`],
   consoleErrors: errors,
 }
 await writeFile(new URL('concurrency-result.json', artifacts), JSON.stringify(result, null, 2))
