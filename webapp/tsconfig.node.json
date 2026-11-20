@@ -10,5 +10,5 @@
     "noEmit": true,
     "types": ["node"]
   },
-  "include": ["vite.config.ts", "netlify/functions/**/*.ts", "src/types.ts"]
+  "include": ["vite.config.ts", "netlify/functions/**/*.ts", "src/race-layout.ts", "src/types.ts"]
 }

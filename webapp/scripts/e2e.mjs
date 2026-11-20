@@ -36,12 +36,43 @@ await page.locator('.lanes button').first().click()
 await page.getByText(/Racing · 1 of 8 heats complete/).first().waitFor()
 if (!(await page.getByLabel('Competitor 1 name').isDisabled())) throw new Error('Roster did not lock after result')
 
+await page.getByRole('button', { name: 'Entries', exact: true }).click()
+for (const category of ['Stock Advance', 'BMAX Speed']) {
+  await page.getByRole('button', { name: category, exact: true }).click()
+  await page.getByLabel('Competitor 1 name').fill('Shared Owner')
+  await page.getByLabel('Competitor 1 car number').fill('1')
+}
+await page.getByRole('button', { name: 'Finals', exact: true }).click()
+for (const category of ['Stock Advance', 'BMAX Speed']) {
+  await page.getByRole('button', { name: category, exact: true }).click()
+  await page.getByLabel('Competitor 1 name').fill('Shared Owner')
+  await page.getByLabel('Competitor 1 car number').fill('1')
+}
+
 await page.getByRole('button', { name: 'Fees', exact: true }).click()
 const sharedOwnerFee = page.locator('.fees-row').filter({ hasText: 'Shared Owner' })
 await sharedOwnerFee.waitFor()
 if ((await page.locator('.fees-row').count()) !== 3) throw new Error('Repeated owner names were not consolidated in the fee tally')
-if ((await sharedOwnerFee.locator(':scope > span').nth(0).textContent())?.trim() !== '4') throw new Error('Shared owner fee row did not count four cars')
-if (!(await sharedOwnerFee.textContent())?.includes('$60.00')) throw new Error('Shared owner fee row did not total four entry fees')
+const feeTable = page.getByRole('table', { name: 'Entry fees by competitor and category' })
+const assertFeeCell = async (row, column, expected) => {
+  const headers = await feeTable.getByRole('columnheader').allTextContents()
+  const index = headers.indexOf(column)
+  if (index === -1 || await row.getByRole('cell').nth(index - 1).innerText() !== expected) {
+    throw new Error(`Unexpected fee tally in ${column}: expected ${expected}`)
+  }
+}
+await assertFeeCell(sharedOwnerFee, 'Box Stock', '4\n$60.00')
+await assertFeeCell(sharedOwnerFee, 'Stock Advance', '1\n$15.00')
+await assertFeeCell(sharedOwnerFee, 'BMAX Speed', '1\n$15.00')
+await assertFeeCell(sharedOwnerFee, 'Total entries', '6')
+await assertFeeCell(sharedOwnerFee, 'Total due', '$90.00')
+await page.getByLabel('Paid by Shared Owner').fill('30')
+await assertFeeCell(sharedOwnerFee, 'Balance', '$60.00')
+const eventTotal = feeTable.locator('tfoot tr')
+await assertFeeCell(eventTotal, 'Box Stock', '6\n$90.00')
+await assertFeeCell(eventTotal, 'Total entries', '8')
+await assertFeeCell(eventTotal, 'Total due', '$120.00')
+await page.screenshot({ path: path('fees-desktop.png') })
 
 await page.getByRole('button', { name: 'Reraces', exact: true }).click()
 for (let i = 1; i <= 4; i++) {
@@ -66,6 +97,12 @@ if (deployed) {
   const ownerResponse = await fetch(`${baseUrl}/api/events/${id}`, { headers: { 'x-event-key': key } })
   const ownerData = await ownerResponse.json()
   if (!ownerResponse.ok || ownerData.role !== 'owner') throw new Error('Admin event could not be reloaded from Netlify storage')
+  if (ownerData.event.payments['shared owner']?.paid !== 30) throw new Error('Fee payment was not saved')
+  for (const category of ['Stock Advance', 'BMAX Speed']) {
+    if (ownerData.event.mainClasses.find(item => item.name === category)?.groups[0].entrants[0].name !== 'Shared Owner') {
+      throw new Error(`Entries for ${category} were not saved`)
+    }
+  }
   const unauthorized = await fetch(`${baseUrl}/api/events/${id}`, { method: 'PUT', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ event: ownerData.event, expectedVersion: ownerData.event.version }) })
   if (unauthorized.status !== 401) throw new Error('Public event update was not rejected')
   const viewer = await browser.newContext({ viewport: { width: 1024, height: 768 } })
@@ -80,11 +117,28 @@ await page.screenshot({ path: path('rerace-desktop.png'), fullPage: true })
 const mobile = await context.newPage()
 await mobile.setViewportSize({ width: 390, height: 844 })
 await mobile.goto(page.url(), { waitUntil: 'networkidle' })
+await mobile.getByRole('button', { name: 'Fees', exact: true }).click()
+const mobileFees = mobile.getByRole('region', { name: 'Entry fees by category' })
+await mobileFees.waitFor()
+await mobile.screenshot({ path: path('fees-mobile.png') })
+const mobileLayout = await mobileFees.evaluate(region => {
+  region.scrollLeft = region.scrollWidth
+  const total = region.querySelector('tfoot tr > :last-child')
+  const table = region.getBoundingClientRect()
+  return {
+    scrolled: region.scrollLeft,
+    clippedPixels: total.getBoundingClientRect().right - table.right,
+    pageOverflow: document.documentElement.scrollWidth - window.innerWidth,
+  }
+})
+if (mobileLayout.scrolled <= 0 || mobileLayout.clippedPixels > 1 || mobileLayout.pageOverflow > 0) {
+  throw new Error(`Mobile fee table did not scroll independently: ${JSON.stringify(mobileLayout)}`)
+}
 await mobile.getByRole('button', { name: 'Reraces', exact: true }).click()
 await mobile.getByRole('heading', { name: 'Reraces' }).waitFor()
 await mobile.screenshot({ path: path('rerace-mobile.png'), fullPage: true })
 
-const result = { status: 'PASS', baseUrl, deployedStorage: deployed, desktop: { width: 1440, height: 1000 }, mobile: { width: 390, height: 844 }, duplicateOwnerCars: 4, feeRows: 3, sharedOwnerEntries: 4, mainHeats: 8, reraceHeats: 6, uniqueReracePairs: new Set(pairs).size, consoleErrors: errors }
+const result = { status: 'PASS', baseUrl, deployedStorage: deployed, desktop: { width: 1440, height: 1000 }, mobile: { width: 390, height: 844 }, feeRows: 3, sharedOwnerEntries: 6, totalEntries: 8, mainHeats: 8, reraceHeats: 6, uniqueReracePairs: new Set(pairs).size, consoleErrors: errors }
 if (errors.length) throw new Error(`Browser errors: ${errors.join('; ')}`)
 await writeFile(new URL('e2e-result.json', root), JSON.stringify(result, null, 2))
 console.log(JSON.stringify(result))

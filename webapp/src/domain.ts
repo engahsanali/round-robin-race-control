@@ -2,44 +2,20 @@ import mainLibrary from './data/main-library.json'
 import reraceLibrary from './data/rerace-library.json'
 import type { AuditItem, Entrant, EventData, Heat, Payment, RaceClass, RaceGroup, StageKind, Standing } from './types'
 
-const CLASS_NAMES = ['Box Stock', 'BMAX NCFM', 'BMAX Mixed', 'Open']
-const MAX_ENTRANTS = 21
+import { addMissingClasses, CLASS_NAMES, makeClass, makeGroups, makeId, randomSeed } from './race-layout'
 
-export function makeId(prefix = 'id') {
-  return `${prefix}-${crypto.randomUUID()}`
-}
-
-export function blankEntrants(): Entrant[] {
-  return Array.from({ length: MAX_ENTRANTS }, (_, i) => ({ id: makeId(`slot-${i + 1}`), name: '', carNumber: '' }))
-}
-
-function makeGroups(kind: StageKind, labels: string[]): RaceGroup[] {
-  return labels.map((label, index) => ({ id: makeId(`${kind}-${index + 1}`), label, kind, entrants: blankEntrants(), drawSeed: randomSeed(), heats: [], revision: 0 }))
-}
-
-function makeClasses(kind: 'main' | 'finals'): RaceClass[] {
-  return CLASS_NAMES.map(name => ({
-    id: makeId(kind),
-    name,
-    groups: makeGroups(kind, Array.from({ length: 6 }, (_, i) => kind === 'main' ? `Bracket ${String.fromCharCode(65 + i)}` : `Final ${String.fromCharCode(65 + i)}`)),
-  }))
-}
+export { addMissingClasses, blankEntrants, makeId, randomSeed } from './race-layout'
 
 export function createEvent(name: string, date: string, venue: string): EventData {
   const now = new Date().toISOString()
   const event: EventData = {
     id: '', version: 0, name: name.trim() || 'Race event', date, venue: venue.trim(), entryFee: 15, status: 'draft',
-    mainClasses: makeClasses('main'), finalsClasses: makeClasses('finals'),
+    mainClasses: CLASS_NAMES.map(name => makeClass('main', name)),
+    finalsClasses: CLASS_NAMES.map(name => makeClass('finals', name)),
     reraces: makeGroups('rerace', Array.from({ length: 6 }, (_, i) => `Tie group ${i + 1}`)),
     payments: {}, audit: [], createdAt: now, updatedAt: now,
   }
   return addAudit(event, 'create', 'Event created')
-}
-
-export function randomSeed(): number {
-  const a = new Uint32Array(1)
-  crypto.getRandomValues(a)
-  return a[0] || 1
 }
 
 function rng(seed: number) {
@@ -118,6 +94,7 @@ export function reconcileGroup(group: RaceGroup): RaceGroup {
 }
 
 export function reconcileEvent(event: EventData): EventData {
+  event = addMissingClasses(event)
   let changed = false
   const reconcileClasses = (classes: RaceClass[]) => classes.map(cls => ({
     ...cls,
@@ -213,15 +190,18 @@ export function normalNameKey(name: string) {
 }
 
 export function feeRows(event: EventData) {
-  const totals = new Map<string, { displayName: string; entries: number }>()
-  for (const group of event.mainClasses.flatMap(c => c.groups)) {
-    for (const entrant of validEntrants(group)) {
+  const totals = new Map<string, { displayName: string; entries: number; entriesByClass: number[] }>()
+  event.mainClasses.forEach((raceClass, index) => {
+    for (const entrant of raceClass.groups.flatMap(validEntrants)) {
       const key = normalNameKey(entrant.name)
-      const current = totals.get(key) ?? { displayName: cleanName(entrant.name), entries: 0 }
+      const current = totals.get(key) ?? {
+        displayName: cleanName(entrant.name), entries: 0, entriesByClass: Array(event.mainClasses.length).fill(0),
+      }
       current.entries++
+      current.entriesByClass[index]++
       totals.set(key, current)
     }
-  }
+  })
   return [...totals.entries()].map(([nameKey, total]) => {
     const payment: Payment = event.payments[nameKey] ?? { nameKey, displayName: total.displayName, paid: 0 }
     const due = total.entries * event.entryFee

@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { createEvent, feeRows, generateHeats, groupValidation, reconcileEvent, standings, validEntrants } from './domain'
+import { addMissingClasses, createEvent, feeRows, generateHeats, groupValidation, reconcileEvent, standings, validEntrants } from './domain'
 import type { RaceGroup } from './types'
 
 function group(kind: RaceGroup['kind'], count: number): RaceGroup {
@@ -115,14 +115,20 @@ describe('scoring and fees', () => {
     expect(table.filter(row => row.wins === 0).every(row => row.rank === 2)).toBe(true)
   })
 
-  it('tallies main entries by competitor name only', () => {
+  it('tallies main entries by competitor and category, excluding finals and reraces', () => {
     const event = createEvent('Test', '2026-09-09', '')
     const first = event.mainClasses[0].groups[0].entrants[0]
     const second = event.mainClasses[1].groups[0].entrants[0]
     first.name = ' Cesar  Lacsamana '; first.carNumber = '10'
     second.name = 'Cesar Lacsamana'; second.carNumber = '22'
+    for (const group of [event.finalsClasses[1].groups[0], event.reraces[0]]) {
+      Object.assign(group.entrants[0], { name: second.name, carNumber: second.carNumber })
+    }
+    event.payments['cesar lacsamana'] = { nameKey: 'cesar lacsamana', displayName: second.name, paid: 15 }
     expect(validEntrants(event.mainClasses[0].groups[0])).toHaveLength(1)
-    expect(feeRows(event)).toMatchObject([{ displayName: 'Cesar Lacsamana', entries: 2, due: 30, balance: 30 }])
+    expect(feeRows(event)).toMatchObject([{
+      displayName: 'Cesar Lacsamana', entries: 2, entriesByClass: [1, 1, 0, 0, 0, 0], due: 30, paid: 15, balance: 15,
+    }])
   })
 
   it('combines repeated owner names from the same bracket into one fee row', () => {
@@ -133,4 +139,27 @@ describe('scoring and fees', () => {
     })
     expect(feeRows(event)).toMatchObject([{ displayName: 'Shared Owner', entries: 4, due: 60, balance: 60 }])
   })
+})
+
+it('adds both categories to legacy events with stable bracket IDs and existing race state intact', () => {
+  const event = createEvent('Test', '2026-09-09', '')
+  const isLegacyClass = ({ name }: { name: string }) => !['Stock Advance', 'BMAX Speed'].includes(name)
+  event.id = 'legacy-event'
+  event.mainClasses = event.mainClasses.filter(isLegacyClass)
+  event.finalsClasses = event.finalsClasses.filter(isLegacyClass)
+  const bracket = group('main', 6)
+  bracket.revision = 7
+  bracket.heats[0].winnerId = bracket.heats[0].lanes.find(Boolean) as string
+  event.mainClasses[0].groups[0] = bracket
+
+  const upgraded = addMissingClasses(event)
+  expect(upgraded.mainClasses.slice(0, 4)).toEqual(event.mainClasses)
+  expect(upgraded.finalsClasses.slice(0, 4)).toEqual(event.finalsClasses)
+  expect(upgraded.reraces).toBe(event.reraces)
+  for (const classes of [upgraded.mainClasses, upgraded.finalsClasses]) {
+    expect(classes.slice(4).map(raceClass => raceClass.name)).toEqual(['Stock Advance', 'BMAX Speed'])
+    expect(classes.slice(4).every(raceClass => raceClass.groups.length === 6)).toBe(true)
+  }
+  expect(addMissingClasses(structuredClone(event))).toEqual(upgraded)
+  expect(addMissingClasses(upgraded)).toBe(upgraded)
 })

@@ -162,12 +162,18 @@ label input, label select, .display-select select { width: 100%; border: 1px sol
 .fee-setting input { width: 90px; border: 0; margin: 0; }
 .fee-panel { overflow: hidden; }
 .fees-table { overflow-x: auto; }
-.fees-head, .fees-row { min-width: 660px; display: grid; grid-template-columns: minmax(220px, 1.5fr) 100px 120px 130px 120px; align-items: center; }
-.fees-head { min-height: 42px; background: var(--ink); color: #fff; font-size: .72rem; font-weight: 800; }
-.fees-row { min-height: 50px; border-top: 1px solid #e9edf1; font-size: .82rem; }
-.fees-head > *, .fees-row > * { padding: 0 14px; }
-.fees-row label { display: flex; align-items: center; gap: 4px; }
-.fees-row input { width: 90px; margin: 0; padding: 7px; background: var(--yellow); }
+.fees-table:focus-visible { outline-offset: -2px; }
+.fees-table table { width: 100%; border-spacing: 0; font-size: .82rem; font-variant-numeric: tabular-nums; text-align: right; }
+.fees-table th, .fees-table td { padding: 10px 12px; white-space: nowrap; }
+.fees-table tr > :first-child { position: sticky; left: 0; min-width: 9rem; max-width: 12rem; text-align: left; white-space: normal; overflow-wrap: anywhere; }
+.fees-table thead th { background: var(--ink); color: #fff; font-size: .72rem; }
+.fees-table tbody th { background: #fff; }
+.fees-table tbody tr > * { border-bottom: 1px solid #e9edf1; }
+.fees-table tfoot tr > * { background: #e9edf1; font-weight: 700; }
+.fees-table small { display: block; color: var(--muted); }
+.fees-row label { position: relative; display: flex; justify-content: flex-end; align-items: center; gap: 4px; }
+.fees-row input { width: 78px; margin: 0; padding: 7px; background: var(--yellow); text-align: right; }
+.fees-row .owing, .fees-row .paid { font-weight: 700; }
 .fees-row .owing { color: var(--red); }
 .fees-row .paid { color: var(--green-ink); }
 

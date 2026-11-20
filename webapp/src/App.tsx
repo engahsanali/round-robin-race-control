@@ -465,10 +465,50 @@ function Standings({ table }: { table: ReturnType<typeof standings> }) {
 
 function FeesPage({ event, change }: { event: EventData; change: ChangeEvent }) {
   const rows = feeRows(event)
-  const totals = rows.reduce((a, row) => ({ due: a.due + row.due, paid: a.paid + row.paid, balance: a.balance + row.balance }), { due: 0, paid: 0, balance: 0 })
+  const totals = rows.reduce((a, row) => ({
+    entries: a.entries + row.entries, due: a.due + row.due, paid: a.paid + row.paid, balance: a.balance + row.balance,
+  }), { entries: 0, due: 0, paid: 0, balance: 0 })
+  const classTotals = event.mainClasses.map((_, index) => rows.reduce((sum, row) => sum + row.entriesByClass[index], 0))
   const setFee = (value: number) => change(current => addAudit({ ...current, entryFee: Math.max(0, value), updatedAt: new Date().toISOString() }, 'payment', `Entry fee changed to $${value.toFixed(2)}`))
   const setPaid = (nameKey: string, displayName: string, value: number) => change(current => addAudit({ ...current, payments: { ...current.payments, [nameKey]: { nameKey, displayName, paid: Math.max(0, value) } } }, 'payment', `Payment updated for ${displayName}`))
-  return <div className="page-stack"><section className="page-heading"><div><p className="eyebrow">Registration</p><h1>Fees</h1><p>Main entries are tallied into one name-based table. Finals and reraces add no fees.</p></div><label className="fee-setting">Fee per entry<span>$ <input type="number" min="0" step="0.01" value={event.entryFee} onChange={e => setFee(Number(e.target.value))} /></span></label></section><section className="stat-grid three"><article><span>Total due</span><strong>${totals.due.toFixed(2)}</strong></article><article><span>Paid</span><strong>${totals.paid.toFixed(2)}</strong></article><article><span>Balance</span><strong>${totals.balance.toFixed(2)}</strong></article></section><section className="panel fee-panel">{rows.length ? <div className="fees-table"><div className="fees-head"><span>Competitor</span><span>Entries</span><span>Total due</span><span>Paid</span><span>Balance</span></div>{rows.map(row => <div className="fees-row" key={row.nameKey}><strong>{row.displayName}</strong><span>{row.entries}</span><span>${row.due.toFixed(2)}</span><label><span className="sr-only">Paid by {row.displayName}</span>$ <input type="number" min="0" step="0.01" value={row.paid} onChange={e => setPaid(row.nameKey, row.displayName, Number(e.target.value))} /></label><strong className={row.balance ? 'owing' : 'paid'}>${row.balance.toFixed(2)}</strong></div>)}</div> : <Empty title="No fees yet" detail="Enter competitors on the Entries tab to build this table." />}</section></div>
+  return <div className="page-stack">
+    <section className="page-heading">
+      <div><p className="eyebrow">Registration</p><h1>Fees</h1><p>Fees apply to main entries only.</p></div>
+      <label className="fee-setting">Fee per entry<span>$ <input type="number" min="0" step="0.01" value={event.entryFee} onChange={e => setFee(Number(e.target.value))} /></span></label>
+    </section>
+    <section className="stat-grid">
+      <article><span>Total entries</span><strong>{totals.entries}</strong></article>
+      <article><span>Total due</span><strong>${totals.due.toFixed(2)}</strong></article>
+      <article><span>Paid</span><strong>${totals.paid.toFixed(2)}</strong></article>
+      <article><span>Balance</span><strong>${totals.balance.toFixed(2)}</strong></article>
+    </section>
+    <section className="panel fee-panel">
+      {rows.length ? <div className="fees-table" role="region" aria-label="Entry fees by category" tabIndex={0}>
+        <table aria-label="Entry fees by competitor and category">
+          <thead><tr>
+            <th scope="col">Competitor</th>
+            {event.mainClasses.map(raceClass => <th scope="col" key={raceClass.id}>{raceClass.name}</th>)}
+            <th scope="col">Total entries</th><th scope="col">Total due</th><th scope="col">Paid</th><th scope="col">Balance</th>
+          </tr></thead>
+          <tbody>{rows.map(row => <tr className="fees-row" key={row.nameKey}>
+            <th scope="row">{row.displayName}</th>
+            {event.mainClasses.map((raceClass, index) => {
+              const entries = row.entriesByClass[index]
+              return <td key={raceClass.id}>{entries ? <>{entries}<small>${(entries * event.entryFee).toFixed(2)}</small></> : '—'}</td>
+            })}
+            <td>{row.entries}</td><td>${row.due.toFixed(2)}</td>
+            <td><label><span className="sr-only">Paid by {row.displayName}</span>$ <input type="number" min="0" step="0.01" value={row.paid} onChange={e => setPaid(row.nameKey, row.displayName, Number(e.target.value))} /></label></td>
+            <td className={row.balance ? 'owing' : 'paid'}>${row.balance.toFixed(2)}</td>
+          </tr>)}</tbody>
+          <tfoot><tr>
+            <th scope="row">Event total</th>
+            {event.mainClasses.map((raceClass, index) => <td key={raceClass.id}>{classTotals[index]}<small>${(classTotals[index] * event.entryFee).toFixed(2)}</small></td>)}
+            <td>{totals.entries}</td><td>${totals.due.toFixed(2)}</td><td>${totals.paid.toFixed(2)}</td><td>${totals.balance.toFixed(2)}</td>
+          </tr></tfoot>
+        </table>
+      </div> : <Empty title="No fees yet" detail="Enter competitors on the Entries tab to build this table." />}
+    </section>
+  </div>
 }
 
 function DisplayPage({ event }: { event: EventData }) {

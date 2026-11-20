@@ -21,7 +21,7 @@ The app lets a race organiser set up, run, score, and publish a multi-class roun
 ## 3. Core workflow
 
 1. Create an event and keep the private admin link secure.
-2. Enter cars into any of four classes and six preliminary brackets per class.
+2. Enter cars into any of six classes and six preliminary brackets per class.
 3. Generate or shuffle the scheduled matchups.
 4. Run Bracket A, Bracket B, or any other bracket independently, including from different tabs/devices.
 5. Tap the winner for each heat; the app updates W/L records and ranking.
@@ -40,7 +40,8 @@ The app lets a race organiser set up, run, score, and publish a multi-class roun
 
 ### 4.2 Classes, brackets, and entries
 
-- Support four main classes and six preliminary brackets per class.
+- Support Box Stock, Stock Advance, BMAX NCFM, BMAX Mixed, BMAX Speed, and Open, with six preliminary brackets per class.
+- Add Stock Advance and BMAX Speed to older four-class events without changing the existing brackets or results.
 - Support the corresponding finals groups and six rerace groups.
 - Allow multiple cars owned by the same person, including within one bracket.
 - Require unique car numbers inside a bracket.
@@ -68,7 +69,8 @@ The app lets a race organiser set up, run, score, and publish a multi-class roun
 
 ### 4.5 Fees and exports
 
-- Tally entry quantities and amounts into one owner-based fee table.
+- Show entry counts and fees by class in one owner-based table, with totals per owner and for the event.
+- Apply the event's fee per entry to main entries only.
 - Aggregate repeated owner names into one payment row while retaining all of their cars.
 - Support the separate $15 entry workflow.
 - Export results as CSV.

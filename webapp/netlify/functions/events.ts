@@ -1,5 +1,6 @@
 import { getStore } from '@netlify/blobs'
 import type { Config, Context } from '@netlify/functions'
+import { addMissingClasses, CLASS_COUNT, LEGACY_CLASS_COUNT } from '../../src/race-layout'
 import type { AuditItem, EventData, GroupRecord, RaceClass, RaceGroup } from '../../src/types'
 
 const store = getStore({ name: 'round-robin-events', consistency: 'strong' })
@@ -43,7 +44,8 @@ function groupIsSafe(group: RaceGroup) {
 function eventIsSafe(event: EventData) {
   if (!event || typeof event !== 'object' || typeof event.name !== 'string' || event.name.length > 120 || typeof event.venue !== 'string' || event.venue.length > 160) return false
   if (typeof event.date !== 'string' || event.date.length > 20 || !Number.isFinite(event.entryFee) || event.entryFee < 0 || event.entryFee > 1000) return false
-  if (!['draft', 'live', 'complete'].includes(event.status) || !Array.isArray(event.mainClasses) || event.mainClasses.length !== 4 || !Array.isArray(event.finalsClasses) || event.finalsClasses.length !== 4 || !Array.isArray(event.reraces) || event.reraces.length !== 6) return false
+  if (!['draft', 'live', 'complete'].includes(event.status) || !Array.isArray(event.mainClasses) || !Array.isArray(event.finalsClasses) || event.mainClasses.length !== event.finalsClasses.length ||
+      ![LEGACY_CLASS_COUNT, CLASS_COUNT].includes(event.mainClasses.length) || !Array.isArray(event.reraces) || event.reraces.length !== 6) return false
   const classes = [...event.mainClasses, ...event.finalsClasses]
   if (classes.some(c => !c || typeof c.name !== 'string' || c.name.length > 80 || !Array.isArray(c.groups) || c.groups.length !== 6)) return false
   if (![...classes.flatMap(c => c.groups), ...event.reraces].every(groupIsSafe)) return false
@@ -98,6 +100,7 @@ async function groupSnapshot(base: EventData, groupId: string) {
 }
 
 async function hydrateEvent(base: EventData): Promise<EventData> {
+  base = addMissingClasses(base)
   const prefix = `group/${base.id}/`
   const listed = await store.list({ prefix })
   const records = await Promise.all(listed.blobs.map(blob => store.get(blob.key, { type: 'json' }) as Promise<GroupRecord | null>))
@@ -136,13 +139,13 @@ export default async (req: Request, context: Context) => {
       const ownerKey = randomToken(24)
       const now = new Date().toISOString()
       const addRevisions = (classes: RaceClass[]) => classes.map(cls => ({ ...cls, groups: cls.groups.map(group => ({ ...group, revision: group.revision ?? 0 })) }))
+      const draft = addMissingClasses({ ...body.event, id: eventId })
       const event = {
-        ...body.event,
-        id: eventId,
+        ...draft,
         version: 1,
-        mainClasses: addRevisions(body.event.mainClasses),
-        finalsClasses: addRevisions(body.event.finalsClasses),
-        reraces: body.event.reraces.map(group => ({ ...group, revision: group.revision ?? 0 })),
+        mainClasses: addRevisions(draft.mainClasses),
+        finalsClasses: addRevisions(draft.finalsClasses),
+        reraces: draft.reraces.map(group => ({ ...group, revision: group.revision ?? 0 })),
         createdAt: now,
         updatedAt: now,
       }
@@ -170,7 +173,8 @@ export default async (req: Request, context: Context) => {
       const raw = await req.text()
       if (raw.length > GROUP_LIMIT) return json({ error: 'Bracket is too large.' }, 413)
       const body = JSON.parse(raw) as { group?: RaceGroup; audit?: AuditItem[]; expectedRevision?: number }
-      const current = await groupSnapshot(base, groupId)
+      const bracketBase = addMissingClasses(base)
+      const current = await groupSnapshot(bracketBase, groupId)
       if (!current) return json({ error: 'Bracket not found.' }, 404)
       const revision = current.record.group.revision ?? 0
       if (body.expectedRevision !== revision) return json({ error: 'This bracket changed in another tab.', group: current.record.group, audit: current.record.audit }, 409)
@@ -183,7 +187,7 @@ export default async (req: Request, context: Context) => {
       const options = current.etag ? { onlyIfMatch: current.etag } : { onlyIfNew: true }
       const result = await store.setJSON(groupKey(id, groupId), record, options)
       if (!result.modified) {
-        const latest = await groupSnapshot(base, groupId)
+        const latest = await groupSnapshot(bracketBase, groupId)
         return json({ error: 'This bracket changed in another tab.', group: latest?.record.group ?? current.record.group, audit: latest?.record.audit ?? current.record.audit }, 409)
       }
       return json({ group: record.group, audit: record.audit, updatedAt: now })
