@@ -16,6 +16,13 @@ page.on('console', message => { if (message.type() === 'error' && !message.text(
 page.on('pageerror', error => errors.push(error.message))
 
 await page.goto(`${baseUrl}/`, { waitUntil: 'networkidle' })
+const credit = page.getByRole('contentinfo').filter({ hasText: 'Created by Ahsan Ali' })
+if (!(await credit.innerText()).includes('Free to use.') || await credit.getByRole('link').count() !== 1) {
+  throw new Error('Home page credit did not show the free-to-use message and website only')
+}
+if (await credit.getByRole('link', { name: 'AhsanTechLabs.com' }).getAttribute('href') !== 'https://ahsantechlabs.com/') {
+  throw new Error('Creator credit link is missing or incorrect')
+}
 await page.screenshot({ path: path('landing-desktop.png') })
 await page.getByLabel('Event name').fill('Web App Acceptance Race')
 await page.getByLabel('Venue').fill('Test Track')
@@ -66,12 +73,18 @@ await assertFeeCell(sharedOwnerFee, 'Stock Advance', '1\n$15.00')
 await assertFeeCell(sharedOwnerFee, 'BMAX Speed', '1\n$15.00')
 await assertFeeCell(sharedOwnerFee, 'Total entries', '6')
 await assertFeeCell(sharedOwnerFee, 'Total due', '$90.00')
+const feeHeaders = await feeTable.getByRole('columnheader').allTextContents()
+const dueIndex = feeHeaders.indexOf('Total due')
+if (feeHeaders.slice(dueIndex + 1, dueIndex + 3).join(',') !== 'Prize,Paid') throw new Error('Prize belongs between Total due and Paid')
+await page.getByLabel('Prize for Shared Owner').fill('12.50')
 await page.getByLabel('Paid by Shared Owner').fill('30')
-await assertFeeCell(sharedOwnerFee, 'Balance', '$60.00')
+await assertFeeCell(sharedOwnerFee, 'Balance', '$47.50')
 const eventTotal = feeTable.locator('tfoot tr')
 await assertFeeCell(eventTotal, 'Box Stock', '6\n$90.00')
 await assertFeeCell(eventTotal, 'Total entries', '8')
 await assertFeeCell(eventTotal, 'Total due', '$120.00')
+await assertFeeCell(eventTotal, 'Prize', '$12.50')
+await assertFeeCell(eventTotal, 'Balance', '$77.50')
 await page.screenshot({ path: path('fees-desktop.png') })
 
 await page.getByRole('button', { name: 'Reraces', exact: true }).click()
@@ -98,6 +111,7 @@ if (deployed) {
   const ownerData = await ownerResponse.json()
   if (!ownerResponse.ok || ownerData.role !== 'owner') throw new Error('Admin event could not be reloaded from Netlify storage')
   if (ownerData.event.payments['shared owner']?.paid !== 30) throw new Error('Fee payment was not saved')
+  if (ownerData.event.payments['shared owner']?.prize !== 12.50) throw new Error('Prize was not saved')
   for (const category of ['Stock Advance', 'BMAX Speed']) {
     if (ownerData.event.mainClasses.find(item => item.name === category)?.groups[0].entrants[0].name !== 'Shared Owner') {
       throw new Error(`Entries for ${category} were not saved`)

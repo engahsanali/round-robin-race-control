@@ -35,6 +35,7 @@ export interface Payment {
   nameKey: string
   displayName: string
   paid: number
+  prize?: number
 }
 
 export interface AuditItem {

@@ -203,9 +203,11 @@ export function feeRows(event: EventData) {
     }
   })
   return [...totals.entries()].map(([nameKey, total]) => {
-    const payment: Payment = event.payments[nameKey] ?? { nameKey, displayName: total.displayName, paid: 0 }
+    const payment: Payment | undefined = Object.hasOwn(event.payments, nameKey) ? event.payments[nameKey] : undefined
+    const paid = payment?.paid ?? 0
+    const prize = payment?.prize ?? 0
     const due = total.entries * event.entryFee
-    return { ...total, nameKey, paid: payment.paid, due, balance: Math.max(0, due - payment.paid) }
+    return { ...total, nameKey, paid, prize, due, balance: Math.max(0, Math.round((due - paid - prize) * 100) / 100) }
   }).sort((a, b) => a.displayName.localeCompare(b.displayName))
 }
 

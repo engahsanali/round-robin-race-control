@@ -139,6 +139,16 @@ describe('scoring and fees', () => {
     })
     expect(feeRows(event)).toMatchObject([{ displayName: 'Shared Owner', entries: 4, due: 60, balance: 60 }])
   })
+
+  it('deducts prize credit separately from cash paid and floors the balance at zero', () => {
+    const event = createEvent('Test', '2026-11-20', '')
+    Object.assign(event.mainClasses[0].groups[0].entrants[0], { name: 'Shared Owner', carNumber: '1' })
+    const payment = { nameKey: 'shared owner', displayName: 'Shared Owner', paid: 5, prize: 2.25 }
+    event.payments[payment.nameKey] = payment
+    expect(feeRows(event)).toMatchObject([{ due: 15, prize: 2.25, paid: 5, balance: 7.75 }])
+    payment.prize = 20
+    expect(feeRows(event)).toMatchObject([{ due: 15, prize: 20, paid: 5, balance: 0 }])
+  })
 })
 
 it('adds both categories to legacy events with stable bracket IDs and existing race state intact', () => {

@@ -50,6 +50,7 @@ function eventIsSafe(event: EventData) {
   if (classes.some(c => !c || typeof c.name !== 'string' || c.name.length > 80 || !Array.isArray(c.groups) || c.groups.length !== 6)) return false
   if (![...classes.flatMap(c => c.groups), ...event.reraces].every(groupIsSafe)) return false
   if (!event.payments || typeof event.payments !== 'object' || Array.isArray(event.payments) || !Array.isArray(event.audit) || event.audit.length > 250 || !event.audit.every(auditItemIsSafe)) return false
+  if (Object.values(event.payments).some(payment => payment?.prize !== undefined && (!Number.isFinite(payment.prize) || payment.prize < 0))) return false
   return JSON.stringify(event).length < EVENT_LIMIT
 }
 
@@ -199,6 +200,11 @@ export default async (req: Request, context: Context) => {
       const body = JSON.parse(raw) as { event?: EventData; expectedVersion?: number }
       if (body.expectedVersion !== base.version) return json({ error: 'This event changed on another device.', event: await hydrateEvent(base) }, 409)
       if (!body.event || body.event.id !== id || !eventIsSafe(body.event)) return json({ error: 'Invalid event data.' }, 400)
+      // An older client can update cash paid without sending the prize field.
+      const payments = Object.fromEntries(Object.entries(body.event.payments).map(([name, payment]) => {
+        const prize = base.payments[name]?.prize
+        return [name, payment && payment.prize === undefined && prize !== undefined ? { ...payment, prize } : payment]
+      }))
       const now = new Date().toISOString()
       const saved: EventData = {
         ...base,
@@ -207,7 +213,7 @@ export default async (req: Request, context: Context) => {
         venue: body.event.venue,
         entryFee: body.event.entryFee,
         status: body.event.status,
-        payments: body.event.payments,
+        payments,
         audit: body.event.audit,
         version: base.version + 1,
         createdAt: base.createdAt,

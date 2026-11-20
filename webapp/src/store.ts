@@ -1,6 +1,13 @@
 import type { AuditItem, EventData, RaceGroup } from './types'
 
-const INDEX = 'round-robin-event-index'
+const EVENT_PREFIX = 'round-robin-event:'
+const DRAFT_PREFIX = 'round-robin-draft:'
+
+export interface LocalDraft {
+  id: string
+  event: EventData
+  scopes: string[]
+}
 
 export class SaveConflict extends Error {
   constructor(public remote: EventData) { super('This event changed on another device.') }
@@ -10,29 +17,53 @@ export class GroupSaveConflict extends Error {
   constructor(public remote: RaceGroup, public audit: AuditItem[]) { super('This bracket changed in another tab.') }
 }
 
-function index(): string[] {
-  try { return JSON.parse(localStorage.getItem(INDEX) ?? '[]') as string[] } catch { return [] }
+export function saveLocal(event: EventData, ownerKey?: string) {
+  try {
+    const key = `round-robin-key:${event.id}`
+    if (!ownerKey && localStorage.getItem(key)) return true
+    if (ownerKey) localStorage.setItem(key, ownerKey)
+    localStorage.setItem(EVENT_PREFIX + event.id, JSON.stringify(event))
+    return true
+  } catch { return false }
 }
 
-export function saveLocal(event: EventData, ownerKey?: string) {
-  localStorage.setItem(`round-robin-event:${event.id}`, JSON.stringify(event))
-  localStorage.setItem(INDEX, JSON.stringify([event.id, ...index().filter(id => id !== event.id)].slice(0, 20)))
-  if (ownerKey) localStorage.setItem(`round-robin-key:${event.id}`, ownerKey)
+export function saveLocalDraft(draft: LocalDraft) {
+  try {
+    const key = DRAFT_PREFIX + draft.id
+    if (draft.scopes.length) localStorage.setItem(key, JSON.stringify(draft))
+    else localStorage.removeItem(key)
+    return true
+  } catch { return false }
+}
+
+export function localDrafts(): LocalDraft[] {
+  try {
+    return Object.keys(localStorage).filter(key => key.startsWith(DRAFT_PREFIX))
+      .map(key => JSON.parse(localStorage.getItem(key) ?? 'null') as LocalDraft | null)
+      .filter((draft): draft is LocalDraft => Boolean(draft?.event?.id && draft.scopes?.length))
+      .sort((a, b) => b.event.updatedAt.localeCompare(a.event.updatedAt))
+  } catch { return [] }
 }
 
 export function loadLocal(id: string): EventData | null {
-  try { return JSON.parse(localStorage.getItem(`round-robin-event:${id}`) ?? 'null') as EventData | null } catch { return null }
+  try { return JSON.parse(localStorage.getItem(EVENT_PREFIX + id) ?? 'null') as EventData | null } catch { return null }
 }
 
 export function localEvents(): EventData[] {
-  return index().map(loadLocal).filter(Boolean) as EventData[]
+  try {
+    return Object.keys(localStorage).filter(key => key.startsWith(EVENT_PREFIX))
+      .map(key => loadLocal(key.slice(EVENT_PREFIX.length)))
+      .filter((event): event is EventData => Boolean(event))
+      .sort((a, b) => b.updatedAt.localeCompare(a.updatedAt))
+  } catch { return [] }
 }
 
 export function savedKey(id: string): string {
-  const match = location.hash.match(/(?:^#|&)key=([^&]+)/)
-  const fromHash = match ? decodeURIComponent(match[1]) : ''
-  if (fromHash) localStorage.setItem(`round-robin-key:${id}`, fromHash)
-  return fromHash || localStorage.getItem(`round-robin-key:${id}`) || ''
+  const fromHash = new URLSearchParams(location.search).get('event') === id
+    ? new URLSearchParams(location.hash.slice(1)).get('key') : null
+  try {
+    return fromHash || localStorage.getItem(`round-robin-key:${id}`) || ''
+  } catch { return fromHash || '' }
 }
 
 async function request(path: string, init: RequestInit = {}) {

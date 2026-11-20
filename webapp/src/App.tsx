@@ -3,7 +3,8 @@ import {
   addAudit, allGroups, cleanName, completedHeatCount, createEvent, eventToCsv, feeRows, findGroup,
   groupStatus, groupValidation, reconcileEvent, reconcileGroup, redrawGroup, replaceGroup, setWinner, standings, validEntrants,
 } from './domain'
-import { createRemote, GroupSaveConflict, loadLocal, loadRemote, localEvents, SaveConflict, saveLocal, savedKey, updateRemote, updateRemoteGroup } from './store'
+import { createRemote, GroupSaveConflict, loadLocal, loadRemote, localDrafts, localEvents, SaveConflict, saveLocal, saveLocalDraft, savedKey, updateRemote, updateRemoteGroup } from './store'
+import type { LocalDraft } from './store'
 import { changedScheduleGroupIds, mergeAudits, mergeRemoteEvent, mergeSavedGroup, META_SCOPE } from './sync'
 import type { AuditItem, Entrant, EventData, RaceClass, RaceGroup } from './types'
 
@@ -11,6 +12,11 @@ type View = 'overview' | 'entries' | 'race' | 'fees' | 'finals' | 'reraces' | 'd
 type ChangeEvent = (updater: (event: EventData) => EventData, groupId?: string) => void
 type DirtyScopes = Record<string, number>
 type GroupConflict = { local: RaceGroup; remote: RaceGroup; audit: AuditItem[] }
+type EventSession = { draftId: string; recovery?: LocalDraft; saving: boolean }
+
+function newSession(recovery?: LocalDraft): EventSession {
+  return { draftId: recovery?.id ?? crypto.randomUUID(), recovery, saving: false }
+}
 
 const views: Array<{ id: View; label: string }> = [
   { id: 'overview', label: 'Overview' }, { id: 'entries', label: 'Entries' }, { id: 'race', label: 'Race day' },
@@ -44,11 +50,14 @@ export default function App() {
   const [eventId, setEventId] = useState<string | null>(initial.get('event'))
   const [event, setEvent] = useState<EventData | null>(null)
   const eventRef = useRef<EventData | null>(null)
+  const [initialSession] = useState(() => newSession())
+  const sessionRef = useRef(initialSession)
   const [ownerKey, setOwnerKey] = useState('')
   const [role, setRole] = useState<'owner' | 'viewer'>('viewer')
   const [view, setView] = useState<View>(initial.get('mode') === 'display' ? 'display' : 'overview')
   const [loading, setLoading] = useState(Boolean(eventId))
   const [loadError, setLoadError] = useState('')
+  const [localStorageAvailable, setLocalStorageAvailable] = useState(true)
   const [dirtyScopes, setDirtyScopes] = useState<DirtyScopes>({})
   const dirtyScopesRef = useRef<DirtyScopes>({})
   const [sync, setSync] = useState<'saved' | 'saving' | 'offline' | 'conflict'>('saved')
@@ -75,7 +84,22 @@ export default function App() {
     return () => observer.disconnect()
   }, [event?.id, loading, publicMode])
 
-  useEffect(() => { eventRef.current = event; if (event) saveLocal(event, ownerKey) }, [event, ownerKey])
+  useLayoutEffect(() => {
+    eventRef.current = event
+    if (!event || loading || event.id !== eventId) return
+    if (role !== 'owner' || publicMode) {
+      saveLocal(event)
+      return
+    }
+    const scopes = event.id.startsWith('local-') ? []
+      : [...new Set([...Object.keys(dirtyScopes), ...Object.keys(groupConflicts), ...(conflict ? [META_SCOPE] : [])])]
+    const draft = { id: sessionRef.current.draftId, event, scopes }
+    // Keep the pending copy until the clean snapshot has been stored.
+    const saved = scopes.length
+      ? saveLocalDraft(draft)
+      : saveLocal(event, ownerKey) && saveLocalDraft(draft)
+    setLocalStorageAvailable(saved)
+  }, [event, eventId, loading, ownerKey, role, publicMode, dirtyScopes, groupConflicts, conflict])
 
   const updateDirtyScopes = (updater: (current: DirtyScopes) => DirtyScopes) => {
     setDirtyScopes(current => {
@@ -87,43 +111,53 @@ export default function App() {
 
   const markDirty = (scope: string) => updateDirtyScopes(current => ({ ...current, [scope]: (current[scope] ?? 0) + 1 }))
 
-  const open = useCallback((id: string, key = '') => {
-    const url = eventUrl(id, key)
-    history.pushState({}, '', url)
+  const activate = useCallback((id: string | null, key = '', recovery?: LocalDraft) => {
+    sessionRef.current = newSession(recovery)
+    eventRef.current = null
     dirtyScopesRef.current = {}
     setDirtyScopes({}); setConflict(null); setGroupConflicts({})
-    setEventId(id); setEvent(null); setOwnerKey(key); setView('overview'); setLoading(true); setLoadError('')
+    setEventId(id); setEvent(null); setOwnerKey(key); setRole('viewer'); setView('overview')
+    setLoading(Boolean(id)); setLoadError(''); setLocalStorageAvailable(true)
   }, [])
+  const open = (id: string, key = '', recovery?: LocalDraft) => {
+    history.pushState({}, '', eventUrl(id, key))
+    activate(id, key, recovery)
+  }
 
   useEffect(() => {
     const pop = () => {
       const params = new URLSearchParams(location.search)
-      setEventId(params.get('event')); setView(params.get('mode') === 'display' ? 'display' : 'overview')
+      activate(params.get('event'))
     }
     addEventListener('popstate', pop); return () => removeEventListener('popstate', pop)
-  }, [])
+  }, [activate])
 
   useEffect(() => {
     if (!eventId) { setLoading(false); return }
     let live = true
-    const key = ownerKey || savedKey(eventId)
+    const recovery = publicMode ? undefined : sessionRef.current.recovery
+    const key = publicMode ? '' : ownerKey || savedKey(eventId)
     if (key !== ownerKey) setOwnerKey(key)
     setLoading(true)
     loadRemote(eventId, key).then(result => {
       if (!live) return
-      const prepared = reconcileEvent(result.event)
+      const remote = reconcileEvent(result.event)
+      const draft = result.role === 'owner' ? recovery : undefined
+      const draftScopes = draft?.scopes ?? []
+      const prepared = draft ? mergeRemoteEvent(draft.event, remote, new Set(draftScopes.filter(scope => scope !== META_SCOPE)), draftScopes.includes(META_SCOPE)) : remote
       const repairs = result.role === 'owner' ? changedScheduleGroupIds(result.event, prepared) : []
-      const nextDirty = Object.fromEntries(repairs.map(groupId => [groupId, 1]))
+      const nextDirty = Object.fromEntries([...repairs, ...draftScopes].map(scope => [scope, 1]))
+      if (result.role === 'owner' && !draft) saveLocal(remote, key)
       dirtyScopesRef.current = nextDirty
       eventRef.current = prepared
-      setDirtyScopes(nextDirty); setEvent(prepared); setRole(result.role); setSync(repairs.length ? 'saving' : 'saved'); setLoading(false)
+      setDirtyScopes(nextDirty); setEvent(prepared); setRole(result.role); setSync(Object.keys(nextDirty).length ? 'saving' : 'saved'); setLoading(false)
     }).catch(error => {
       if (!live) return
-      const local = loadLocal(eventId)
+      const local = recovery?.event ?? loadLocal(eventId)
       if (local) {
-        const prepared = reconcileEvent(local)
+        const prepared = reconcileEvent(key ? local : { ...local, payments: {}, audit: [] })
         const repairs = key ? changedScheduleGroupIds(local, prepared) : []
-        const nextDirty = Object.fromEntries(repairs.map(groupId => [groupId, 1]))
+        const nextDirty = Object.fromEntries([...repairs, ...(key ? recovery?.scopes ?? [] : [])].map(scope => [scope, 1]))
         dirtyScopesRef.current = nextDirty
         eventRef.current = prepared
         setDirtyScopes(nextDirty); setEvent(prepared); setRole(key ? 'owner' : 'viewer'); setSync('offline'); setLoading(false)
@@ -131,16 +165,20 @@ export default function App() {
       else { setLoadError(error instanceof Error ? error.message : 'Event could not be opened.'); setLoading(false) }
     })
     return () => { live = false }
-  }, [eventId, ownerKey])
+  }, [eventId, ownerKey, publicMode])
 
   useEffect(() => {
-    if (!event || !Object.keys(dirtyScopes).length || !ownerKey) return
+    const session = sessionRef.current
+    if (!event || loading || event.id !== eventId || !ownerKey || role !== 'owner' || session.saving) return
+    const scheduled = Object.entries(dirtyScopes).filter(([scope]) => scope === META_SCOPE ? !conflict : !groupConflicts[scope])
+    if (!scheduled.length) return
     if (event.id.startsWith('local-')) { setSync('offline'); return }
     const snapshot = event
-    const scheduled = { ...dirtyScopes }
     const timer = setTimeout(async () => {
+      if (sessionRef.current !== session) return
+      session.saving = true
       setSync('saving')
-      const outcomes = await Promise.all(Object.entries(scheduled).map(async ([scope, generation]) => {
+      const outcomes = await Promise.all(scheduled.map(async ([scope, generation]) => {
         try {
           if (scope === META_SCOPE) return { scope, generation, value: await updateRemote(snapshot, ownerKey) }
           const group = findGroup(snapshot, scope)
@@ -149,6 +187,8 @@ export default function App() {
           return { scope, generation, value: await updateRemoteGroup(snapshot.id, group, audit, ownerKey) }
         } catch (error) { return { scope, generation, error } }
       }))
+      session.saving = false
+      if (sessionRef.current !== session) return
 
       let nextEvent = eventRef.current ?? snapshot
       let nextDirty = { ...dirtyScopesRef.current }
@@ -172,8 +212,10 @@ export default function App() {
 
         const newerChangesExist = nextDirty[outcome.scope] !== outcome.generation
         if (outcome.scope === META_SCOPE) {
-          const protectedGroups = new Set(Object.keys(nextDirty).filter(scope => scope !== META_SCOPE))
-          nextEvent = mergeRemoteEvent(nextEvent, outcome.value as EventData, protectedGroups, newerChangesExist)
+          const protectedGroups = new Set([...Object.keys(nextDirty).filter(scope => scope !== META_SCOPE), ...Object.keys(groupConflicts)])
+          const saved = outcome.value as EventData
+          nextEvent = mergeRemoteEvent(nextEvent, saved, protectedGroups, newerChangesExist)
+          nextEvent = { ...nextEvent, version: saved.version }
         } else {
           const saved = outcome.value as { group: RaceGroup; audit: AuditItem[] }
           nextEvent = mergeSavedGroup(nextEvent, saved.group, saved.audit, newerChangesExist)
@@ -196,14 +238,17 @@ export default function App() {
       setSync(hasConflict ? 'conflict' : failedOffline ? 'offline' : Object.keys(nextDirty).length ? 'saving' : 'saved')
     }, 650)
     return () => clearTimeout(timer)
-  }, [dirtyScopes, event, ownerKey, conflict, groupConflicts])
+  }, [dirtyScopes, event, eventId, loading, ownerKey, role, conflict, groupConflicts])
 
   useEffect(() => {
-    if (!eventId) return
+    if (!eventId || loading) return
+    const session = sessionRef.current
+    let active = true
     const timer = setInterval(async () => {
       if (sync === 'saving') return
       try {
         const result = await loadRemote(eventId, ownerKey)
+        if (!active || sessionRef.current !== session || session.saving) return
         const current = eventRef.current
         if (current) {
           const prepared = reconcileEvent(result.event)
@@ -224,10 +269,10 @@ export default function App() {
           }
         }
         if (!Object.keys(dirtyScopesRef.current).length && !conflict && !Object.keys(groupConflicts).length) setSync('saved')
-      } catch { setSync('offline') }
+      } catch { if (active && sessionRef.current === session) setSync('offline') }
     }, 3000)
-    return () => clearInterval(timer)
-  }, [eventId, ownerKey, sync, conflict, groupConflicts])
+    return () => { active = false; clearInterval(timer) }
+  }, [eventId, loading, ownerKey, sync, conflict, groupConflicts])
 
   const change: ChangeEvent = (updater, groupId) => {
     if (role !== 'owner') return
@@ -242,8 +287,7 @@ export default function App() {
 
   const close = () => {
     history.pushState({}, '', location.pathname)
-    dirtyScopesRef.current = {}
-    setEventId(null); setEvent(null); setOwnerKey(''); setDirtyScopes({}); setConflict(null); setGroupConflicts({}); setView('overview')
+    activate(null)
   }
 
   if (!eventId) return <Home onOpen={open} onCreate={async draft => {
@@ -272,6 +316,11 @@ export default function App() {
     const protectedGroups = new Set([...Object.keys(dirtyScopes).filter(scope => scope !== META_SCOPE), ...Object.keys(groupConflicts)])
     const next = mergeRemoteEvent(eventRef.current ?? event, conflict, protectedGroups, false)
     eventRef.current = next
+    updateDirtyScopes(current => {
+      const next = { ...current }
+      delete next[META_SCOPE]
+      return next
+    })
     setEvent(next); setConflict(null); setSync(pendingCount ? 'saving' : Object.keys(groupConflicts).length ? 'conflict' : 'saved')
   }
   const keepLocalEvent = () => {
@@ -290,6 +339,11 @@ export default function App() {
       return next
     })
     removeGroupConflict(groupId)
+    updateDirtyScopes(current => {
+      const next = { ...current }
+      delete next[groupId]
+      return next
+    })
     setSync(conflict || Object.keys(groupConflicts).length > 1 ? 'conflict' : pendingCount ? 'saving' : 'saved')
   }
   const keepLocalGroup = (groupId: string, item: GroupConflict) => {
@@ -313,6 +367,7 @@ export default function App() {
         </div>
       </header>
 
+      {!localStorageAvailable && <div className="conflict-banner" role="status">This browser could not save a recovery copy. Keep this tab open until the event is saved online.</div>}
       {conflict && <div className="conflict-banner" role="alert"><div><strong>Event settings changed on another device.</strong><span>Bracket results are safe. Choose which event details or payments to keep.</span></div><div><button onClick={useSavedEvent}>Use saved event</button><button className="danger" onClick={keepLocalEvent}>Keep this tab</button></div></div>}
       {groupConflictEntry && <div className="conflict-banner" role="alert"><div><strong>{findGroup(event, groupConflictEntry[0])?.label ?? 'This bracket'} changed in another tab.</strong><span>Only this bracket needs a decision; every other bracket can continue saving.</span></div><div><button onClick={() => useSavedGroup(groupConflictEntry[0], groupConflictEntry[1])}>Use saved bracket</button><button className="danger" onClick={() => keepLocalGroup(groupConflictEntry[0], groupConflictEntry[1])}>Keep this tab</button></div></div>}
 
@@ -337,13 +392,14 @@ function FullState({ title, detail, action }: { title: string; detail: string; a
   return <main className="full-state"><span className="brand-mark large">RR</span><h1>{title}</h1><p>{detail}</p>{action}</main>
 }
 
-function Home({ onOpen, onCreate }: { onOpen: (id: string, key?: string) => void; onCreate: (event: EventData) => Promise<void> }) {
+function Home({ onOpen, onCreate }: { onOpen: (id: string, key?: string, recovery?: LocalDraft) => void; onCreate: (event: EventData) => Promise<void> }) {
   const [name, setName] = useState('')
   const [date, setDate] = useState(new Date().toISOString().slice(0, 10))
   const [venue, setVenue] = useState('')
   const [creating, setCreating] = useState(false)
   const [error, setError] = useState('')
   const recent = localEvents()
+  const drafts = localDrafts()
   const submit = async (e: React.FormEvent) => {
     e.preventDefault(); setCreating(true); setError('')
     try { await onCreate(createEvent(name, date, venue)) } catch (err) { setError(err instanceof Error ? err.message : 'Event could not be created.'); setCreating(false) }
@@ -358,7 +414,15 @@ function Home({ onOpen, onCreate }: { onOpen: (id: string, key?: string) => void
   return <div className="landing">
     <section className="landing-intro"><div className="landing-brand"><span className="brand-mark large">RR</span><span>Round Robin</span></div><h1>Run the whole race day from one clear screen.</h1><p>Entries, fair draws, winners, W/L records, fees, finals and reraces. Saved after every change.</p><div className="feature-list"><span>Works on phone, tablet and laptop</span><span>Offline copy on this device</span><span>Separate public display link</span></div></section>
     <section className="start-card"><p className="eyebrow">New event</p><h2>Set up a race</h2><form onSubmit={submit}><label>Event name<input required maxLength={120} value={name} onChange={e => setName(e.target.value)} placeholder="September club race" /></label><div className="form-pair"><label>Date<input required type="date" value={date} onChange={e => setDate(e.target.value)} /></label><label>Venue<input maxLength={160} value={venue} onChange={e => setVenue(e.target.value)} placeholder="Track or venue" /></label></div>{error && <p className="form-error" role="alert">{error}</p>}<button className="primary full" disabled={creating}>{creating ? 'Creating…' : 'Create event'}</button></form><label className="import-link">Import event backup<input type="file" accept="application/json,.json" onChange={e => e.target.files?.[0] && importBackup(e.target.files[0])} /></label></section>
-    {recent.length > 0 && <section className="recent"><p className="eyebrow">This device</p><h2>Recent events</h2><div className="recent-grid">{recent.map(event => <button key={event.id} onClick={() => onOpen(event.id, savedKey(event.id))}><strong>{event.name}</strong><span>{event.date || 'No date'} · {event.status}</span></button>)}</div></section>}
+    {drafts.length > 0 && <section className="recent"><h2>Unsaved edits on this browser</h2><div className="recent-grid">
+      {drafts.map(draft => <button key={draft.id} onClick={() => onOpen(draft.event.id, savedKey(draft.event.id), draft)}>
+        <strong>Resume edits for {draft.event.name}</strong><span>{new Date(draft.event.updatedAt).toLocaleString()}</span>
+      </button>)}
+    </div></section>}
+    {recent.length > 0 && <section className="recent"><p className="eyebrow">This device</p><h2>Recent events</h2><p>Reopen an event in this browser even if you forgot to copy its link.</p><div className="recent-grid">{recent.map(event => <button key={event.id} onClick={() => onOpen(event.id, savedKey(event.id))}><strong>{event.name}</strong><span>{event.date || 'No date'} · {event.status}</span></button>)}</div></section>}
+    <footer className="project-credit">
+      Free to use. Created by Ahsan Ali at <a href="https://ahsantechlabs.com/">AhsanTechLabs.com</a>.
+    </footer>
   </div>
 }
 
@@ -466,19 +530,26 @@ function Standings({ table }: { table: ReturnType<typeof standings> }) {
 function FeesPage({ event, change }: { event: EventData; change: ChangeEvent }) {
   const rows = feeRows(event)
   const totals = rows.reduce((a, row) => ({
-    entries: a.entries + row.entries, due: a.due + row.due, paid: a.paid + row.paid, balance: a.balance + row.balance,
-  }), { entries: 0, due: 0, paid: 0, balance: 0 })
+    entries: a.entries + row.entries, due: a.due + row.due, prize: a.prize + row.prize, paid: a.paid + row.paid, balance: a.balance + row.balance,
+  }), { entries: 0, due: 0, prize: 0, paid: 0, balance: 0 })
   const classTotals = event.mainClasses.map((_, index) => rows.reduce((sum, row) => sum + row.entriesByClass[index], 0))
   const setFee = (value: number) => change(current => addAudit({ ...current, entryFee: Math.max(0, value), updatedAt: new Date().toISOString() }, 'payment', `Entry fee changed to $${value.toFixed(2)}`))
-  const setPaid = (nameKey: string, displayName: string, value: number) => change(current => addAudit({ ...current, payments: { ...current.payments, [nameKey]: { nameKey, displayName, paid: Math.max(0, value) } } }, 'payment', `Payment updated for ${displayName}`))
+  const setAmount = (nameKey: string, displayName: string, field: 'paid' | 'prize', value: number) => change(current => {
+    const existing = Object.hasOwn(current.payments, nameKey) ? current.payments[nameKey] : undefined
+    const amount = Math.max(0, Number.isFinite(value) ? value : 0)
+    const payment = { nameKey, displayName, paid: existing?.paid ?? 0, prize: existing?.prize ?? 0, [field]: amount }
+    return addAudit({ ...current, payments: { ...current.payments, [nameKey]: payment } }, 'payment',
+      `${field === 'prize' ? 'Prize' : 'Payment'} updated for ${displayName}`)
+  })
   return <div className="page-stack">
     <section className="page-heading">
-      <div><p className="eyebrow">Registration</p><h1>Fees</h1><p>Fees apply to main entries only.</p></div>
+      <div><p className="eyebrow">Registration</p><h1>Fees</h1><p>Fees apply to main entries only. Prize amounts reduce the balance owed.</p></div>
       <label className="fee-setting">Fee per entry<span>$ <input type="number" min="0" step="0.01" value={event.entryFee} onChange={e => setFee(Number(e.target.value))} /></span></label>
     </section>
-    <section className="stat-grid">
+    <section className="stat-grid fees-summary">
       <article><span>Total entries</span><strong>{totals.entries}</strong></article>
       <article><span>Total due</span><strong>${totals.due.toFixed(2)}</strong></article>
+      <article><span>Prize</span><strong>${totals.prize.toFixed(2)}</strong></article>
       <article><span>Paid</span><strong>${totals.paid.toFixed(2)}</strong></article>
       <article><span>Balance</span><strong>${totals.balance.toFixed(2)}</strong></article>
     </section>
@@ -488,7 +559,7 @@ function FeesPage({ event, change }: { event: EventData; change: ChangeEvent }) 
           <thead><tr>
             <th scope="col">Competitor</th>
             {event.mainClasses.map(raceClass => <th scope="col" key={raceClass.id}>{raceClass.name}</th>)}
-            <th scope="col">Total entries</th><th scope="col">Total due</th><th scope="col">Paid</th><th scope="col">Balance</th>
+            <th scope="col">Total entries</th><th scope="col">Total due</th><th scope="col">Prize</th><th scope="col">Paid</th><th scope="col">Balance</th>
           </tr></thead>
           <tbody>{rows.map(row => <tr className="fees-row" key={row.nameKey}>
             <th scope="row">{row.displayName}</th>
@@ -497,13 +568,14 @@ function FeesPage({ event, change }: { event: EventData; change: ChangeEvent }) 
               return <td key={raceClass.id}>{entries ? <>{entries}<small>${(entries * event.entryFee).toFixed(2)}</small></> : '—'}</td>
             })}
             <td>{row.entries}</td><td>${row.due.toFixed(2)}</td>
-            <td><label><span className="sr-only">Paid by {row.displayName}</span>$ <input type="number" min="0" step="0.01" value={row.paid} onChange={e => setPaid(row.nameKey, row.displayName, Number(e.target.value))} /></label></td>
+            <td><label><span className="sr-only">Prize for {row.displayName}</span>$ <input type="number" min="0" step="0.01" value={row.prize} onChange={e => setAmount(row.nameKey, row.displayName, 'prize', Number(e.target.value))} /></label></td>
+            <td><label><span className="sr-only">Paid by {row.displayName}</span>$ <input type="number" min="0" step="0.01" value={row.paid} onChange={e => setAmount(row.nameKey, row.displayName, 'paid', Number(e.target.value))} /></label></td>
             <td className={row.balance ? 'owing' : 'paid'}>${row.balance.toFixed(2)}</td>
           </tr>)}</tbody>
           <tfoot><tr>
             <th scope="row">Event total</th>
             {event.mainClasses.map((raceClass, index) => <td key={raceClass.id}>{classTotals[index]}<small>${(classTotals[index] * event.entryFee).toFixed(2)}</small></td>)}
-            <td>{totals.entries}</td><td>${totals.due.toFixed(2)}</td><td>${totals.paid.toFixed(2)}</td><td>${totals.balance.toFixed(2)}</td>
+            <td>{totals.entries}</td><td>${totals.due.toFixed(2)}</td><td>${totals.prize.toFixed(2)}</td><td>${totals.paid.toFixed(2)}</td><td>${totals.balance.toFixed(2)}</td>
           </tr></tfoot>
         </table>
       </div> : <Empty title="No fees yet" detail="Enter competitors on the Entries tab to build this table." />}

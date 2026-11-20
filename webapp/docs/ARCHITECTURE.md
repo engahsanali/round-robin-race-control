@@ -58,6 +58,8 @@ Two different brackets use different keys, so they do not contend. Two writers t
 
 - The app tracks dirty state by `groupId`; event metadata uses the separate `$event` scope.
 - Dirty scopes are saved independently, so one failed bracket does not hold up another.
+- Each editing session keeps a browser recovery copy of its pending scopes and their original save revisions. The home screen lists recoverable edits separately from recent events.
+- Resuming a recovery copy merges fresh cloud data for untouched scopes. A newer cloud revision in a pending scope follows the normal conflict flow.
 - Every three seconds the client reads the latest hydrated event.
 - Clean brackets are merged immediately.
 - Locally dirty or conflicted brackets are protected from automatic replacement.

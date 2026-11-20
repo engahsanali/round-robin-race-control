@@ -161,6 +161,7 @@ label input, label select, .display-select select { width: 100%; border: 1px sol
 .fee-setting > span { display: flex; align-items: center; border: 1px solid #cfd6df; background: #fff; border-radius: 8px; padding-left: 10px; }
 .fee-setting input { width: 90px; border: 0; margin: 0; }
 .fee-panel { overflow: hidden; }
+.stat-grid.fees-summary { grid-template-columns: repeat(5, minmax(0, 1fr)); }
 .fees-table { overflow-x: auto; }
 .fees-table:focus-visible { outline-offset: -2px; }
 .fees-table table { width: 100%; border-spacing: 0; font-size: .82rem; font-variant-numeric: tabular-nums; text-align: right; }
@@ -213,6 +214,8 @@ label input, label select, .display-select select { width: 100%; border: 1px sol
 .recent-grid button { text-align: left; border: 1px solid var(--line); border-radius: 10px; background: #fff; padding: 14px; color: var(--ink); display: flex; flex-direction: column; gap: 4px; }
 .recent-grid button:hover { border-color: #9fb0c6; }
 .recent-grid span { color: var(--muted); font-size: .72rem; }
+.project-credit { grid-column: 1 / -1; border-top: 1px solid var(--line); padding-top: 18px; color: var(--muted); font-size: .85rem; line-height: 1.6; }
+.project-credit a { color: var(--blue-dark); }
 
 @media (max-width: 1050px) {
   .workspace-grid { grid-template-columns: 1fr; }
@@ -237,7 +240,8 @@ label input, label select, .display-select select { width: 100%; border: 1px sol
   main { padding: 22px 12px 45px; }
   .page-heading { align-items: flex-start; flex-direction: column; gap: 14px; }
   .heading-actions { width: 100%; flex-wrap: wrap; }
-  .stat-grid, .stat-grid.three { grid-template-columns: 1fr 1fr; }
+  .stat-grid, .stat-grid.three, .stat-grid.fees-summary { grid-template-columns: 1fr 1fr; }
+  .fees-summary article:last-child { grid-column: 1 / -1; }
   .settings-grid { grid-template-columns: 1fr; }
   .panel-heading { align-items: flex-start; }
   .panel-actions { flex-wrap: wrap; justify-content: flex-end; }

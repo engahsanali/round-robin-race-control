@@ -37,6 +37,7 @@ The app lets a race organiser set up, run, score, and publish a multi-class roun
 - Provide a read-only public display link.
 - Exclude payment details, activity history, and owner credentials from public responses.
 - Keep a local browser copy so temporary network loss does not erase race-day input.
+- List recent events on the same browser and let organisers resume pending edits after closing it. Resumed edits use the original bracket revisions and event version for conflict checks.
 
 ### 4.2 Classes, brackets, and entries
 
@@ -72,6 +73,7 @@ The app lets a race organiser set up, run, score, and publish a multi-class roun
 - Show entry counts and fees by class in one owner-based table, with totals per owner and for the event.
 - Apply the event's fee per entry to main entries only.
 - Aggregate repeated owner names into one payment row while retaining all of their cars.
+- Track a prize credit per competitor separately from cash paid. Subtract both from the fees due and show a minimum balance of zero.
 - Support the separate $15 entry workflow.
 - Export results as CSV.
 - Export and import a JSON event backup.
