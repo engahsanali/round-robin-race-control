@@ -1,4 +1,5 @@
-import { useState } from 'react'
+import { useEffect, useState } from 'react'
+import { getSettings, oauthLogin } from '@netlify/identity'
 import type { FormEvent } from 'react'
 import { createEvent } from './domain'
 import type { EventData } from './types'
@@ -13,6 +14,7 @@ export interface AccountHomeProps {
   onOpen: (id: string) => void
   onCreate: (event: EventData) => Promise<void>
   onSignOut: () => Promise<void>
+  forceAuth?: boolean
   onImportResults?: (file: File) => Promise<void>
 }
 
@@ -26,7 +28,7 @@ export default function AccountHome(props: AccountHomeProps) {
   const { account } = props
   return <div className="account-shell">
     <header className="account-header"><span className="brand-mark">RR</span><strong>Race Manager</strong></header>
-    {account ? <OrganiserHome key={account.id} {...props} account={account} /> : <SignIn onRefresh={props.onRefresh} />}
+    {account && !props.forceAuth ? <OrganiserHome key={account.id} {...props} account={account} /> : <SignIn onRefresh={props.onRefresh} />}
     <Credit />
   </div>
 }
@@ -34,19 +36,27 @@ export default function AccountHome(props: AccountHomeProps) {
 function SignIn({ onRefresh }: { onRefresh: () => Promise<void> }) {
   const [mode, setMode] = useState<AuthMode>(() => {
     const query = new URLSearchParams(location.search)
-    if (query.get('verify') === '1') return 'verify'
-    return query.get('recover') === '1' ? 'reset' : 'login'
+    const hash = new URLSearchParams(location.hash.slice(1))
+    if (query.get('verify') === '1' || hash.has('confirmation_token')) return 'verify'
+    return query.get('recover') === '1' || hash.has('recovery_token') ? 'reset' : 'login'
   })
   const [message, setMessage] = useState('')
   const [error, setError] = useState('')
   const [busy, setBusy] = useState(false)
+  const [googleEnabled, setGoogleEnabled] = useState(false)
+  useEffect(() => {
+    let current = true
+    void getSettings().then(settings => { if (current) setGoogleEnabled(Boolean(settings.providers.google)) }).catch(() => {})
+    return () => { current = false }
+  }, [])
   const titles = { login: 'Sign in', signup: 'Create your account', forgot: 'Reset your password', reset: 'Choose a new password', verify: 'Verify your email' }
   const submit = async (event: FormEvent<HTMLFormElement>) => {
     event.preventDefault()
     const form = new FormData(event.currentTarget)
     const email = String(form.get('email') ?? '').trim()
     const password = String(form.get('password') ?? '')
-    const tokenHash = new URLSearchParams(location.hash.slice(1)).get('token_hash') ?? ''
+    const hash = new URLSearchParams(location.hash.slice(1))
+    const tokenHash = hash.get('token_hash') ?? hash.get(mode === 'reset' ? 'recovery_token' : 'confirmation_token') ?? ''
     let action: AccountAction
     if (mode === 'signup') action = { action: 'signup', email, password, name: String(form.get('name') ?? '').trim(), nickname: String(form.get('nickname') ?? '').trim() }
     else if (mode === 'verify') action = { action: 'verify', tokenHash }
@@ -73,6 +83,9 @@ function SignIn({ onRefresh }: { onRefresh: () => Promise<void> }) {
     <div className="account-intro"><h1>Your races, saved together.</h1><p>Sign in to organise events, revisit race history and keep track of podium finishes.</p></div>
     <section className="account-card">
       <h2>{titles[mode]}</h2>
+      {googleEnabled && (mode === 'login' || mode === 'signup') && <p><button type="button" className="secondary" onClick={() => {
+        try { oauthLogin('google') } catch { setError('Google sign-in could not be started.') }
+      }}>Continue with Google</button></p>}
       {(mode === 'login' || mode === 'signup') && <div className="account-tabs" aria-label="Account access">
         <button type="button" aria-pressed={mode === 'login'} onClick={() => { setMode('login'); setError(''); setMessage('') }}>Sign in</button>
         <button type="button" aria-pressed={mode === 'signup'} onClick={() => { setMode('signup'); setError(''); setMessage('') }}>Sign up</button>

@@ -4,6 +4,7 @@ import { tmpdir } from 'node:os'
 import { dirname, join, resolve } from 'node:path'
 import { chromium } from 'playwright-core'
 import { executablePath } from './browser.mjs'
+import { mockOrganiser } from './identity-e2e.mjs'
 
 const baseUrl = process.env.BASE_URL || 'http://127.0.0.1:4173'
 const profile = await mkdtemp(join(tmpdir(), 'rr-recovery-'))
@@ -16,13 +17,15 @@ let conflicts = 0
 
 async function startBrowser() {
   browser = await chromium.launchPersistentContext(profile, { executablePath, headless: true, serviceWorkers: 'block' })
+  await mockOrganiser(browser, () => event ? [event] : [])
   await browser.route('**/api/events**', async route => {
     const request = route.request()
     const method = request.method()
     if (method === 'POST') {
       event = { ...request.postDataJSON().event, id: 'recovery-test', version: 1 }
-      return route.fulfill({ status: 201, json: { event, ownerKey: 'browser-recovery-fixture' } })
+      return route.fulfill({ status: 201, json: { event } })
     }
+    if (new URL(request.url()).pathname.endsWith('/publication')) return route.fulfill({ json: { code: null } })
     if (method === 'GET') return route.fulfill({ json: { event, role: 'owner' } })
     if (denyWrites) return route.abort()
 

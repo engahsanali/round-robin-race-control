@@ -20,6 +20,7 @@ export interface AccountEventSummary {
 export interface AccountSnapshot {
   account: AccountProfile | null
   events: AccountEventSummary[]
+  recoveryKey?: string
 }
 
 export interface AccountResponse {

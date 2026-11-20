@@ -215,6 +215,11 @@ export function completedHeatCount(event: EventData) {
   return allGroups(event).reduce((sum, group) => sum + group.heats.filter(heat => heat.winnerId).length, 0)
 }
 
+export function csvCell(value: string) {
+  const text = /^[\s]*[=+\-@\uFF1D\uFF0B\uFF0D\uFF20]|^[\t\r\n]/u.test(value) ? "'" + value : value
+  return `"${text.replaceAll('"', '""')}"`
+}
+
 export function eventToCsv(event: EventData): string {
   const rows: string[][] = [['Stage', 'Class', 'Group', 'Round', 'Heat', 'Lane 1', 'Lane 2', 'Lane 3', 'Winner']]
   const append = (classes: RaceClass[]) => classes.forEach(cls => cls.groups.forEach(group => appendGroup(group, cls.name)))
@@ -223,6 +228,5 @@ export function eventToCsv(event: EventData): string {
     group.heats.forEach(heat => rows.push([group.kind, className, group.label, `${heat.round}`, `${heat.heat}`, ...heat.lanes.map(id => id ? names.get(id) ?? '' : ''), heat.winnerId ? names.get(heat.winnerId) ?? '' : '']))
   }
   append(event.mainClasses); append(event.finalsClasses); event.reraces.forEach(group => appendGroup(group, 'Rerace'))
-  const quote = (value: string) => `"${value.replaceAll('"', '""')}"`
-  return rows.map(row => row.map(quote).join(',')).join('\r\n')
+  return rows.map(row => row.map(csvCell).join(',')).join('\r\n')
 }

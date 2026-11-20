@@ -2,6 +2,7 @@ import { chromium } from 'playwright-core'
 import { mkdir, writeFile } from 'node:fs/promises'
 import { fileURLToPath } from 'node:url'
 import { executablePath } from './browser.mjs'
+import { signInForTest } from './identity-e2e.mjs'
 
 const root = new URL('../artifacts/', import.meta.url)
 const path = name => fileURLToPath(new URL(name, root))
@@ -24,6 +25,7 @@ if (await credit.getByRole('link', { name: 'AhsanTechLabs.com' }).getAttribute('
   throw new Error('Creator credit link is missing or incorrect')
 }
 await page.screenshot({ path: path('landing-desktop.png') })
+await signInForTest(page)
 await page.getByLabel('Event name').fill('Web App Acceptance Race')
 await page.getByLabel('Venue').fill('Test Track')
 await page.getByRole('button', { name: 'Create event' }).click()
@@ -106,10 +108,9 @@ if (deployed) {
   await page.locator('input[value="Tie Racer 1"]').waitFor()
   const adminUrl = new URL(page.url())
   const id = adminUrl.searchParams.get('event')
-  const key = new URLSearchParams(adminUrl.hash.slice(1)).get('key')
-  const ownerResponse = await fetch(`${baseUrl}/api/events/${id}`, { headers: { 'x-event-key': key } })
+  const ownerResponse = await context.request.get(`${baseUrl}/api/events/${id}`)
   const ownerData = await ownerResponse.json()
-  if (!ownerResponse.ok || ownerData.role !== 'owner') throw new Error('Admin event could not be reloaded from Netlify storage')
+  if (!ownerResponse.ok() || ownerData.role !== 'owner') throw new Error('Admin event could not be reloaded from Netlify storage')
   if (ownerData.event.payments['shared owner']?.paid !== 30) throw new Error('Fee payment was not saved')
   if (ownerData.event.payments['shared owner']?.prize !== 12.50) throw new Error('Prize was not saved')
   for (const category of ['Stock Advance', 'BMAX Speed']) {
@@ -121,7 +122,10 @@ if (deployed) {
   if (unauthorized.status !== 401) throw new Error('Public event update was not rejected')
   const viewer = await browser.newContext({ viewport: { width: 1024, height: 768 } })
   const viewerPage = await viewer.newPage()
-  await viewerPage.goto(`${baseUrl}/?event=${id}&mode=display`, { waitUntil: 'networkidle' })
+  const publish = await context.request.put(`${baseUrl}/api/events/${id}/publication`, { data: { published: true }, headers: { Origin: baseUrl } })
+  if (!publish.ok()) throw new Error('Spectator publication failed')
+  const { code } = await publish.json()
+  await viewerPage.goto(`${baseUrl}/?watch=${code}`, { waitUntil: 'networkidle' })
   await viewerPage.getByRole('heading', { name: 'Web App Acceptance Race' }).waitFor()
   if (await viewerPage.locator('.main-nav').count()) throw new Error('Public display exposed admin navigation')
   await viewer.close()

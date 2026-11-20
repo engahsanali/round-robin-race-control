@@ -2,6 +2,7 @@ import { chromium } from 'playwright-core'
 import { mkdir, readFile, writeFile } from 'node:fs/promises'
 import { fileURLToPath } from 'node:url'
 import { executablePath } from './browser.mjs'
+import { signInForTest } from './identity-e2e.mjs'
 
 const baseUrl = (process.env.BASE_URL || '').replace(/\/$/, '')
 if (!baseUrl || baseUrl.includes('127.0.0.1') || baseUrl.includes('localhost')) {
@@ -34,6 +35,7 @@ const fillBracket = async (page, owner, firstCar) => {
 }
 
 await tabA.goto(`${baseUrl}/`, { waitUntil: 'networkidle' })
+await signInForTest(tabA)
 await tabA.getByLabel('Event name').fill('Two Bracket Concurrency Test')
 await tabA.getByLabel('Venue').fill('Parallel Test Track')
 await tabA.getByRole('button', { name: 'Create event' }).click()
@@ -77,12 +79,11 @@ await tabA.screenshot({ path: localPath(screenshots, `v${version}-simultaneous-r
 
 const url = new URL(adminUrl)
 const eventId = url.searchParams.get('event')
-const ownerKey = new URLSearchParams(url.hash.slice(1)).get('key')
-if (!eventId || !ownerKey) throw new Error('Created event did not provide its private admin credentials.')
-const headers = { 'Content-Type': 'application/json', 'x-event-key': ownerKey }
-const read = await fetch(`${baseUrl}/api/events/${eventId}`, { headers: { 'x-event-key': ownerKey } })
+if (!eventId) throw new Error('Created event did not provide an ID.')
+const headers = { 'Content-Type': 'application/json', Origin: baseUrl }
+const read = await context.request.get(`${baseUrl}/api/events/${eventId}`)
 const data = await read.json()
-if (!read.ok || data.role !== 'owner') throw new Error('Could not reload the concurrent event.')
+if (!read.ok() || data.role !== 'owner') throw new Error('Could not reload the concurrent event.')
 const groups = data.event.mainClasses[0].groups
 const bracketA = groups.find(group => group.label === 'Bracket A')
 const bracketB = groups.find(group => group.label === 'Bracket B')
@@ -115,23 +116,23 @@ await losingTab.getByText(/changed in another tab/).waitFor()
 await losingTab.screenshot({ path: localPath(screenshots, `v${version}-conflict-protection.png`), fullPage: true })
 await losingTab.getByRole('button', { name: 'Use saved bracket' }).click()
 
-const latestRead = await fetch(`${baseUrl}/api/events/${eventId}`, { headers: { 'x-event-key': ownerKey } })
+const latestRead = await context.request.get(`${baseUrl}/api/events/${eventId}`)
 const latestData = await latestRead.json()
 const latestA = latestData.event.mainClasses[0].groups.find(group => group.id === bracketA.id)
-if (!latestRead.ok || !latestA) throw new Error('Could not reload the latest bracket revision for the atomic API check.')
+if (!latestRead.ok() || !latestA) throw new Error('Could not reload the latest bracket revision for the atomic API check.')
 const variantOne = { ...structuredClone(latestA), label: 'Bracket A - tab one' }
 const variantTwo = { ...structuredClone(latestA), label: 'Bracket A - tab two' }
 const auditA = latestData.event.audit.filter(item => item.groupId === latestA.id)
-const sameGroupResponses = await Promise.all([variantOne, variantTwo].map(group => fetch(`${baseUrl}/api/events/${eventId}/groups/${group.id}`, {
-  method: 'PUT', headers, body: JSON.stringify({ group, audit: auditA, expectedRevision: latestA.revision }),
+const sameGroupResponses = await Promise.all([variantOne, variantTwo].map(group => context.request.fetch(`${baseUrl}/api/events/${eventId}/groups/${group.id}`, {
+  method: 'PUT', headers, data: { group, audit: auditA, expectedRevision: latestA.revision },
 })))
-const sameGroupStatuses = sameGroupResponses.map(response => response.status).sort((a, b) => a - b)
+const sameGroupStatuses = sameGroupResponses.map(response => response.status()).sort((a, b) => a - b)
 if (sameGroupStatuses.join(',') !== '200,409') throw new Error(`Same-bracket atomic conflict check returned ${sameGroupStatuses.join(',')}.`)
 
 const unauthorized = await fetch(`${baseUrl}/api/events/${eventId}/groups/${bracketB.id}`, {
   method: 'PUT', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ group: bracketB, audit: [], expectedRevision: bracketB.revision }),
 })
-if (unauthorized.status !== 401) throw new Error('Bracket update without the private key was not rejected.')
+if (unauthorized.status !== 401) throw new Error('Bracket update without a session was not rejected.')
 if (errors.length) throw new Error(`Browser errors: ${errors.join('; ')}`)
 
 const result = {

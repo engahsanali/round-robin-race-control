@@ -1,14 +1,23 @@
 import { useCallback, useEffect, useId, useLayoutEffect, useMemo, useRef, useState } from 'react'
+import { handleAuthCallback, logout as logoutBrowser } from '@netlify/identity'
 import {
-  addAudit, allGroups, cleanName, completedHeatCount, createEvent, eventToCsv, feeRows, findGroup,
+  addAudit, allGroups, cleanName, completedHeatCount, csvCell, eventToCsv, feeRows, findGroup,
   groupStatus, groupValidation, reconcileEvent, reconcileGroup, redrawGroup, replaceGroup, setWinner, standings, validEntrants,
 } from './domain'
-import { createRemote, GroupSaveConflict, loadLocal, loadRemote, localDrafts, localEvents, SaveConflict, saveLocal, saveLocalDraft, savedKey, updateRemote, updateRemoteGroup } from './store'
-import type { LocalDraft } from './store'
+import { AccessDenied, createRemote, eventResource, GroupSaveConflict, loadRemote, SaveConflict, updateRemote, updateRemoteGroup, workspaceHistory } from './store'
+import { createRecovery } from './recovery'
+import type { LocalDraft } from './recovery'
+import AccountHome from './AccountHome'
+import { accountRequest, getAccount } from './account-api'
+import type { AccountSnapshot } from './account-api'
+import ResultsPanel from './ResultsPanel'
+import RaceControl from './RaceControl'
+import { aggregatePodiums } from './results'
+import type { ConfirmedPodium, PointRules } from './results'
 import { changedScheduleGroupIds, mergeAudits, mergeRemoteEvent, mergeSavedGroup, META_SCOPE } from './sync'
 import type { AuditItem, Entrant, EventData, RaceClass, RaceGroup } from './types'
 
-type View = 'overview' | 'entries' | 'race' | 'fees' | 'finals' | 'reraces' | 'display'
+type View = 'overview' | 'entries' | 'race' | 'fees' | 'finals' | 'reraces' | 'results' | 'display'
 type ChangeEvent = (updater: (event: EventData) => EventData, groupId?: string) => void
 type DirtyScopes = Record<string, number>
 type GroupConflict = { local: RaceGroup; remote: RaceGroup; audit: AuditItem[] }
@@ -20,7 +29,7 @@ function newSession(recovery?: LocalDraft): EventSession {
 
 const views: Array<{ id: View; label: string }> = [
   { id: 'overview', label: 'Overview' }, { id: 'entries', label: 'Entries' }, { id: 'race', label: 'Race day' },
-  { id: 'fees', label: 'Fees' }, { id: 'finals', label: 'Finals' }, { id: 'reraces', label: 'Reraces' }, { id: 'display', label: 'Display' },
+  { id: 'fees', label: 'Fees' }, { id: 'finals', label: 'Finals' }, { id: 'reraces', label: 'Reraces' }, { id: 'results', label: 'Podiums' }, { id: 'display', label: 'Display' },
 ]
 
 function download(name: string, content: string, type: string) {
@@ -33,28 +42,86 @@ async function copy(value: string) {
   await navigator.clipboard.writeText(value)
 }
 
-function eventUrl(id: string, key?: string, display = false) {
+function eventUrl(id: string, watch = false) {
   const url = new URL(location.origin + location.pathname)
-  url.searchParams.set('event', id)
-  if (display) url.searchParams.set('mode', 'display')
-  if (key) url.hash = `key=${encodeURIComponent(key)}`
+  url.searchParams.set(watch ? 'watch' : 'event', id)
   return url.toString()
 }
 
 export default function App() {
+  const [snapshot, setSnapshot] = useState<AccountSnapshot>()
+  const [error, setError] = useState('')
+  const watch = new URLSearchParams(location.search).has('watch')
+  const channel = useRef<BroadcastChannel | undefined>(undefined)
+  useEffect(() => {
+    if (watch || typeof BroadcastChannel === 'undefined') return
+    const instance = new BroadcastChannel('rr-identity')
+    channel.current = instance
+    return () => { instance.close(); channel.current = undefined }
+  }, [watch])
+  const refresh = useCallback(async () => {
+    setSnapshot(await getAccount())
+    setError('')
+  }, [])
+  useEffect(() => {
+    if (!channel.current) return
+    channel.current.onmessage = message => {
+      if (message.data === 'signed-out') {
+        location.reload()
+        return
+      }
+      setSnapshot(undefined)
+      void refresh().catch(() => setError('Sign in again to open private events.'))
+    }
+  }, [refresh, watch])
+  useEffect(() => {
+    if (watch) return
+    const start = async () => {
+      const hash = new URLSearchParams(location.hash.slice(1))
+      if (hash.has('access_token')) {
+        await handleAuthCallback()
+        channel.current?.postMessage('changed')
+      }
+      await refresh()
+    }
+    void start().catch(() => setError('Account access is unavailable. Try refreshing the page.'))
+  }, [watch, refresh])
+  if (!watch && !snapshot) return <FullState title={error || 'Opening Race Manager'} detail={error ? 'Your saved events remain in your workspace.' : 'Checking your account…'} />
+  return <RaceApp key={snapshot?.account?.id ?? (watch ? 'watch' : 'signed-out')} snapshot={snapshot} refresh={refresh}
+    onAuthChange={async () => { channel.current?.postMessage('changed'); await refresh() }}
+    onSignOut={async () => {
+      try {
+        await accountRequest({ action: 'signout' })
+      } finally {
+        // The OAuth SDK also holds browser state and a refresh timer.
+        await logoutBrowser().catch(() => {})
+        history.replaceState({}, '', location.pathname)
+        setSnapshot({ account: null, events: [] })
+        channel.current?.postMessage('signed-out')
+      }
+    }} />
+}
+
+function RaceApp({ snapshot, refresh, onAuthChange, onSignOut }: { snapshot?: AccountSnapshot; refresh: () => Promise<void>; onAuthChange: () => Promise<void>; onSignOut: () => Promise<void> }) {
   const initial = new URLSearchParams(location.search)
-  const publicMode = initial.get('mode') === 'display'
+  const watchCode = initial.get('watch')
+  const publicMode = Boolean(watchCode)
+  const account = snapshot?.account ?? null
+  const recovery = useMemo(() => account?.id && snapshot?.recoveryKey ? createRecovery(account.id, snapshot.recoveryKey) : null,
+    [account?.id, snapshot?.recoveryKey])
+  const [drafts, setDrafts] = useState<LocalDraft[]>([])
+  const [podiums, setPodiums] = useState<ConfirmedPodium[]>([])
   const shellRef = useRef<HTMLDivElement>(null)
   const topbarRef = useRef<HTMLElement>(null)
   const navRef = useRef<HTMLElement>(null)
-  const [eventId, setEventId] = useState<string | null>(initial.get('event'))
+  const [eventId, setEventId] = useState<string | null>(watchCode ?? initial.get('event'))
   const [event, setEvent] = useState<EventData | null>(null)
   const eventRef = useRef<EventData | null>(null)
   const [initialSession] = useState(() => newSession())
   const sessionRef = useRef(initialSession)
-  const [ownerKey, setOwnerKey] = useState('')
   const [role, setRole] = useState<'owner' | 'viewer'>('viewer')
-  const [view, setView] = useState<View>(initial.get('mode') === 'display' ? 'display' : 'overview')
+  const [view, setView] = useState<View>(publicMode ? 'display' : 'overview')
+  const [focusedGroup, setFocusedGroup] = useState<string>()
   const [loading, setLoading] = useState(Boolean(eventId))
   const [loadError, setLoadError] = useState('')
   const [localStorageAvailable, setLocalStorageAvailable] = useState(true)
@@ -84,22 +151,30 @@ export default function App() {
     return () => observer.disconnect()
   }, [event?.id, loading, publicMode])
 
+  useEffect(() => {
+    let active = true
+    if (!eventId && recovery) void recovery.list().then(items => { if (active) setDrafts(items) })
+    return () => { active = false }
+  }, [eventId, recovery])
+
   useLayoutEffect(() => {
     eventRef.current = event
-    if (!event || loading || event.id !== eventId) return
-    if (role !== 'owner' || publicMode) {
-      saveLocal(event)
-      return
-    }
-    const scopes = event.id.startsWith('local-') ? []
-      : [...new Set([...Object.keys(dirtyScopes), ...Object.keys(groupConflicts), ...(conflict ? [META_SCOPE] : [])])]
+    if (!event || !recovery || loading || event.id !== eventId || role !== 'owner' || publicMode) return
+    const scopes = [...new Set([...Object.keys(dirtyScopes), ...Object.keys(groupConflicts), ...(conflict ? [META_SCOPE] : [])])]
     const draft = { id: sessionRef.current.draftId, event, scopes }
-    // Keep the pending copy until the clean snapshot has been stored.
-    const saved = scopes.length
-      ? saveLocalDraft(draft)
-      : saveLocal(event, ownerKey) && saveLocalDraft(draft)
-    setLocalStorageAvailable(saved)
-  }, [event, eventId, loading, ownerKey, role, publicMode, dirtyScopes, groupConflicts, conflict])
+    let active = true
+    void recovery.save(draft).then(saved => { if (active) setLocalStorageAvailable(saved) })
+    return () => { active = false }
+  }, [event, eventId, loading, recovery, role, publicMode, dirtyScopes, groupConflicts, conflict])
+
+  useEffect(() => {
+    if (!eventId || !account || publicMode || view !== 'results') return
+    let active = true
+    void eventResource<{ podiums: ConfirmedPodium[] }>(eventId, 'podiums')
+      .then(result => { if (active) setPodiums(result.podiums) })
+      .catch(() => { if (active) setPodiums([]) })
+    return () => { active = false }
+  }, [eventId, account, publicMode, view])
 
   const updateDirtyScopes = (updater: (current: DirtyScopes) => DirtyScopes) => {
     setDirtyScopes(current => {
@@ -111,35 +186,33 @@ export default function App() {
 
   const markDirty = (scope: string) => updateDirtyScopes(current => ({ ...current, [scope]: (current[scope] ?? 0) + 1 }))
 
-  const activate = useCallback((id: string | null, key = '', recovery?: LocalDraft) => {
+  const activate = useCallback((id: string | null, recovery?: LocalDraft) => {
     sessionRef.current = newSession(recovery)
     eventRef.current = null
     dirtyScopesRef.current = {}
     setDirtyScopes({}); setConflict(null); setGroupConflicts({})
-    setEventId(id); setEvent(null); setOwnerKey(key); setRole('viewer'); setView('overview')
+    setEventId(id); setEvent(null); setPodiums([]); setRole('viewer'); setView('overview'); setFocusedGroup(undefined)
     setLoading(Boolean(id)); setLoadError(''); setLocalStorageAvailable(true)
   }, [])
-  const open = (id: string, key = '', recovery?: LocalDraft) => {
-    history.pushState({}, '', eventUrl(id, key))
-    activate(id, key, recovery)
+  const open = (id: string, recovery?: LocalDraft) => {
+    history.pushState({}, '', eventUrl(id))
+    activate(id, recovery)
   }
 
   useEffect(() => {
     const pop = () => {
       const params = new URLSearchParams(location.search)
-      activate(params.get('event'))
+      activate(params.get('watch') ?? params.get('event'))
     }
     addEventListener('popstate', pop); return () => removeEventListener('popstate', pop)
   }, [activate])
 
   useEffect(() => {
-    if (!eventId) { setLoading(false); return }
+    if (!eventId || (!account && !publicMode)) { setLoading(false); return }
     let live = true
     const recovery = publicMode ? undefined : sessionRef.current.recovery
-    const key = publicMode ? '' : ownerKey || savedKey(eventId)
-    if (key !== ownerKey) setOwnerKey(key)
     setLoading(true)
-    loadRemote(eventId, key).then(result => {
+    loadRemote(eventId, publicMode).then(result => {
       if (!live) return
       const remote = reconcileEvent(result.event)
       const draft = result.role === 'owner' ? recovery : undefined
@@ -147,29 +220,28 @@ export default function App() {
       const prepared = draft ? mergeRemoteEvent(draft.event, remote, new Set(draftScopes.filter(scope => scope !== META_SCOPE)), draftScopes.includes(META_SCOPE)) : remote
       const repairs = result.role === 'owner' ? changedScheduleGroupIds(result.event, prepared) : []
       const nextDirty = Object.fromEntries([...repairs, ...draftScopes].map(scope => [scope, 1]))
-      if (result.role === 'owner' && !draft) saveLocal(remote, key)
       dirtyScopesRef.current = nextDirty
       eventRef.current = prepared
       setDirtyScopes(nextDirty); setEvent(prepared); setRole(result.role); setSync(Object.keys(nextDirty).length ? 'saving' : 'saved'); setLoading(false)
     }).catch(error => {
       if (!live) return
-      const local = recovery?.event ?? loadLocal(eventId)
+      const local = error instanceof AccessDenied ? undefined : recovery?.event
       if (local) {
-        const prepared = reconcileEvent(key ? local : { ...local, payments: {}, audit: [] })
-        const repairs = key ? changedScheduleGroupIds(local, prepared) : []
-        const nextDirty = Object.fromEntries([...repairs, ...(key ? recovery?.scopes ?? [] : [])].map(scope => [scope, 1]))
+        const prepared = reconcileEvent(local)
+        const repairs = changedScheduleGroupIds(local, prepared)
+        const nextDirty = Object.fromEntries([...repairs, ...(recovery?.scopes ?? [])].map(scope => [scope, 1]))
         dirtyScopesRef.current = nextDirty
         eventRef.current = prepared
-        setDirtyScopes(nextDirty); setEvent(prepared); setRole(key ? 'owner' : 'viewer'); setSync('offline'); setLoading(false)
+        setDirtyScopes(nextDirty); setEvent(prepared); setRole('owner'); setSync('offline'); setLoading(false)
       }
       else { setLoadError(error instanceof Error ? error.message : 'Event could not be opened.'); setLoading(false) }
     })
     return () => { live = false }
-  }, [eventId, ownerKey, publicMode])
+  }, [eventId, account?.id, publicMode])
 
   useEffect(() => {
     const session = sessionRef.current
-    if (!event || loading || event.id !== eventId || !ownerKey || role !== 'owner' || session.saving) return
+    if (!event || loading || event.id !== eventId || !account || role !== 'owner' || session.saving) return
     const scheduled = Object.entries(dirtyScopes).filter(([scope]) => scope === META_SCOPE ? !conflict : !groupConflicts[scope])
     if (!scheduled.length) return
     if (event.id.startsWith('local-')) { setSync('offline'); return }
@@ -180,11 +252,11 @@ export default function App() {
       setSync('saving')
       const outcomes = await Promise.all(scheduled.map(async ([scope, generation]) => {
         try {
-          if (scope === META_SCOPE) return { scope, generation, value: await updateRemote(snapshot, ownerKey) }
+          if (scope === META_SCOPE) return { scope, generation, value: await updateRemote(snapshot) }
           const group = findGroup(snapshot, scope)
           if (!group) throw new Error('Bracket is no longer available.')
           const audit = snapshot.audit.filter(item => item.groupId === scope)
-          return { scope, generation, value: await updateRemoteGroup(snapshot.id, group, audit, ownerKey) }
+          return { scope, generation, value: await updateRemoteGroup(snapshot.id, group, audit) }
         } catch (error) { return { scope, generation, error } }
       }))
       session.saving = false
@@ -238,7 +310,7 @@ export default function App() {
       setSync(hasConflict ? 'conflict' : failedOffline ? 'offline' : Object.keys(nextDirty).length ? 'saving' : 'saved')
     }, 650)
     return () => clearTimeout(timer)
-  }, [dirtyScopes, event, eventId, loading, ownerKey, role, conflict, groupConflicts])
+  }, [dirtyScopes, event, eventId, loading, account?.id, role, conflict, groupConflicts])
 
   useEffect(() => {
     if (!eventId || loading) return
@@ -247,7 +319,7 @@ export default function App() {
     const timer = setInterval(async () => {
       if (sync === 'saving') return
       try {
-        const result = await loadRemote(eventId, ownerKey)
+        const result = await loadRemote(eventId, publicMode)
         if (!active || sessionRef.current !== session || session.saving) return
         const current = eventRef.current
         if (current) {
@@ -259,7 +331,7 @@ export default function App() {
           const merged = mergeRemoteEvent(current, prepared, protectedGroups, Boolean(dirtyScopesRef.current[META_SCOPE] || conflict))
           eventRef.current = merged
           setEvent(merged)
-          const repairs = ownerKey ? changedScheduleGroupIds(result.event, prepared).filter(id => !protectedGroups.has(id)) : []
+          const repairs = result.role === 'owner' ? changedScheduleGroupIds(result.event, prepared).filter(id => !protectedGroups.has(id)) : []
           if (repairs.length) {
             updateDirtyScopes(scopes => {
               const next = { ...scopes }
@@ -269,10 +341,18 @@ export default function App() {
           }
         }
         if (!Object.keys(dirtyScopesRef.current).length && !conflict && !Object.keys(groupConflicts).length) setSync('saved')
-      } catch { if (active && sessionRef.current === session) setSync('offline') }
+      } catch (error) {
+        if (!active || sessionRef.current !== session) return
+        if (error instanceof AccessDenied) {
+          eventRef.current = null
+          setEvent(null)
+          setLoadError(error.message)
+          if (!publicMode) void refresh().catch(() => {})
+        } else setSync('offline')
+      }
     }, 3000)
     return () => { active = false; clearInterval(timer) }
-  }, [eventId, loading, ownerKey, sync, conflict, groupConflicts])
+  }, [eventId, loading, publicMode, sync, conflict, groupConflicts, refresh])
 
   const change: ChangeEvent = (updater, groupId) => {
     if (role !== 'owner') return
@@ -287,20 +367,25 @@ export default function App() {
 
   const close = () => {
     history.pushState({}, '', location.pathname)
+    if (publicMode) { location.assign(location.pathname); return }
     activate(null)
+    void refresh().catch(() => {})
   }
 
-  if (!eventId) return <Home onOpen={open} onCreate={async draft => {
-    let result: { event: EventData; ownerKey: string }
-    try { result = await createRemote(draft) }
-    catch (error) {
-      if (!import.meta.env.DEV) throw error
-      const id = `local-${crypto.randomUUID()}`
-      result = { event: { ...draft, id, version: 1 }, ownerKey: crypto.randomUUID() }
-    }
-    saveLocal(result.event, result.ownerKey)
-    open(result.event.id, result.ownerKey)
-  }} />
+  const hash = new URLSearchParams(location.hash.slice(1))
+  const callback = hash.has('recovery_token') || hash.has('confirmation_token') || initial.has('recover') || initial.has('verify')
+  if (!eventId || (!account && !publicMode) || callback) return <>
+    <AccountHome account={account} events={snapshot?.events ?? []} onRefresh={account && !callback ? refresh : onAuthChange} onOpen={open}
+      onSignOut={onSignOut} forceAuth={callback} onCreate={async draft => {
+        const { event } = await createRemote(draft)
+        await refresh()
+        open(event.id)
+      }} />
+    {account && !callback && drafts.length > 0 && <main className="recent"><h2>Unsaved edits on this browser</h2><div className="recent-grid">
+      {drafts.map(draft => <button key={draft.id} onClick={() => open(draft.event.id, draft)}>Resume edits for {draft.event.name}</button>)}
+    </div></main>}
+    {account && !callback && <WorkspaceResults />}
+  </>
   if (loading) return <FullState title="Opening event" detail="Loading the latest saved race data…" />
   if (!event) return <FullState title="Event unavailable" detail={loadError || 'The event link is invalid or no longer available.'} action={<button onClick={close}>Back to events</button>} />
 
@@ -356,6 +441,12 @@ export default function App() {
     })
     removeGroupConflict(groupId); markDirty(groupId); setSync('saving')
   }
+  const openGroup = (groupId: string) => {
+    const group = findGroup(event, groupId)
+    if (!group) return
+    setFocusedGroup(groupId)
+    setView(group.kind === 'main' ? 'race' : group.kind === 'finals' ? 'finals' : 'reraces')
+  }
   return (
     <div className="app-shell" ref={shellRef}>
       <header className="topbar" ref={topbarRef}>
@@ -363,7 +454,7 @@ export default function App() {
         <div className="event-title"><strong>{event.name}</strong><span>{event.date}{event.venue ? ` · ${event.venue}` : ''}</span></div>
         <div className="top-actions">
           <span className={`sync sync-${sync}`}>{sync === 'saved' ? 'Saved' : sync === 'saving' ? pendingCount > 1 ? `Saving ${pendingCount} brackets…` : 'Saving…' : sync === 'offline' ? 'Offline copy' : 'Save conflict'}</span>
-          {!publicMode && <button className="secondary compact" onClick={() => copy(eventUrl(event.id, undefined, true))}>Copy display link</button>}
+
         </div>
       </header>
 
@@ -371,16 +462,22 @@ export default function App() {
       {conflict && <div className="conflict-banner" role="alert"><div><strong>Event settings changed on another device.</strong><span>Bracket results are safe. Choose which event details or payments to keep.</span></div><div><button onClick={useSavedEvent}>Use saved event</button><button className="danger" onClick={keepLocalEvent}>Keep this tab</button></div></div>}
       {groupConflictEntry && <div className="conflict-banner" role="alert"><div><strong>{findGroup(event, groupConflictEntry[0])?.label ?? 'This bracket'} changed in another tab.</strong><span>Only this bracket needs a decision; every other bracket can continue saving.</span></div><div><button onClick={() => useSavedGroup(groupConflictEntry[0], groupConflictEntry[1])}>Use saved bracket</button><button className="danger" onClick={() => keepLocalGroup(groupConflictEntry[0], groupConflictEntry[1])}>Keep this tab</button></div></div>}
 
-      {!publicMode && <nav className="main-nav" ref={navRef} aria-label="Event sections">{views.map(item => <button key={item.id} className={view === item.id ? 'active' : ''} onClick={() => setView(item.id)}>{item.label}</button>)}</nav>}
+      {!publicMode && <nav className="main-nav" ref={navRef} aria-label="Event sections">{views.map(item => <button key={item.id} className={view === item.id ? 'active' : ''} onClick={() => { setFocusedGroup(undefined); setView(item.id) }}>{item.label}</button>)}</nav>}
 
       <main>
         {publicMode || view === 'display' ? <DisplayPage event={event} /> : null}
-        {!publicMode && view === 'overview' && <Overview event={event} ownerKey={ownerKey} change={change} />}
+        {!publicMode && view === 'overview' && <Overview event={event} change={change} onOpenGroup={openGroup} />}
         {!publicMode && view === 'entries' && <MainStage event={event} change={change} rosterOnly />}
-        {!publicMode && view === 'race' && <MainStage event={event} change={change} />}
+        {!publicMode && view === 'race' && <MainStage key={focusedGroup || 'main'} event={event} change={change} initialGroupId={focusedGroup} />}
         {!publicMode && view === 'fees' && <FeesPage event={event} change={change} />}
-        {!publicMode && view === 'finals' && <ClassStage title="Finals and semifinals" helper="Enter or renumber the selected finalists, then record the winner of each heat." classes={event.finalsClasses} event={event} change={change} />}
-        {!publicMode && view === 'reraces' && <ReraceStage event={event} change={change} />}
+        {!publicMode && view === 'finals' && <ClassStage key={focusedGroup || 'finals'} title="Finals and semifinals" helper="Enter or renumber the selected finalists, then record the winner of each heat." classes={event.finalsClasses} event={event} change={change} initialGroupId={focusedGroup} />}
+        {!publicMode && view === 'reraces' && <ReraceStage key={focusedGroup || 'reraces'} event={event} change={change} initialGroupId={focusedGroup} />}
+        {!publicMode && view === 'results' && <ResultsPanel event={event} podiums={podiums}
+          pointRules={account?.points as PointRules | undefined} onConfirm={async podium => {
+            const id = event.id
+            const result = await eventResource<{ podiums: ConfirmedPodium[] }>(id, 'podiums', podium)
+            if (eventRef.current?.id === id) setPodiums(result.podiums)
+          }} />}
       </main>
 
       {role === 'viewer' && !publicMode && <div className="viewer-note">Read-only view. Use the private admin link to manage this event.</div>}
@@ -392,41 +489,71 @@ function FullState({ title, detail, action }: { title: string; detail: string; a
   return <main className="full-state"><span className="brand-mark large">RR</span><h1>{title}</h1><p>{detail}</p>{action}</main>
 }
 
-function Home({ onOpen, onCreate }: { onOpen: (id: string, key?: string, recovery?: LocalDraft) => void; onCreate: (event: EventData) => Promise<void> }) {
-  const [name, setName] = useState('')
-  const [date, setDate] = useState(new Date().toISOString().slice(0, 10))
-  const [venue, setVenue] = useState('')
-  const [creating, setCreating] = useState(false)
+function PublicationPanel({ eventId }: { eventId: string }) {
+  const [code, setCode] = useState<string | null>()
   const [error, setError] = useState('')
-  const recent = localEvents()
-  const drafts = localDrafts()
-  const submit = async (e: React.FormEvent) => {
-    e.preventDefault(); setCreating(true); setError('')
-    try { await onCreate(createEvent(name, date, venue)) } catch (err) { setError(err instanceof Error ? err.message : 'Event could not be created.'); setCreating(false) }
-  }
-  const importBackup = async (file: File) => {
+  useEffect(() => {
+    let current = true
+    void eventResource<{ code: string | null }>(eventId, 'publication').then(result => {
+      if (current) setCode(result.code)
+    }).catch(() => { if (current) setError('Could not load spectator settings.') })
+    return () => { current = false }
+  }, [eventId])
+
+  const update = async (published: boolean) => {
     try {
-      const parsed = JSON.parse(await file.text()) as EventData
-      parsed.id = ''; parsed.version = 0; parsed.name = `${parsed.name} copy`; parsed.audit = []
-      await onCreate(parsed)
-    } catch { setError('That backup file could not be imported.') }
+      const result = await eventResource<{ code: string | null }>(eventId, 'publication', { published })
+      setCode(result.code)
+      setError('')
+    } catch (failure) { setError(failure instanceof Error ? failure.message : 'Could not update spectator settings.') }
   }
-  return <div className="landing">
-    <section className="landing-intro"><div className="landing-brand"><span className="brand-mark large">RR</span><span>Round Robin</span></div><h1>Run the whole race day from one clear screen.</h1><p>Entries, fair draws, winners, W/L records, fees, finals and reraces. Saved after every change.</p><div className="feature-list"><span>Works on phone, tablet and laptop</span><span>Offline copy on this device</span><span>Separate public display link</span></div></section>
-    <section className="start-card"><p className="eyebrow">New event</p><h2>Set up a race</h2><form onSubmit={submit}><label>Event name<input required maxLength={120} value={name} onChange={e => setName(e.target.value)} placeholder="September club race" /></label><div className="form-pair"><label>Date<input required type="date" value={date} onChange={e => setDate(e.target.value)} /></label><label>Venue<input maxLength={160} value={venue} onChange={e => setVenue(e.target.value)} placeholder="Track or venue" /></label></div>{error && <p className="form-error" role="alert">{error}</p>}<button className="primary full" disabled={creating}>{creating ? 'Creating…' : 'Create event'}</button></form><label className="import-link">Import event backup<input type="file" accept="application/json,.json" onChange={e => e.target.files?.[0] && importBackup(e.target.files[0])} /></label></section>
-    {drafts.length > 0 && <section className="recent"><h2>Unsaved edits on this browser</h2><div className="recent-grid">
-      {drafts.map(draft => <button key={draft.id} onClick={() => onOpen(draft.event.id, savedKey(draft.event.id), draft)}>
-        <strong>Resume edits for {draft.event.name}</strong><span>{new Date(draft.event.updatedAt).toLocaleString()}</span>
-      </button>)}
-    </div></section>}
-    {recent.length > 0 && <section className="recent"><p className="eyebrow">This device</p><h2>Recent events</h2><p>Reopen an event in this browser even if you forgot to copy its link.</p><div className="recent-grid">{recent.map(event => <button key={event.id} onClick={() => onOpen(event.id, savedKey(event.id))}><strong>{event.name}</strong><span>{event.date || 'No date'} · {event.status}</span></button>)}</div></section>}
-    <footer className="project-credit">
-      Free to use. Created by Ahsan Ali at <a href="https://ahsantechlabs.com/">AhsanTechLabs.com</a>.
-    </footer>
+  return <div className="admin-links">
+    <div><strong>Spectator display</strong><span>{code ? 'Anyone with the display link can see the names and results in scheduled heats.' : 'Private. Publish a link to share names and results from scheduled heats.'}</span></div>
+    {code !== undefined && <div>{code && <button onClick={() => copy(eventUrl(code, true))}>Copy display link</button>}
+      <button onClick={() => void update(!code)}>{code ? 'Revoke display link' : 'Publish display link'}</button></div>}
+    {error && <p role="alert">{error}</p>}
   </div>
 }
 
-function Overview({ event, ownerKey, change }: { event: EventData; ownerKey: string; change: ChangeEvent }) {
+function WorkspaceResults() {
+  const [history, setHistory] = useState<Awaited<ReturnType<typeof workspaceHistory>>['history']>([])
+  const [year, setYear] = useState('')
+  const [category, setCategory] = useState('')
+  const [error, setError] = useState('')
+  useEffect(() => {
+    let active = true
+    void workspaceHistory().then(result => { if (active) setHistory(result.history) })
+      .catch(() => { if (active) setError('Podium history could not be loaded.') })
+    return () => { active = false }
+  }, [])
+  const years = [...new Set(history.map(item => item.event.date.slice(0, 4)).filter(Boolean))].sort().reverse()
+  const categories = [...new Set(history.flatMap(item => item.podiums.map(podium => podium.className)))].sort()
+  const selected = history.filter(item => !year || item.event.date.startsWith(year))
+    .flatMap(item => item.podiums.filter(podium => !category || podium.className === category))
+  const totals = aggregatePodiums(selected)
+  const exportPoints = () => {
+    const rows = [['Racer', 'Racer ID', 'First', 'Second', 'Third', 'Events', 'Points'], ...totals.map(row =>
+      [row.name, row.competitorId ?? '', String(row.first), String(row.second), String(row.third), String(row.events), row.points === null ? '' : String(row.points)])]
+    download('race-manager-points.csv', rows.map(row => row.map(csvCell).join(',')).join('\r\n'), 'text/csv')
+  }
+  return <main className="page-stack"><section className="page-heading"><div><h2>Podium and points history</h2>
+    <p>Confirmed finishes count toward these totals. Reuse a racer ID to track the same person across events.</p></div>
+    {totals.length > 0 && <button className="secondary" onClick={exportPoints}>Export points</button>}</section>
+    {error && <p role="alert">{error}</p>}
+    {history.some(item => item.podiums.length) && <div className="heading-actions">
+      <label>Season <select value={year} onChange={e => setYear(e.target.value)}><option value="">All seasons</option>{years.map(value => <option key={value}>{value}</option>)}</select></label>
+      <label>Class <select value={category} onChange={e => setCategory(e.target.value)}><option value="">All classes</option>{categories.map(value => <option key={value}>{value}</option>)}</select></label>
+    </div>}
+    {totals.length ? <div className="panel fees-table"><table aria-label="Podium and points history"><thead><tr>
+      <th scope="col">Racer</th><th scope="col">1st</th><th scope="col">2nd</th><th scope="col">3rd</th><th scope="col">Events</th><th scope="col">Points</th>
+    </tr></thead><tbody>{totals.map(row => <tr key={row.identity}>
+      <th scope="row">{row.name}{row.competitorId && <small>{row.competitorId}</small>}</th>
+      <td>{row.first}</td><td>{row.second}</td><td>{row.third}</td><td>{row.events}</td><td>{row.points ?? '—'}</td>
+    </tr>)}</tbody></table></div> : <p>No confirmed podiums for this selection.</p>}
+  </main>
+}
+
+function Overview({ event, change, onOpenGroup }: { event: EventData; change: ChangeEvent; onOpenGroup: (id: string) => void }) {
   const fees = feeRows(event)
   const mainEntries = event.mainClasses.flatMap(c => c.groups).reduce((sum, group) => sum + validEntrants(group).length, 0)
   const groupsRunning = allGroups(event).filter(group => group.heats.length).length
@@ -435,18 +562,20 @@ function Overview({ event, ownerKey, change }: { event: EventData; ownerKey: str
   return <div className="page-stack">
     <section className="page-heading"><div><p className="eyebrow">Event control</p><h1>Overview</h1><p>Everything important before racing starts.</p></div><div className="heading-actions"><button className="secondary" onClick={() => download(`${event.name}-backup.json`, JSON.stringify(event, null, 2), 'application/json')}>Download backup</button><button className="secondary" onClick={() => download(`${event.name}-results.csv`, eventToCsv(event), 'text/csv')}>Export results</button></div></section>
     <section className="stat-grid"><article><span>Main entries</span><strong>{mainEntries}</strong></article><article><span>Active groups</span><strong>{groupsRunning}</strong></article><article><span>Completed heats</span><strong>{completedHeatCount(event)}</strong></article><article><span>Outstanding fees</span><strong>${balance.toFixed(2)}</strong></article></section>
-    <div className="two-column"><section className="panel"><div className="panel-heading"><div><p className="eyebrow">Details</p><h2>Event settings</h2></div></div><div className="settings-grid"><label>Event name<input value={event.name} onChange={e => setting('name', e.target.value)} /></label><label>Date<input type="date" value={event.date} onChange={e => setting('date', e.target.value)} /></label><label>Venue<input value={event.venue} onChange={e => setting('venue', e.target.value)} /></label><label>Status<select value={event.status} onChange={e => setting('status', e.target.value as EventData['status'])}><option value="draft">Draft</option><option value="live">Live</option><option value="complete">Complete</option></select></label></div><div className="admin-links"><div><strong>Public display</strong><span>Safe, read-only link for a screen or spectators.</span></div><button onClick={() => copy(eventUrl(event.id, undefined, true))}>Copy link</button><div><strong>Private admin link</strong><span>Anyone with this link can change the event.</span></div><button onClick={() => copy(eventUrl(event.id, ownerKey))}>Copy admin link</button></div></section>
+    <RaceControl event={event} onOpenGroup={onOpenGroup} onSetStatus={status =>
+      change(current => addAudit({ ...current, status }, 'edit', `Event status changed to ${status}`))} />
+    <div className="two-column"><section className="panel"><div className="panel-heading"><div><p className="eyebrow">Details</p><h2>Event settings</h2></div></div><div className="settings-grid"><label>Event name<input value={event.name} onChange={e => setting('name', e.target.value)} /></label><label>Date<input type="date" value={event.date} onChange={e => setting('date', e.target.value)} /></label><label>Venue<input value={event.venue} onChange={e => setting('venue', e.target.value)} /></label><label>Status<select value={event.status} onChange={e => setting('status', e.target.value as EventData['status'])}><option value="draft">Draft</option><option value="live">Live</option><option value="complete">Complete</option></select></label></div><PublicationPanel key={event.id} eventId={event.id} /></section>
       <section className="panel"><div className="panel-heading"><div><p className="eyebrow">History</p><h2>Recent activity</h2></div></div>{event.audit.length ? <ol className="audit-list">{event.audit.slice(0, 12).map(item => <li key={item.id}><span className={`audit-dot ${item.action}`} /><div><strong>{item.message}</strong><time>{new Date(item.at).toLocaleString()}</time></div></li>)}</ol> : <Empty compact title="No activity yet" detail="Draws, winners and payments will appear here." />}</section></div>
   </div>
 }
 
-function MainStage({ event, change, rosterOnly = false }: { event: EventData; change: ChangeEvent; rosterOnly?: boolean }) {
-  return <ClassStage title={rosterOnly ? 'Entries' : 'Race day'} helper={rosterOnly ? 'Enter each car by class and bracket. Owner names may repeat; car numbers must be unique within the bracket. Every bracket works independently.' : 'Choose the winner of each heat. W/L records and ranking update immediately.'} classes={event.mainClasses} event={event} change={change} rosterOnly={rosterOnly} />
+function MainStage({ event, change, rosterOnly = false, initialGroupId }: { event: EventData; change: ChangeEvent; rosterOnly?: boolean; initialGroupId?: string }) {
+  return <ClassStage title={rosterOnly ? 'Entries' : 'Race day'} helper={rosterOnly ? 'Enter each car by class and bracket. Owner names may repeat; car numbers must be unique within the bracket. Every bracket works independently.' : 'Choose the winner of each heat. W/L records and ranking update immediately.'} classes={event.mainClasses} event={event} change={change} rosterOnly={rosterOnly} initialGroupId={initialGroupId} />
 }
 
-function ClassStage({ title, helper, classes, event, change, rosterOnly = false }: { title: string; helper: string; classes: RaceClass[]; event: EventData; change: ChangeEvent; rosterOnly?: boolean }) {
-  const [classIndex, setClassIndex] = useState(0)
-  const [groupIndex, setGroupIndex] = useState(0)
+function ClassStage({ title, helper, classes, event, change, rosterOnly = false, initialGroupId }: { title: string; helper: string; classes: RaceClass[]; event: EventData; change: ChangeEvent; rosterOnly?: boolean; initialGroupId?: string }) {
+  const [classIndex, setClassIndex] = useState(() => Math.max(0, classes.findIndex(item => item.groups.some(group => group.id === initialGroupId))))
+  const [groupIndex, setGroupIndex] = useState(() => Math.max(0, classes[classIndex].groups.findIndex(group => group.id === initialGroupId)))
   const selectedClass = classes[classIndex] ?? classes[0]
   const group = selectedClass.groups[groupIndex] ?? selectedClass.groups[0]
   return <div className="page-stack"><section className="page-heading"><div><p className="eyebrow">{group.kind === 'main' ? 'Preliminaries' : 'Final stage'}</p><h1>{title}</h1><p>{helper}</p></div></section><StagePicker classes={classes} classIndex={classIndex} groupIndex={groupIndex} onClass={i => { setClassIndex(i); setGroupIndex(0) }} onGroup={setGroupIndex} />
@@ -454,8 +583,8 @@ function ClassStage({ title, helper, classes, event, change, rosterOnly = false 
   </div>
 }
 
-function ReraceStage({ event, change }: { event: EventData; change: ChangeEvent }) {
-  const [index, setIndex] = useState(0)
+function ReraceStage({ event, change, initialGroupId }: { event: EventData; change: ChangeEvent; initialGroupId?: string }) {
+  const [index, setIndex] = useState(() => Math.max(0, event.reraces.findIndex(group => group.id === initialGroupId)))
   const group = event.reraces[index]
   return <div className="page-stack"><section className="page-heading"><div><p className="eyebrow">Tie-breakers</p><h1>Reraces</h1><p>Every rerace is separate from earlier results. Four cars get all six unique head-to-head pairings.</p></div></section><div className="group-tabs">{event.reraces.map((item, i) => <button className={index === i ? 'active' : ''} onClick={() => setIndex(i)} key={item.id}>{item.label}</button>)}</div><div className="workspace-grid"><RosterPanel group={group} event={event} change={change} condensed /><SchedulePanel group={group} event={event} change={change} /></div></div>
 }
@@ -468,6 +597,7 @@ function RosterPanel({ group, event, change, condensed = false }: { group: RaceG
   const locked = group.heats.some(heat => heat.winnerId)
   const validation = groupValidation(group)
   const [expanded, setExpanded] = useState(false)
+  const [linkRacers, setLinkRacers] = useState(false)
   const entered = validEntrants(group).length
   const visibleEntrants = condensed && !expanded ? group.entrants.slice(0, locked ? Math.max(entered, 1) : Math.min(21, Math.max(6, entered + 3))) : group.entrants
   const update = (updater: (group: RaceGroup) => RaceGroup) => change(current => replaceGroup(current, reconcileGroup(updater(findGroup(current, group.id)!))), group.id)
@@ -477,7 +607,15 @@ function RosterPanel({ group, event, change, condensed = false }: { group: RaceG
     const next = redrawGroup(currentGroup)
     return addAudit(replaceGroup(current, next), 'draw', `New random draw for ${next.label}`, { groupId: next.id })
   }, group.id)
-  return <section className={`panel roster-panel ${condensed ? 'condensed' : ''}`}><div className="panel-heading"><div><p className="eyebrow">Roster</p><input className="inline-title" aria-label="Group name" value={group.label} disabled={locked} onChange={e => update(current => ({ ...current, label: e.target.value.slice(0, 120) }))} /></div><div className="panel-actions"><span className={`validation ${validation.valid ? 'ready' : ''}`}>{entered} cars</span>{condensed && !locked && <button className="secondary compact" onClick={() => setExpanded(value => !value)}>{expanded ? 'Fewer slots' : 'All 21 slots'}</button>}<button className="secondary compact" disabled={!validation.valid || locked} onClick={redraw}>New draw</button></div></div>{locked && <p className="locked-note">Roster locked because results exist. Clear this group’s results to make changes.</p>}<div className="entry-table" role="table" aria-label={`${group.label} competitors`}><div className="entry-head" role="row"><span>Slot</span><span>Competitor</span><span>Car</span></div>{visibleEntrants.map((entry, i) => <div className="entry-row" role="row" key={entry.id}><span>{i + 1}</span><input aria-label={`Competitor ${i + 1} name`} disabled={locked} value={entry.name} onChange={e => updateEntry(entry.id, 'name', e.target.value)} placeholder={i === 0 ? 'Competitor name' : ''} /><input aria-label={`Competitor ${i + 1} car number`} inputMode="numeric" disabled={locked} value={entry.carNumber} onChange={e => updateEntry(entry.id, 'carNumber', e.target.value)} placeholder={i === 0 ? 'No.' : ''} /></div>)}</div><p className={`status-line ${validation.valid ? 'success' : ''}`}>{groupStatus(group)}</p></section>
+  return <section className={`panel roster-panel ${condensed ? 'condensed' : ''}`}><div className="panel-heading"><div><p className="eyebrow">Roster</p><input className="inline-title" aria-label="Group name" value={group.label} disabled={locked} onChange={e => update(current => ({ ...current, label: e.target.value.slice(0, 120) }))} /></div><div className="panel-actions"><span className={`validation ${validation.valid ? 'ready' : ''}`}>{entered} cars</span>{condensed && !locked && <button className="secondary compact" onClick={() => setExpanded(value => !value)}>{expanded ? 'Fewer slots' : 'All 21 slots'}</button>}<button className="secondary compact" aria-expanded={linkRacers} onClick={() => setLinkRacers(value => !value)}>Racer IDs</button><button className="secondary compact" disabled={!validation.valid || locked} onClick={redraw}>New draw</button></div></div>{locked && <p className="locked-note">Roster locked because results exist. Clear this group’s results to make changes.</p>}<div className="entry-table" role="table" aria-label={`${group.label} competitors`}><div className="entry-head" role="row"><span>Slot</span><span>Competitor</span><span>Car</span></div>{visibleEntrants.map((entry, i) => <div className="entry-row" role="row" key={entry.id}><span>{i + 1}</span><input aria-label={`Competitor ${i + 1} name`} disabled={locked} value={entry.name} onChange={e => updateEntry(entry.id, 'name', e.target.value)} placeholder={i === 0 ? 'Competitor name' : ''} /><input aria-label={`Competitor ${i + 1} car number`} inputMode="numeric" disabled={locked} value={entry.carNumber} onChange={e => updateEntry(entry.id, 'carNumber', e.target.value)} placeholder={i === 0 ? 'No.' : ''} /></div>)}</div>{linkRacers && <div className="settings-grid racer-identities">
+    <p>Reuse an optional racer ID across events and finals to track the same person in points history.</p>
+    {validEntrants(group).map(entry => <label key={entry.id}>Racer ID for {entry.name}, car {entry.carNumber}
+      <input value={entry.competitorId ?? ''} onChange={e => {
+        const competitorId = e.target.value.toLowerCase().replace(/[^a-z0-9_-]/g, '').slice(0, 60) || undefined
+        update(current => ({ ...current, entrants: current.entrants.map(row => row.id === entry.id ? { ...row, competitorId } : row) }))
+      }} autoComplete="off" />
+    </label>)}
+    </div>}<p className={`status-line ${validation.valid ? 'success' : ''}`}>{groupStatus(group)}</p></section>
 }
 
 function entrantLabel(group: RaceGroup, id: string | null) {

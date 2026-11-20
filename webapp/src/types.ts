@@ -4,6 +4,7 @@ export interface Entrant {
   id: string
   name: string
   carNumber: string
+  competitorId?: string
 }
 
 export interface Heat {
