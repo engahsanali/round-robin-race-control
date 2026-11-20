@@ -40,7 +40,7 @@ async function startBrowser() {
       return route.fulfill({ json: { group, audit: body.audit } })
     }
     assert.equal(body.expectedVersion, event.version)
-    event = { ...event, version: event.version + 1, payments: body.event.payments, audit: body.event.audit }
+    event = { ...event, version: event.version + 1, status: body.event.status, payments: body.event.payments, audit: body.event.audit }
     return route.fulfill({ json: { event } })
   })
   const page = browser.pages()[0]
@@ -107,8 +107,27 @@ try {
   assert.equal(await firstEntrant(page, 'car number').inputValue(), '7')
   await button(page, 'Return to events').click()
   assert.equal(await resume(page).count(), 0)
+  await page.getByRole('button', { name: new RegExp(eventName) }).click()
+  const control = page.getByRole('region', { name: 'Race control' })
+  await control.getByRole('button', { name: 'Start event' }).click()
+  await waitForSaved(page)
+  assert.equal(event.status, 'live')
+  await control.getByRole('button', { name: 'Mark event complete' }).click()
+  await control.getByRole('button', { name: 'Keep event open' }).click()
+  assert.equal(event.status, 'live')
+  await control.getByLabel('Progress').selectOption('attention')
+  const bracket = control.getByRole('button', { name: /Open Box Stock Main race Bracket B/i })
+  await bracket.waitFor()
+  for (const [device, width, height] of [['desktop', 1440, 1000], ['mobile', 390, 844]]) {
+    await page.setViewportSize({ width, height })
+    assert.ok(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth))
+    await control.screenshot({ path: 'artifacts/race-control-' + device + '.png' })
+  }
+  await bracket.click()
+  await page.getByRole('heading', { name: 'Race day' }).waitFor()
+  assert.equal(await firstEntrant(page, 'name').inputValue(), 'Racer Two')
   assert.deepEqual(errors, [])
-  console.log('PASS: browser restart, recent event access, pending roster and prize recovery, independent bracket merge, and stale bracket conflict')
+  console.log('PASS: recovery, stale bracket conflict, and desktop and mobile Race Control')
 } finally {
   await browser?.close().catch(() => {})
   if (dirname(resolve(profile)) === resolve(tmpdir())) await rm(profile, { recursive: true, force: true })

@@ -91,8 +91,9 @@ export default function RaceControl({ event, onOpenGroup, onSetStatus }: RaceCon
   }
   return <section className="race-control" aria-labelledby="race-control-heading">
     <div className="race-control-heading">
-      <div><p className="eyebrow">Organiser controls</p><h1 id="race-control-heading">Race control</h1><p>Follow every bracket and open the next group to score.</p></div>
+      <div><h2 id="race-control-heading">Race control</h2><p>Event status <strong>{event.status === 'draft' ? 'Draft' : event.status === 'live' ? 'Live' : 'Complete'}</strong></p></div>
       {onSetStatus && <div className="race-control-actions">
+        {event.status !== 'draft' && <button className="secondary" disabled={saving} onClick={() => void setEventStatus('draft')}>Return to draft</button>}
         {event.status !== 'live' && <button className="primary" disabled={saving} onClick={() => void setEventStatus('live')}>{event.status === 'complete' ? 'Reopen event' : 'Start event'}</button>}
         {event.status !== 'complete' && <button className="secondary" disabled={saving} onClick={() => unfinished > 0 ? setConfirmComplete(true) : void setEventStatus('complete')}>Mark event complete</button>}
       </div>}
