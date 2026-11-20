@@ -28,7 +28,7 @@ function validAmount(value: unknown, max: number): value is number {
 export default async (req: Request, context: Context) => {
   try {
     if (req.method === 'GET') {
-      const session = await readSession()
+      const session = await readSession(context)
       if (!session) return json({ account: null, events: [] })
       const [account, events, recoveryKey] = await Promise.all([profileFor(session), listWorkspaceEvents(session.id), recoveryKeyFor(session.id)])
       return json({ account, events, recoveryKey })
@@ -84,7 +84,7 @@ export default async (req: Request, context: Context) => {
       await logout()
       return json({ account: null })
     }
-    const session = await readSession()
+    const session = await readSession(context)
     if (!session) return json({ error: 'Sign in to continue.' }, 401)
     if (action === 'claim') {
       if (typeof body.link !== 'string' || body.link.length > 1500) return json({ error: 'Enter a private admin link.' }, 400)

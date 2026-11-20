@@ -1,10 +1,9 @@
-import { expect, it, vi } from 'vitest'
+import { afterEach, expect, it, vi } from 'vitest'
 import type { Context } from '@netlify/functions'
 import { createEvent } from './domain'
 import events from '../netlify/functions/events'
 
-const state = vi.hoisted(() => ({ session: null as { id: string; email: string; confirmedAt: string } | null }))
-vi.mock('@netlify/identity', () => ({ getUser: async () => state.session }))
+const state = { session: null as { id: string; email: string; confirmed_at: string } | null }
 vi.mock('@netlify/blobs', () => ({
   getStore() {
     const blobs = new Map<string, { data: unknown; etag: string; metadata?: unknown }>()
@@ -24,16 +23,24 @@ vi.mock('@netlify/blobs', () => ({
 }))
 
 const origin = 'https://race.example'
-const alice = { id: '10000000-0000-4000-8000-000000000001', email: 'alice@example.test', confirmedAt: '2026-01-01' }
-const bob = { id: '10000000-0000-4000-8000-000000000002', email: 'bob@example.test', confirmedAt: '2026-01-01' }
+const alice = { id: '10000000-0000-4000-8000-000000000001', email: 'alice@example.test', confirmed_at: '2026-01-01' }
+const bob = { id: '10000000-0000-4000-8000-000000000002', email: 'bob@example.test', confirmed_at: '2026-01-01' }
+afterEach(() => vi.unstubAllGlobals())
 
 function run(method: string, path: string, params: Record<string, string> = {}, body?: unknown) {
   const request = new Request(origin + path, { method, headers: { Origin: origin, 'Content-Type': 'application/json' },
     body: body === undefined ? undefined : JSON.stringify(body) })
-  return events(request, { params } as unknown as Context)
+  return events(request, { params, cookies: { get: () => state.session?.id }, site: { url: origin } } as unknown as Context)
 }
 
 it('keeps events, writes and history private, and revokes projected spectator access', async () => {
+  vi.stubGlobal('fetch', async (url: URL, init: RequestInit) => {
+    expect(url.href).toBe(origin + '/.netlify/identity/user')
+    expect(init.headers).toEqual({ Authorization: 'Bearer ' + state.session?.id })
+    return Response.json(state.session)
+  })
+  state.session = { ...alice, confirmed_at: '' }
+  expect((await run('GET', '/api/history')).status).toBe(401)
   state.session = alice
   const draft = createEvent('Private fixture event', '2026-11-20', 'Test venue')
   draft.payments.fixture = { nameKey: 'fixture', displayName: 'Fixture', paid: 15, prize: 5 }

@@ -1,5 +1,5 @@
 import { getStore } from '@netlify/blobs'
-import { getUser } from '@netlify/identity'
+import type { Context } from '@netlify/functions'
 import { digest, token, validUserId } from './account-security'
 
 export const accounts = getStore({ name: 'race-manager-accounts-v2', consistency: 'strong' })
@@ -18,10 +18,24 @@ export interface Profile {
   points?: { first: number; second: number; third: number; version: number }
 }
 
-export async function readSession(): Promise<Session | null> {
-  const user = await getUser()
-  if (!user || !validUserId(user.id) || !user.email || !user.confirmedAt) return null
-  const { full_name: name, nickname } = user.userMetadata ?? {}
+export async function readSession(context: Context): Promise<Session | null> {
+  const accessToken = context.cookies.get('nf_jwt')
+  if (!accessToken) return null
+  // The Identity SDK can return reduced claims on deploy previews. Check the
+  // provider's user record for confirmation using the configured site origin.
+  const identity = new URL('/.netlify/identity/user', context.site.url)
+  if (identity.protocol === 'http:') identity.protocol = 'https:'
+  if (identity.protocol !== 'https:') return null
+  const response = await fetch(identity, {
+    headers: { Authorization: 'Bearer ' + accessToken },
+    redirect: 'error',
+    signal: AbortSignal.timeout(5000),
+  })
+  if (response.status === 401 || response.status === 403) return null
+  if (!response.ok) throw new Error('Identity user lookup failed')
+  const user = await response.json()
+  if (!validUserId(user.id) || typeof user.email !== 'string' || !user.email || !user.confirmed_at) return null
+  const { full_name: name, nickname } = user.user_metadata ?? {}
   return {
     id: user.id,
     email: user.email,

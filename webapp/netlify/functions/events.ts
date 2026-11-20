@@ -226,7 +226,7 @@ export default async (req: Request, context: Context) => {
     const endpoint = new URL(req.url).pathname
     const watch = context.params.code
     if (watch) return req.method === 'GET' ? await readSpectator(watch) : json({ error: 'Method not allowed.' }, 405)
-    const session = await readSession()
+    const session = await readSession(context)
     if (!session) return json({ error: 'Sign in to continue.' }, 401)
     if (req.method !== 'GET' && !isSameOriginWrite(req)) return json({ error: 'Invalid request origin.' }, 403)
     const scope = workspace(session.id)
