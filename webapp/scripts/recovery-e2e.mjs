@@ -121,7 +121,7 @@ try {
   for (const [device, width, height] of [['desktop', 1440, 1000], ['mobile', 390, 844]]) {
     await page.setViewportSize({ width, height })
     assert.ok(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth))
-    await control.screenshot({ path: 'artifacts/race-control-' + device + '.png' })
+    await page.screenshot({ path: 'artifacts/race-control-' + device + '.png', fullPage: true })
   }
   await bracket.click()
   await page.getByRole('heading', { name: 'Race day' }).waitFor()

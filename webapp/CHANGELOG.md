@@ -2,6 +2,32 @@
 
 All production changes to Round Robin Race Manager are recorded here using semantic versioning.
 
+## [2.0.0] - 2026-11-20
+
+### Added
+
+- Organiser accounts with email verification, password reset, Google sign-in, and editable profile and scoring settings.
+- Private event history, recovery of pending browser edits, and import of an older event using its private admin link.
+- Confirm first, second and third place by category, and calculate season points from confirmed podiums.
+- Race Control shows heats scored and brackets needing attention. Organisers can filter groups, open any bracket directly, and change the event status from the overview.
+
+### Changed
+
+- Event data and payments are scoped to the signed-in organiser. Explicit spectator links show race information and can be revoked.
+- Pending edits are encrypted in the browser and can be reopened by the same account after sign-in.
+
+### Validation
+
+- 31 unit tests, production bundling, and desktop and mobile Race Control and browser recovery tests passed.
+- Netlify preview `6affef0a1f3562d74c1bf82c` passed the standard and concurrency browser checks. Separate verified accounts confirmed that a second organiser gets 404 on the first organiser's event reads and writes.
+- Signup email verification, password reset, sign-out and the Google authorization redirect were verified on the preview.
+
+### Screenshots
+
+![Desktop Race Control showing bracket progress](docs/screenshots/v2.0.0-race-control-desktop.png)
+
+![Mobile Race Control with stage, category and progress filters](docs/screenshots/v2.0.0-race-control-mobile.png)
+
 ## [1.3.0] - 2026-11-20
 
 ### Added
