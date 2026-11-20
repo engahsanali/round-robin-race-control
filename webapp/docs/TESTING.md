@@ -11,6 +11,15 @@
 
 Generated JSON evidence is written under `artifacts/` and is intentionally not versioned. Release screenshots are kept under `docs/screenshots/` and are versioned with the changelog.
 
+## v1.2.0 production - 20 November 2026
+
+- Unit tests: **PASS**, 15 tests, including category aggregation and deterministic expansion of older events.
+- TypeScript and production build: **PASS**. The permanent site served the same JS and CSS assets as the verified build.
+- Desktop and mobile E2E: **PASS** at 1440 × 1000 and 390 × 844. The test saved an entry in each new category, kept one payment row for a competitor with cars across three categories, and verified the fee table scrolled within the phone viewport. The event showed 8 fee-paying entries, $120 due, $30 paid, and $90 remaining. Both new entries and the payment survived a reload.
+- Production concurrency E2E: **PASS**. Two independent brackets retained their results. Same-bracket races returned 200 and 409 in both the browser and direct API tests. An unauthorised write returned 401.
+- Standings browser regression: **PASS** at all seven viewports against the production client with an isolated test API. All browser checks reported zero console errors.
+- Desktop and mobile fee screenshots were inspected. Production deploy: `6affcea20080643652bf0eee`.
+
 ## v1.1.1 production - 12 November 2026
 
 - Unit tests: **PASS**, 14 tests.

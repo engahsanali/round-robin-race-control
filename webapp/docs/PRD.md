@@ -2,9 +2,9 @@
 
 **Product:** Round Robin Race Manager
 
-**Current release:** 1.1.0
+**Current release:** 1.2.0
 
-**Last updated:** 11 September 2026
+**Last updated:** 20 November 2026
 
 **Status:** Production
 

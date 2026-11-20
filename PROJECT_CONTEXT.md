@@ -6,13 +6,15 @@ The active product is the Round Robin Race Manager web app in [`webapp/`](webapp
 
 - Production: <https://round-robin-race-manager.netlify.app>
 - Source repository: <https://github.com/engahsanali/round-robin-race-control>
-- Current version: **1.1.0**
+- Current version: **1.2.0**
 - Hosting: Netlify
 - Storage: Netlify Blobs plus a local offline copy in the browser
 - UI: React and TypeScript, built with Vite
 - Server API: Netlify Functions
 
 ## Current release status
+
+Version 1.2.0 went live on 20 November 2026 with Stock Advance and BMAX Speed and a fee breakdown by category. The release was verified on the permanent production URL.
 
 Version 1.1.0 was deployed on 11 September 2026. Each bracket now has an independent cloud record, revision, save queue, and conflict boundary. Bracket A and Bracket B can be operated in separate tabs or devices at the same time without one replacing the other.
 

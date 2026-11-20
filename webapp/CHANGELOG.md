@@ -2,6 +2,26 @@
 
 All production changes to Round Robin Race Manager are recorded here using semantic versioning.
 
+## [1.2.0] - 2026-11-20
+
+### Added
+
+- Added Stock Advance and BMAX Speed to main racing and finals. Older four-class events receive both classes while retaining their saved brackets and results.
+- Added per-category entry counts and fees to each competitor's row, with total entries and fees for each competitor and for the event.
+
+### Validation
+
+- All 15 unit tests and the TypeScript production build passed.
+- Desktop and mobile E2E on the permanent production URL verified that entries in both new categories and payments survive reload, category and event totals reconcile, and finals stay fee-free.
+- The production concurrency test confirmed that independent brackets saved successfully, simultaneous saves to one bracket returned 200 and 409, and unauthorised writes returned 401. The seven-viewport standings regression passed.
+- Production deploy: `6affcea20080643652bf0eee` from source commit `25ae745b06945c54fc7d5d5381e933684f3c6d96`. Live verification used test events.
+
+### Screenshots
+
+![Desktop fee breakdown and event totals](docs/screenshots/v1.2.0-fees-desktop.png)
+
+![Mobile fee summary and scrollable category table](docs/screenshots/v1.2.0-fees-mobile.png)
+
 ## [1.1.1] - 2026-11-12
 
 ### Fixed
