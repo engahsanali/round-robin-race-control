@@ -21,6 +21,8 @@ All production changes to Round Robin Race Manager are recorded here using seman
 - 31 unit tests, production bundling, and desktop and mobile Race Control and browser recovery tests passed.
 - Netlify preview `6affef0a1f3562d74c1bf82c` passed the standard and concurrency browser checks. Separate verified accounts confirmed that a second organiser gets 404 on the first organiser's event reads and writes.
 - Signup email verification, password reset, sign-out and the Google authorization redirect were verified on the preview.
+- Production deploy `6afff1051452a699eebaf6b1` came from main commit `f286048facd7cbea4e39b122118ad2006504e983`. Standard desktop and mobile E2E, deployed concurrency, live two-account isolation, profiles, event status, podiums and season points passed.
+- A production legacy test carried over both new categories, the saved roster, a payment and a prize credit. The superseded deploy no longer served anonymous requests.
 
 ### Screenshots
 
