@@ -6,13 +6,15 @@ The active product is the Round Robin Race Manager web app in [`webapp/`](webapp
 
 - Production: <https://round-robin-race-manager.netlify.app>
 - Source repository: <https://github.com/engahsanali/round-robin-race-control>
-- Current version: **1.2.0**
+- Current version: **1.3.0**
 - Hosting: Netlify
 - Storage: Netlify Blobs plus a local offline copy in the browser
 - UI: React and TypeScript, built with Vite
 - Server API: Netlify Functions
 
 ## Current release status
+
+Version 1.3.0 went live on 20 November 2026. Organisers can reopen recent events and recover pending edits in the same browser profile. The Fees page deducts prize credits separately from payments.
 
 Version 1.2.0 went live on 20 November 2026 with Stock Advance and BMAX Speed and a fee breakdown by category. The release was verified on the permanent production URL.
 

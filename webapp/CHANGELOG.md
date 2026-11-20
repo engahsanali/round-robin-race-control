@@ -2,6 +2,31 @@
 
 All production changes to Round Robin Race Manager are recorded here using semantic versioning.
 
+## [1.3.0] - 2026-11-20
+
+### Added
+
+- Reopen recent events from the home page in the same browser. Resume pending entries, results, and fee edits after closing the browser.
+- Record prize credits between Total due and Paid. The balance subtracts each competitor's prize credit and payment, with a minimum of zero.
+- Credit Ahsan Ali and AhsanTechLabs.com in the home page footer and identify the app as free to use.
+
+### Validation
+
+- All 16 unit tests and the TypeScript production build passed.
+- Desktop and mobile E2E on production verified the footer, category fees, prize credits, and payments after reload.
+- A production test closed the tab with roster and prize edits pending, then reopened from the home page without the admin link. Both edits synced to Netlify after recovery.
+- The browser restart test verified recovery across a full browser close, preservation of independent bracket changes, and explicit conflict resolution for stale edits.
+- Production concurrency E2E verified independent brackets, 200 and 409 for simultaneous same-bracket saves, and 401 for an unauthorised write.
+- Production deploy `6affdfac03e057dd9d067388` came from main commit `e00a37557f627dc18ffe6c3766193466e51be8d1`. Live verification used test events.
+
+### Screenshots
+
+![Recover pending edits from the home page](docs/screenshots/v1.3.0-recovery-home.png)
+
+![Desktop prize credits and fees](docs/screenshots/v1.3.0-fees-desktop.png)
+
+![Mobile prize credits and fee summary](docs/screenshots/v1.3.0-fees-mobile.png)
+
 ## [1.2.0] - 2026-11-20
 
 ### Added

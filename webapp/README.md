@@ -2,22 +2,22 @@
 
 Production: <https://round-robin-race-manager.netlify.app>
 
-Current version: **1.1.0**
+Current version: **1.3.0**
 
 An installable race-day web app based on the verified Round Robin Excel templates. Every bracket saves independently, so two operators can safely run different brackets in separate tabs or devices at the same time.
 
 ## Features
 
-- Four classes with six independent preliminary brackets each
+- Six classes with six independent preliminary brackets each
 - Automatic random draws using the tested Excel schedule libraries
 - Touch-friendly winner entry with W/L records and shared rankings
-- One name-based entry-fee table
+- One name-based fee table with category totals, prize credits, and payments
 - Manual finals and semifinals with editable car numbers
 - Six independent rerace groups, including six unique pairings for four cars
 - Independent per-bracket online saves through Netlify Functions and Blobs
 - Safe simultaneous operation of different brackets
 - Atomic same-bracket conflict protection with an explicit resolution choice
-- Offline device copy, remote polling and activity history
+- Offline device copy, recovery of pending edits in the same browser, remote polling and activity history
 - Private admin links, read-only public display links, JSON backups and CSV results
 
 ## Documentation

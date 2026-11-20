@@ -8,8 +8,18 @@
 | Production build | TypeScript and bundling | `pnpm build` |
 | Standard E2E | Full race workflow, desktop/mobile, duplicate owners | `node scripts/e2e.mjs` with `BASE_URL` |
 | Concurrency E2E | Two-bracket operation, atomic conflict, auth | `pnpm test:concurrency` with `BASE_URL` |
+| Recovery E2E | Browser restart, pending edits, and stale bracket recovery with an isolated API fixture | `pnpm test:recovery` with `BASE_URL` |
 
 Generated JSON evidence is written under `artifacts/` and is intentionally not versioned. Release screenshots are kept under `docs/screenshots/` and are versioned with the changelog.
+
+## v1.3.0 production - 20 November 2026
+
+- Unit tests and TypeScript production build passed. The permanent URL served the JS and CSS assets from the build.
+- Desktop and mobile E2E passed at 1440 × 1000 and 390 × 844. The test event showed $120 due, $12.50 in prize credits, $30 paid, and $77.50 remaining. Both prize and payment amounts survived reload.
+- Same-browser recovery passed on the permanent URL. A pending car number and $4.25 prize credit synced after reopening from the home page. The resulting balance was $10.75, and the viewer API omitted the payment data.
+- Full browser restart with the isolated API fixture verified event discovery, recovery of both save scopes, and an explicit choice for a stale bracket.
+- Production concurrency passed with independent bracket saves, 200 and 409 for same-bracket conflicts, and 401 for an unauthorised write. Browser tests reported zero page errors.
+- Production screenshots were inspected. Netlify deploy ID `6affdfac03e057dd9d067388`.
 
 ## v1.2.0 production - 20 November 2026
 
