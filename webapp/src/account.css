@@ -1,0 +1,61 @@
+.account-shell { min-height: 100vh; }
+.account-header { display: flex; align-items: center; gap: 12px; padding: 18px 24px; background: var(--ink); color: white; }
+.account-auth { max-width: 1060px; display: grid; grid-template-columns: 1fr 420px; align-items: start; gap: 60px; padding-top: 60px; }
+.account-intro { padding-top: 30px; }
+.account-intro h1 { font-size: clamp(2.1rem, 5vw, 3.8rem); }
+.account-intro p { color: var(--muted); line-height: 1.6; }
+.account-card { min-width: 0; padding: 24px; border: 1px solid var(--line); border-radius: 14px; background: var(--panel); box-shadow: var(--shadow); }
+.account-form { display: grid; gap: 16px; }
+.account-card h2 { margin-bottom: 20px; }
+.account-card button { border-radius: 8px; padding: 10px 14px; font-weight: 750; }
+.account-tabs { display: flex; flex-wrap: wrap; gap: 8px; margin-bottom: 22px; }
+.account-tabs button { border: 1px solid var(--line); background: white; border-radius: 8px; padding: 10px 16px; color: var(--ink); font-weight: 750; }
+.account-tabs button[aria-pressed="true"] { background: var(--ink); color: white; border-color: var(--ink); }
+.account-muted { color: var(--muted); }
+.account-help { font-size: .85rem; color: var(--muted); line-height: 1.5; margin: 0; }
+.account-text-button { border: 0; background: transparent; color: var(--blue-dark); text-decoration: underline; padding: 0 !important; margin-top: 20px; font: inherit; font-size: .85rem; }
+.account-error, .account-notice { padding: 12px 14px; border-radius: 8px; margin: 0 0 18px; font-size: .9rem; line-height: 1.5; }
+.account-error { color: #722c2c; background: #fff0ef; border: 1px solid #efb1ad; }
+.account-notice { color: var(--green-ink); background: var(--green); border: 1px solid #accfb7; }
+.account-form > .account-error, .account-form > .account-notice { margin: 0; }
+.account-dashboard { max-width: 1280px; }
+.account-dashboard-heading, .account-section-heading { display: flex; align-items: center; justify-content: space-between; gap: 18px; }
+.account-dashboard-heading { margin-bottom: 25px; }
+.account-dashboard-heading h1 { font-size: 2rem; }
+.account-dashboard-heading p { margin-bottom: 0; }
+.account-section-heading h2 { margin: 0; }
+.account-section-heading { margin-bottom: 22px; }
+.account-two-column { display: grid; grid-template-columns: 1fr 1fr; gap: 20px; margin-top: 20px; align-items: start; }
+.account-filters { display: grid; grid-template-columns: 2fr 1fr 1fr 1fr; gap: 12px; margin-bottom: 20px; }
+.account-filters input, .account-filters select { min-width: 0; }
+.account-events { display: grid; gap: 10px; }
+.account-events button { text-align: left; display: grid; grid-template-columns: minmax(0, 1fr) auto; gap: 4px 16px; background: white; color: var(--ink); border: 1px solid var(--line); }
+.account-events button:hover { border-color: var(--blue); }
+.account-events strong { overflow-wrap: anywhere; }
+.account-events span { color: var(--muted); font-size: .82rem; }
+.account-events button > span:nth-child(2) { grid-column: 1; }
+.account-events .account-event-status { grid-column: 2; grid-row: 1 / 3; align-self: center; color: var(--blue-dark); font-weight: 750; }
+.account-empty { margin: 24px 0 4px; color: var(--muted); }
+.account-file-label { display: block; margin-top: 22px; }
+.account-file-label input { display: block; max-width: 100%; font-size: .8rem; margin-top: 10px; }
+.account-settings { max-width: 720px; }
+.account-settings fieldset { min-width: 0; margin: 0; padding: 16px; border: 1px solid var(--line); border-radius: 8px; }
+.account-settings legend { font-size: .85rem; font-weight: 750; padding: 0 5px; }
+.account-point-fields { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 12px; margin-top: 16px; }
+.account-credit { max-width: 1232px; margin: 0 auto; padding: 20px 24px 30px; color: var(--muted); font-size: .85rem; line-height: 1.6; }
+.account-credit a { color: var(--blue-dark); }
+@media (max-width: 760px) {
+  .account-auth { grid-template-columns: 1fr; gap: 24px; padding-top: 28px; }
+  .account-intro { padding-top: 0; }
+  .account-two-column { grid-template-columns: 1fr; }
+  .account-filters { grid-template-columns: 1fr 1fr; }
+  .account-filters > label:first-child { grid-column: 1 / -1; }
+  .account-dashboard-heading { align-items: flex-start; }
+}
+@media (max-width: 400px) {
+  .account-card { padding: 18px; }
+  .account-point-fields { grid-template-columns: 1fr; }
+  .account-filters { grid-template-columns: 1fr; }
+  .account-events button { grid-template-columns: 1fr; }
+  .account-events .account-event-status { grid-column: 1; grid-row: auto; }
+}
