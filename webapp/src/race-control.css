@@ -1,0 +1,46 @@
+.race-control { display: grid; gap: 20px; }
+.race-control-heading { display: flex; justify-content: space-between; align-items: flex-start; gap: 20px; }
+.race-control-heading p:last-child { margin: 0; color: var(--muted); }
+.race-control-actions { display: flex; flex-wrap: wrap; gap: 10px; }
+.race-control-alert { margin: 0; padding: 16px; border: 1px solid #e8c58e; border-radius: 10px; background: #fff7e9; color: #6b4c19; }
+.race-control-alert p { margin: 0 0 12px; }
+.race-control-stats { display: grid; grid-template-columns: repeat(5, minmax(0, 1fr)); gap: 12px; }
+.race-control-stats article { padding: 18px; background: white; border: 1px solid var(--line); border-radius: 12px; }
+.race-control-stats span { display: block; color: var(--muted); font-size: .8rem; }
+.race-control-stats strong { display: block; margin-top: 8px; font-size: 1.6rem; }
+.race-control-stages { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 12px; }
+.race-control-stages button { padding: 16px; text-align: left; background: white; color: var(--ink); border: 1px solid var(--line); border-radius: 10px; }
+.race-control-stages button.active { border-color: var(--blue); box-shadow: inset 0 0 0 1px var(--blue); }
+.race-control-stages strong, .race-control-stages span { display: block; }
+.race-control-stages span { color: var(--muted); font-size: .8rem; margin-top: 6px; }
+.race-control-filters { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)) auto; gap: 12px; align-items: end; }
+.race-control-filters select { min-width: 0; }
+.race-control-checkbox { display: flex; align-items: center; gap: 8px; padding-bottom: 10px; }
+.race-control-checkbox input { width: auto; margin: 0; }
+.race-control-groups { display: grid; gap: 12px; }
+.race-control-group { min-width: 0; display: grid; grid-template-columns: minmax(140px, 1fr) minmax(180px, 1.2fr) auto; align-items: center; gap: 24px; padding: 18px; background: white; border: 1px solid var(--line); border-radius: 12px; }
+.race-control-group h2 { margin: 5px 0; overflow-wrap: anywhere; }
+.race-control-group p { margin: 0; color: var(--muted); font-size: .82rem; line-height: 1.5; }
+.race-control-context { color: var(--muted); font-size: .75rem; }
+.race-control-group-progress { min-width: 0; display: grid; gap: 5px; }
+.race-control-group-progress > span { color: var(--muted); font-size: .8rem; }
+.race-control-group progress { width: 100%; height: 9px; accent-color: var(--blue); }
+.race-control-status { font-size: .85rem; }
+.race-control-status.complete { color: var(--green-ink); }
+.race-control-status.racing { color: var(--blue-dark); }
+.race-control-status.attention { color: var(--red); }
+.race-control-empty { margin: 0; padding: 24px; background: white; border: 1px solid var(--line); border-radius: 12px; color: var(--muted); }
+@media (max-width: 800px) {
+  .race-control-heading { flex-direction: column; }
+  .race-control-stats { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+  .race-control-stats article:last-child { grid-column: 1 / -1; }
+  .race-control-filters { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+  .race-control-group { grid-template-columns: minmax(0, 1fr) auto; gap: 14px; }
+  .race-control-group-progress { grid-column: 1 / -1; grid-row: 2; }
+}
+@media (max-width: 440px) {
+  .race-control-stages { grid-template-columns: 1fr; }
+  .race-control-filters { grid-template-columns: 1fr; }
+  .race-control-checkbox { padding: 5px 0; }
+  .race-control-group { padding: 14px; gap: 10px; }
+}
