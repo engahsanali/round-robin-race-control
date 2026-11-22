@@ -32,11 +32,32 @@ Browser ── https://ahsantechlabs.com ── Traefik (coolify-proxy)
   - Same-origin checks on every write, plus the existing per-IP and per-email rate limits.
   - One-time hashed tokens for email verification and password reset.
   - Each user maps to a workspace id. Users created from the dashboard can be linked to a workspace that existed before the move.
-- `src/identity-local.ts` replaces the browser half of `@netlify/identity` when `VITE_AUTH=local`. Google sign-in is hidden.
+- `src/identity-local.ts` replaces the browser half of `@netlify/identity` when `VITE_AUTH=local`. It shows the Google button when the server reports Google is configured.
+- `server/google.ts` handles Google sign-in (see below). `/roundrobin/privacy` serves `server/privacy.html`.
+
+## Google sign-in
+
+- **OAuth client:** Google Cloud project `rosy-clover-515512-b8`, owned by ahsantechlabs@gmail.com. Web application client `799727978445-e6vq4d5fojs8sqv1d6sas7umv57l3i4g.apps.googleusercontent.com`, published In production.
+  - Origin: `https://ahsantechlabs.com`
+  - Redirect URI: `https://ahsantechlabs.com/roundrobin/api/auth/google/callback`
+  - Scopes: `openid email profile`
+  - Privacy policy: https://ahsantechlabs.com/roundrobin/privacy
+- **Secret storage:** `RR_GOOGLE_CLIENT_ID` and `RR_GOOGLE_CLIENT_SECRET` live in `/opt/round-robin-race-manager/secrets/google.env` (root, 600), loaded with `env_file`. `RR_GOOGLE_REDIRECT_URI` is set in compose. Without the two variables the button stays hidden, and `/api/auth/google/*` returns `#google_error=unavailable`.
+- **Flow:** `GET /api/auth/google/start` creates the state, nonce and PKCE verifier, and stores them server-side for 10 minutes, keyed by a hash of the state. It sets the `rr_google` state cookie (httpOnly, Secure, Lax, Path=/roundrobin/api/auth/google) and redirects to Google. `GET /api/auth/google/callback` then:
+  - requires the state to match the cookie and the stored record, and uses it once;
+  - exchanges the code with the PKCE verifier;
+  - verifies the id_token: RS256 signature against Google's published keys, issuer, audience equal to the client ID, expiry, nonce, and email_verified.
+- **Accounts:**
+  - A first Google sign-in creates a verified user with sign-up method `google`.
+  - The same verified email as an existing account links to it.
+  - If that existing account was never verified, its password is cleared and its sessions are revoked. That stops someone who registered the address without owning it from keeping access.
+  - Disabled accounts are refused.
+- **Errors** come back as `/roundrobin/#google_error=state|cancelled|failed|disabled|busy|unavailable`, and the sign-in screen explains them.
+- **Rotate the secret:** create a new secret in Google Cloud, update google.env, run `docker compose up -d`, then delete the old secret in Google Cloud.
 
 ## Email
 
-No outgoing email. A free sender that can mail any address was not available (Cloudflare Email Sending to arbitrary recipients needs the paid Workers plan). So:
+No outgoing email yet. Resend is planned. contact@ahsantechlabs.com is a Hostinger mailbox, so Resend DNS must use only the `send` subdomain and `resend._domainkey`, and never change the root MX or SPF. Until then:
 
 - New accounts can sign in at once. Verification is a flag the owner sets in the dashboard. `RR_REQUIRE_VERIFIED=1` would block unverified sign-ins.
 - "Forgot password" logs a request that the dashboard flags. The owner creates a one-time reset link (24 hours) or a temporary password and sends it to the user.
