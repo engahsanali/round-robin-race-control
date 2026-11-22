@@ -21,7 +21,8 @@ export interface User {
   name: string
   nickname: string
   passwordHash: string | null
-  signupMethod: 'email' | 'admin' | 'legacy'
+  signupMethod: 'email' | 'admin' | 'legacy' | 'google'
+  googleSub?: string
   createdAt: string
   verifiedAt: string | null
   disabledAt: string | null
@@ -105,6 +106,7 @@ export async function deleteUser(id: string) {
   // Keep a tombstone without the password hash; race data in the workspace is not touched.
   await store.setJSON('deleted/' + id, { ...user, passwordHash: null, deletedAt: new Date().toISOString() })
   await store.delete('email/' + sha(normalEmail(user.email)))
+  if (user.googleSub) await store.delete('google/' + sha(user.googleSub))
   await store.delete('users/' + id)
   return true
 }

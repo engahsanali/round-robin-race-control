@@ -13,6 +13,8 @@ import { createJar, scope } from './runtime'
 import { useSessionReader } from '../netlify/functions/lib/account-store'
 import { SESSION_COOKIE, sessionUser } from './auth'
 import { handleAdmin } from './admin'
+import { handleGoogleAuth } from './google'
+import privacyHtml from './privacy.html?raw'
 
 useSessionReader(async context => {
   const user = await sessionUser(context.cookies.get(SESSION_COOKIE))
@@ -136,6 +138,11 @@ const server = createServer(async (req, res) => {
     if (basePath && url.pathname === basePath) return sendText(res, 301, '', { Location: basePath + '/' + url.search })
     if (basePath && !url.pathname.startsWith(basePath + '/')) return sendText(res, 404, 'Not found')
     const path = url.pathname.slice(basePath.length) || '/'
+    if (path === '/api/auth/config' || path.startsWith('/api/auth/google/')) return await handleGoogleAuth(req, res, path, url, { origin: publicOrigin(req), basePath, ip: clientIp(req), userAgent: String(req.headers['user-agent'] ?? ''), headers: securityHeaders })
+    if ((path === '/privacy' || path === '/privacy/') && (method === 'GET' || method === 'HEAD')) {
+      res.writeHead(200, { ...securityHeaders, 'Content-Type': 'text/html; charset=utf-8', 'Cache-Control': 'public, max-age=0, must-revalidate', 'Content-Security-Policy': securityHeaders['Content-Security-Policy'].replace("style-src 'self'", "style-src 'self' 'unsafe-inline'") })
+      return res.end(method === 'HEAD' ? undefined : privacyHtml)
+    }
     if (path.startsWith('/api/')) return await runFunction(req, res, path, url.search)
     if (path === '/admin' || path.startsWith('/admin/')) return await handleAdmin(req, res, path.slice('/admin'.length), { origin: publicOrigin(req), ip: clientIp(req), basePath })
     if (method !== 'GET' && method !== 'HEAD') return sendText(res, 405, 'Method not allowed')

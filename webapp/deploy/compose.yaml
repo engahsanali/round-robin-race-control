@@ -9,7 +9,12 @@ services:
     restart: unless-stopped
     read_only: true
     tmpfs: [/tmp]
+    # RR_GOOGLE_CLIENT_ID and RR_GOOGLE_CLIENT_SECRET (root-only file on the VPS).
+    env_file:
+      - ./secrets/google.env
     environment:
+      # Must match the redirect URI registered on the Google OAuth client.
+      RR_GOOGLE_REDIRECT_URI: https://ahsantechlabs.com/roundrobin/api/auth/google/callback
       RR_BASE_PATH: /roundrobin
       RR_DATA_DIR: /data
       # Admin login (email, scrypt hash, TOTP secret). Created by scripts/make-admin.mjs.

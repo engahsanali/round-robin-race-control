@@ -100,7 +100,7 @@ async function detail(id) {
       <div class="stat"><span class="muted">Last login / seen</span>${when(user.lastLoginAt)}<br>${when(user.lastSeenAt)}</div>
       <div class="stat"><span class="muted">Logins</span><b>${user.loginCount}</b></div>
       <div class="stat"><span class="muted">Events · brackets · races</span><b>${stats.totals.events} · ${stats.totals.brackets} · ${stats.totals.heatsRun}</b>${stats.podiums} podium sets, ${stats.published} public displays</div>
-      <div class="stat"><span class="muted">Account</span>${user.disabledAt ? 'Disabled ' + when(user.disabledAt) : 'Enabled'}<br>${user.hasPassword ? 'Password set' : 'No password yet'}<br><span class="muted">User ${esc(user.id)}<br>Workspace ${esc(user.workspaceId)}</span></div>
+      <div class="stat"><span class="muted">Account</span>${user.disabledAt ? 'Disabled ' + when(user.disabledAt) : 'Enabled'}<br>${user.hasPassword ? 'Password set' : 'No password yet'}<br>${user.googleSub ? 'Google linked' : ''}<br><span class="muted">User ${esc(user.id)}<br>Workspace ${esc(user.workspaceId)}</span></div>
     </div>
     <div class="actions">
       <button data-act="reset-link" class="primary">Create reset link</button>

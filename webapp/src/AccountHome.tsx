@@ -21,7 +21,7 @@ export interface AccountHomeProps {
 type AuthMode = 'login' | 'signup' | 'forgot' | 'reset' | 'verify'
 
 function Credit() {
-  return <footer className="account-credit">Free to use. Created by Ahsan Ali at <a href="https://ahsantechlabs.com/">AhsanTechLabs.com</a>.</footer>
+  return <><footer className="account-credit">Free to use. Created by Ahsan Ali at <a href="https://ahsantechlabs.com/">AhsanTechLabs.com</a>.</footer>{import.meta.env.VITE_AUTH === 'local' && <p className="account-credit"><a href={import.meta.env.BASE_URL + 'privacy'}>Privacy</a></p>}</>
 }
 
 export default function AccountHome(props: AccountHomeProps) {
@@ -46,6 +46,11 @@ function SignIn({ onRefresh }: { onRefresh: () => Promise<void> }) {
   const [googleEnabled, setGoogleEnabled] = useState(false)
   useEffect(() => {
     let current = true
+    const googleError = new URLSearchParams(location.hash.slice(1)).get('google_error')
+    if (googleError) {
+      setError(googleError === 'state' ? 'Google sign-in expired or was opened in another browser. Please try again.' : googleError === 'cancelled' ? 'Google sign-in was cancelled.' : googleError === 'disabled' ? 'This account is disabled. Contact contact@ahsantechlabs.com.' : 'Google sign-in could not be completed. Please try again.')
+      history.replaceState({}, '', location.pathname + location.search)
+    }
     void getSettings().then(settings => { if (current) setGoogleEnabled(Boolean(settings.providers.google)) }).catch(() => {})
     return () => { current = false }
   }, [])
