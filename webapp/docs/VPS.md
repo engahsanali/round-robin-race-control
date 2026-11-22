@@ -4,6 +4,8 @@
 
 **Status:** moved off Netlify on 22 November 2026. Accounts, sign-in and data all run on the VPS.
 
+The Netlify copy (round-robin-race-manager.netlify.app) keeps running independently, with its own Netlify Identity accounts and Blobs data. The two copies do not sync.
+
 The Netlify build still works unchanged. The VPS build sets `VITE_BASE=/roundrobin/` and `VITE_AUTH=local`, and runs the same function code in a small Node server.
 
 ## How it fits together
@@ -52,7 +54,7 @@ Create or rotate the admin login on the VPS (prints no secrets):
 ```bash
 cd /opt/round-robin-race-manager
 docker run --rm -v "$PWD/build/<commit>/scripts:/s:ro" -v /root:/out -v "$PWD/secrets:/cfg" node:24-alpine \
-  node /s/make-admin.mjs engahsanali@gmail.com /cfg/admin.json /out/round-robin-admin.json
+  node /s/make-admin.mjs contact@ahsantechlabs.com /cfg/admin.json /out/round-robin-admin.json
 chown 1000:1000 secrets/admin.json && chmod 400 secrets/admin.json && chmod 600 /root/round-robin-admin.json
 docker compose up -d --force-recreate
 ```
