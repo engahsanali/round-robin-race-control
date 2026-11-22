@@ -17,6 +17,14 @@ async function start() {
   const me = await api('/me').catch(() => ({ signedIn: false }))
   if (me.signedIn) return dashboard()
   signout.hidden = true
+  const reason = new URLSearchParams(location.hash.slice(1)).get('error')
+  if (reason) history.replaceState({}, '', location.pathname)
+  const message = { not_authorised: 'That Google account is not authorised for the Race Manager admin.', cancelled: 'Google sign-in was cancelled.', busy: 'Too many sign-in attempts. Wait 15 minutes and try again.', state: 'The sign-in expired. Please try again.' }[reason] || (reason ? 'Google sign-in failed. Please try again.' : '')
+  if (!me.passwordLogin) {
+    app.replaceChildren(h(`<div class="card login"><h2>Admin sign in</h2><p class="error" id="err">${esc(message)}</p>
+      <p><a class="button primary" href="../api/auth/google/start?for=admin">Sign in with Google</a></p></div>`))
+    return
+  }
   app.replaceChildren(h(`<form class="card login" id="login">
     <h2>Admin sign in</h2>
     <label>Email<input name="email" type="email" autocomplete="username" required></label>

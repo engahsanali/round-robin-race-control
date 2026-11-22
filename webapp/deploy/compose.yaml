@@ -23,7 +23,10 @@ services:
       RR_MAIL_FROM: Round Robin <contact@ahsantechlabs.com>
       RR_MAIL_REPLY_TO: contact@ahsantechlabs.com
       RR_DATA_DIR: /data
-      # Admin login (email, scrypt hash, TOTP secret). Created by scripts/make-admin.mjs.
+      # Admin sign-in: Google only, for these verified accounts.
+      RR_ADMIN_GOOGLE_EMAILS: engrahsanali91@gmail.com,ahsantechlabs@gmail.com
+      # Break-glass email + password + TOTP sign-in (scripts/make-admin.mjs). Off unless set to "1".
+      RR_ADMIN_PASSWORD_LOGIN: "0"
       RR_ADMIN_FILE: /secrets/admin.json
       # Private admin links created before the move can still be claimed.
       RR_LEGACY_LINK_HOSTS: round-robin-race-manager.netlify.app

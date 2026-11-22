@@ -5,6 +5,7 @@ import { createHash, createPublicKey, randomUUID, timingSafeEqual, verify as ver
 import type { IncomingMessage, ServerResponse } from 'node:http'
 import { authStore, createSession, findUserByEmail, getUser, newToken, normalEmail, recordActivity, SESSION_COOKIE, SESSION_DAYS, sha, updateUser, type User } from './auth'
 import { parseCookies, serializeCookie } from './runtime'
+import { adminGoogleSignIn } from './admin'
 
 const AUTH_URL = 'https://accounts.google.com/o/oauth2/v2/auth'
 const TOKEN_URL = 'https://oauth2.googleapis.com/token'
@@ -146,8 +147,9 @@ export async function handleGoogleAuth(req: IncomingMessage, res: ServerResponse
   if (path === '/api/auth/google/start') {
     if (!config) return fail(res, ctx, 'unavailable')
     if (!allow(ctx.ip)) return fail(res, ctx, 'busy')
+    const purpose = url.searchParams.get('for') === 'admin' ? 'admin' : 'app'
     const state = newToken(), verifier = newToken(48), nonce = newToken()
-    await authStore().setJSON('oauth/' + sha(state), { verifier, nonce, expiresAt: new Date(Date.now() + STATE_MINUTES * 60_000).toISOString(), used: false })
+    await authStore().setJSON('oauth/' + sha(state), { purpose, verifier, nonce, expiresAt: new Date(Date.now() + STATE_MINUTES * 60_000).toISOString(), used: false })
     const challenge = createHash('sha256').update(verifier).digest('base64url')
     const target = new URL(AUTH_URL)
     target.search = new URLSearchParams({
@@ -165,12 +167,14 @@ export async function handleGoogleAuth(req: IncomingMessage, res: ServerResponse
     if (!state || !cookieState || !safeEqual(state, cookieState)) return fail(res, ctx, 'state', [clearState])
     const store = authStore()
     const key = 'oauth/' + sha(state)
-    const pending = await store.getWithMetadata(key, { type: 'json' }) as { data: { verifier: string; nonce: string; expiresAt: string; used: boolean }; etag: string } | null
+    const pending = await store.getWithMetadata(key, { type: 'json' }) as { data: { purpose?: 'app' | 'admin'; verifier: string; nonce: string; expiresAt: string; used: boolean }; etag: string } | null
     if (!pending || pending.data.used || Date.parse(pending.data.expiresAt) < Date.now()) return fail(res, ctx, 'state', [clearState])
     if (!(await store.setJSON(key, { ...pending.data, used: true }, { onlyIfMatch: pending.etag })).modified) return fail(res, ctx, 'state', [clearState])
-    if (url.searchParams.get('error')) return fail(res, ctx, 'cancelled', [clearState])
+    const admin = pending.data.purpose === 'admin'
+    const back = (reason: string) => admin ? redirect(res, ctx, `${ctx.basePath}/admin/#error=${encodeURIComponent(reason)}`, [clearState]) : fail(res, ctx, reason, [clearState])
+    if (url.searchParams.get('error')) return back('cancelled')
     const code = url.searchParams.get('code')
-    if (!code) return fail(res, ctx, 'failed', [clearState])
+    if (!code) return back('failed')
     let claims: GoogleClaims
     try {
       const token = await fetcher(TOKEN_URL, {
@@ -182,7 +186,12 @@ export async function handleGoogleAuth(req: IncomingMessage, res: ServerResponse
       claims = verifyIdToken(body.id_token, await googleKeys(fetcher), { clientId: config.clientId, nonce: pending.data.nonce })
     } catch (error) {
       console.error('google sign-in rejected:', error instanceof Error ? error.message : error)
-      return fail(res, ctx, 'failed', [clearState])
+      return back('failed')
+    }
+    if (admin) {
+      const result = await adminGoogleSignIn(claims.email, { origin: ctx.origin, ip: ctx.ip, basePath: ctx.basePath })
+      if ('error' in result) return back(result.error)
+      return redirect(res, ctx, `${ctx.basePath}/admin/`, [clearState, result.cookie])
     }
     const { user } = await resolveGoogleUser(claims, ctx.ip)
     if (user.disabledAt) { await recordActivity(user.id, { type: 'login-blocked', ip: ctx.ip, detail: 'google' }); return fail(res, ctx, 'disabled', [clearState]) }

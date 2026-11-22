@@ -36,3 +36,6 @@ tbody tr:hover { background: #f0f4fa; }
 
 .stat > span.muted:first-child, .stat > b { display: block; }
 .card { overflow-x: auto; }
+
+a.button { display: inline-block; text-decoration: none; padding: 9px 16px; border-radius: 6px; border: 1px solid var(--line); }
+a.button.primary { background: var(--accent); color: #fff; border-color: var(--accent); }

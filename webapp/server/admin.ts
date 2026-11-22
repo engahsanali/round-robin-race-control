@@ -1,5 +1,6 @@
-// Private admin dashboard API at <base>/admin. One admin account, configured in
-// a read-only secrets file (RR_ADMIN_FILE) holding the email, scrypt hash and TOTP secret.
+// Private admin dashboard API at <base>/admin. Sign-in is Google only, for the verified
+// emails in RR_ADMIN_GOOGLE_EMAILS. The old email + password + TOTP sign-in (RR_ADMIN_FILE)
+// is a break-glass path that works only when RR_ADMIN_PASSWORD_LOGIN=1 (off by default).
 import type { IncomingMessage, ServerResponse } from 'node:http'
 import { readFile } from 'node:fs/promises'
 import { randomUUID } from 'node:crypto'
@@ -21,6 +22,8 @@ interface AdminContext { origin: string; ip: string; basePath: string }
 const ADMIN_COOKIE = 'rr_admin'
 const ADMIN_HOURS = 8
 const accounts = () => getStore({ name: 'race-manager-accounts-v2' })
+const passwordLoginEnabled = () => process.env.RR_ADMIN_PASSWORD_LOGIN === '1'
+export const adminGoogleEmails = () => (process.env.RR_ADMIN_GOOGLE_EMAILS ?? '').split(',').map(email => normalEmail(email)).filter(Boolean)
 
 async function adminConfig(): Promise<AdminConfig | null> {
   const file = process.env.RR_ADMIN_FILE
@@ -74,8 +77,22 @@ async function audit(action: string, ctx: AdminContext, detail: Record<string, u
 async function adminSession(req: IncomingMessage) {
   const token = parseCookies(req.headers.cookie).get(ADMIN_COOKIE)
   if (!token || !/^[A-Za-z0-9_-]{20,100}$/.test(token)) return null
-  const session = await authStore().get('admin-sessions/' + sha(token), { type: 'json' }) as { expiresAt: string; email: string } | null
-  return session && Date.parse(session.expiresAt) > Date.now() ? { token, ...session } : null
+  const session = await authStore().get('admin-sessions/' + sha(token), { type: 'json' }) as { expiresAt: string; email: string; method?: string } | null
+  if (!session || Date.parse(session.expiresAt) <= Date.now()) return null
+  // Removing an email from the allow-list, or turning break-glass off, ends existing sessions too.
+  if (session.method === 'google' ? !adminGoogleEmails().includes(normalEmail(session.email)) : !passwordLoginEnabled()) return null
+  return { token, ...session }
+}
+
+/** Called by the Google callback for an admin sign-in. Returns a Set-Cookie value, or the reason it was refused. */
+export async function adminGoogleSignIn(email: string, ctx: AdminContext): Promise<{ cookie: string } | { error: 'busy' | 'not_authorised' }> {
+  if (!allow(ctx.ip)) return { error: 'busy' }
+  const address = normalEmail(email)
+  if (!adminGoogleEmails().includes(address)) { await audit('admin-login-denied', ctx, { email: address, method: 'google' }); return { error: 'not_authorised' } }
+  const token = newToken()
+  await authStore().setJSON('admin-sessions/' + sha(token), { email: address, method: 'google', createdAt: new Date().toISOString(), expiresAt: new Date(Date.now() + ADMIN_HOURS * 3600_000).toISOString(), ip: ctx.ip })
+  await audit('admin-login', ctx, { email: address, method: 'google' })
+  return { cookie: serializeCookie({ name: ADMIN_COOKIE, value: token, httpOnly: true, path: ctx.basePath + '/admin', sameSite: 'Strict', maxAge: ADMIN_HOURS * 3600 }) }
 }
 
 interface EventStats { id: string; name: string; date: string; venue: string; status: string; updatedAt: string; brackets: number; entrants: number; races: number; heatsRun: number }
@@ -137,12 +154,12 @@ export async function handleAdmin(req: IncomingMessage, res: ServerResponse, pat
   if (path === '/admin.css') { res.writeHead(200, { 'Content-Type': 'text/css; charset=utf-8', ...security }); return res.end(adminCss) }
   if (!path.startsWith('/api/')) return send(res, 404, { error: 'Not found' })
   if (method !== 'GET' && (req.headers.origin !== ctx.origin || req.headers['sec-fetch-site'] === 'cross-site')) return send(res, 403, { error: 'Bad origin' })
-  const config = await adminConfig()
-  if (!config) return send(res, 503, { error: 'Admin is not configured.' })
+  const config = passwordLoginEnabled() ? await adminConfig() : null
   const cookiePath = ctx.basePath + '/admin'
   const route = path.slice(4)
 
   if (route === '/login' && method === 'POST') {
+    if (!config) return send(res, 404, { error: 'Password sign-in is turned off. Use Sign in with Google.' })
     if (!allow(ctx.ip)) return send(res, 429, { error: 'Too many attempts. Wait 15 minutes.' })
     const input = await body(req)
     const emailOk = typeof input.email === 'string' && normalEmail(input.email) === normalEmail(config.email)
@@ -150,13 +167,13 @@ export async function handleAdmin(req: IncomingMessage, res: ServerResponse, pat
     const codeOk = !config.totpSecret || (typeof input.code === 'string' && verifyTotp(config.totpSecret, input.code.trim()))
     if (!emailOk || !passwordOk || !codeOk) { await audit('admin-login-failed', ctx); return send(res, 401, { error: 'Sign in failed.' }) }
     const token = newToken()
-    await authStore().setJSON('admin-sessions/' + sha(token), { email: config.email, createdAt: new Date().toISOString(), expiresAt: new Date(Date.now() + ADMIN_HOURS * 3600_000).toISOString(), ip: ctx.ip })
-    await audit('admin-login', ctx)
+    await authStore().setJSON('admin-sessions/' + sha(token), { email: config.email, method: 'password', createdAt: new Date().toISOString(), expiresAt: new Date(Date.now() + ADMIN_HOURS * 3600_000).toISOString(), ip: ctx.ip })
+    await audit('admin-login', ctx, { method: 'password' })
     return send(res, 200, { ok: true }, { 'Set-Cookie': serializeCookie({ name: ADMIN_COOKIE, value: token, httpOnly: true, path: cookiePath, sameSite: 'Strict', maxAge: ADMIN_HOURS * 3600 }) })
   }
 
   const session = await adminSession(req)
-  if (route === '/me') return send(res, 200, { signedIn: Boolean(session), totp: Boolean(config.totpSecret) })
+  if (route === '/me') return send(res, 200, { signedIn: Boolean(session), email: session?.email ?? null, google: adminGoogleEmails().length > 0, passwordLogin: Boolean(config), totp: Boolean(config?.totpSecret) })
   if (!session) return send(res, 401, { error: 'Sign in required.' })
 
   if (route === '/logout' && method === 'POST') {
