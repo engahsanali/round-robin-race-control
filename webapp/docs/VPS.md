@@ -55,22 +55,30 @@ Browser ── https://ahsantechlabs.com ── Traefik (coolify-proxy)
 - **Errors** come back as `/roundrobin/#google_error=state|cancelled|failed|disabled|busy|unavailable`, and the sign-in screen explains them.
 - **Rotate the secret:** create a new secret in Google Cloud, update google.env, run `docker compose up -d`, then delete the old secret in Google Cloud.
 
-## Email
+## Email (Resend)
 
-No outgoing email yet. Resend is planned. contact@ahsantechlabs.com is a Hostinger mailbox, so Resend DNS must use only the `send` subdomain and `resend._domainkey`, and never change the root MX or SPF. Until then:
+Verification and password-reset emails go out through Resend from `Round Robin <contact@ahsantechlabs.com>`, with reply-to contact@ahsantechlabs.com. The code is in `server/mail.ts`.
 
-- New accounts can sign in at once. Verification is a flag the owner sets in the dashboard. `RR_REQUIRE_VERIFIED=1` would block unverified sign-ins.
-- "Forgot password" logs a request that the dashboard flags. The owner creates a one-time reset link (24 hours) or a temporary password and sends it to the user.
+- Config: `RESEND_API_KEY` in `/opt/round-robin-race-manager/secrets/mail.env` (root, 600, loaded via env_file). `RR_MAIL_FROM`, `RR_MAIL_REPLY_TO` and `RR_APP_URL` are in compose.yaml. Links are built from `RR_APP_URL`, never from the request Host header.
+- Sign-up sends a verification link (48 hours, one use). "Forgot password" sends a reset link (1 hour, one use). The answer is the same whether or not the address has an account.
+- If Resend is not configured or a send fails, the old path still works: the request is flagged in the dashboard (`reset-requested` / `verify-email-failed`) and the owner can make a link or temporary password there. Successful sends are logged as `reset-email-sent` / `verify-email-sent` with the Resend id.
+- The dashboard also has "Email reset link" and "Email verification link" buttons.
+- DNS (Cloudflare, DNS-only): `resend._domainkey` TXT (DKIM), `send` MX `feedback-smtp.us-east-1.amazonses.com` (10), `send` TXT `v=spf1 include:amazonses.com ~all`, and `_dmarc` TXT `v=DMARC1; p=none; rua=mailto:contact@ahsantechlabs.com`. contact@ is a Hostinger mailbox: **never change the root MX or SPF**. Resend shows the domain as partially verified because its optional click/open-tracking CNAME was not added. Sending is not affected.
+- `RR_REQUIRE_VERIFIED=1` would block unverified sign-ins. It is off.
 
 ## Admin dashboard
 
-`/roundrobin/admin/` is not linked from the app. It needs the admin email, password and a TOTP code. The `rr_admin` cookie is httpOnly, Secure, SameSite=Strict, Path=/roundrobin/admin, for 8 hours. Sign-in is limited to 5 tries per IP and 30 in total per 15 minutes.
+`/roundrobin/admin/` is not linked from the app. Sign-in is **Google only**, for the addresses in `RR_ADMIN_GOOGLE_EMAILS` (engrahsanali91@gmail.com and ahsantechlabs@gmail.com). It reuses the app's Google client and callback (`/roundrobin/api/auth/google/start?for=admin`; the purpose is stored with the OAuth state), so no extra redirect URI is needed. Admin sign-in never creates an app account. Any other Google account sees "That Google account is not authorised for the Race Manager admin." Removing an address from the list ends its session on the next request.
+
+The `rr_admin` cookie is httpOnly, Secure, SameSite=Strict, Path=/roundrobin/admin, for 8 hours. Sign-in is limited to 5 tries per IP and 30 in total per 15 minutes. Sign-ins and refusals go to the audit log.
+
+Break-glass: the old email + password + TOTP login is kept but **off** (`RR_ADMIN_PASSWORD_LOGIN: "0"`, and `/admin/api/login` returns 404). To use it if Google is down, set it to `"1"` and run `docker compose up -d`. The credentials are in `/root/round-robin-admin.json` (root only). Set it back to `"0"` afterwards.
 
 - It lists users with sign-up time and method, verified status, last login, login count, events, brackets, races run and recent activity. You can sort, filter and see a leaderboard.
-- Actions: reset link, temporary password, force sign-out, verify, disable/enable, link an old workspace, delete login (race data is kept), add a user.
+- Actions: email a reset or verification link, make a reset link, temporary password, force sign-out, verify, disable/enable, link an old workspace, delete login (race data is kept), add a user.
 - Every action is written to the audit log (`admin/audit`).
 
-Create or rotate the admin login on the VPS (prints no secrets):
+Create or rotate the break-glass login on the VPS (prints no secrets):
 
 ```bash
 cd /opt/round-robin-race-manager
@@ -102,7 +110,7 @@ Data must be owned by uid 1000 (`node`).
 ## Tests
 
 ```powershell
-npx vitest run                    # includes server/auth.test.ts (scrypt, sessions, reset tokens, RFC 6238 TOTP)
+npx vitest run                    # 57 tests, incl. auth, google, mail and admin-google
 node scripts/make-admin.mjs you@example.test $env:TEMP\admin.json $env:TEMP\admin-login.json
 $env:RR_DATA_DIR="$env:TEMP\rr-data"; $env:RR_STATIC_DIR="$PWD\dist"; $env:RR_BASE_PATH='/roundrobin'; $env:RR_ADMIN_FILE="$env:TEMP\admin.json"; $env:PORT='18791'
 node dist-server/server.mjs
@@ -110,6 +118,7 @@ $env:BASE_URL='http://localhost:18791/roundrobin'; $env:RACE_E2E_EMAIL='e2e@exam
 node scripts/signup-e2e.mjs       # real sign-up, save, sign-out, forgot, sign-in
 node scripts/e2e.mjs; node scripts/recovery-e2e.mjs
 $env:ADMIN_CREDS="$env:TEMP\admin-login.json"; $env:TEST_EMAIL=$env:RACE_E2E_EMAIL; $env:TEST_PASSWORD=$env:RACE_E2E_PASSWORD
+$env:RR_ADMIN_PASSWORD_LOGIN='1'   # set before starting the server: these scripts use the break-glass login
 node scripts/admin-ui-e2e.mjs; node scripts/admin-e2e.mjs   # the last one deletes the test login
 ```
 
