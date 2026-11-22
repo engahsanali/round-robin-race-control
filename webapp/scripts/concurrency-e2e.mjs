@@ -5,7 +5,7 @@ import { executablePath } from './browser.mjs'
 import { signInForTest } from './identity-e2e.mjs'
 
 const baseUrl = (process.env.BASE_URL || '').replace(/\/$/, '')
-if (!baseUrl || baseUrl.includes('127.0.0.1') || baseUrl.includes('localhost')) {
+if (!baseUrl) {
   throw new Error('Set BASE_URL to a deployed Netlify URL so bracket storage can be tested.')
 }
 
@@ -80,10 +80,10 @@ await tabA.screenshot({ path: localPath(screenshots, `v${version}-simultaneous-r
 const url = new URL(adminUrl)
 const eventId = url.searchParams.get('event')
 if (!eventId) throw new Error('Created event did not provide an ID.')
-const headers = { 'Content-Type': 'application/json', Origin: baseUrl }
+const headers = { 'Content-Type': 'application/json', Origin: new URL(baseUrl).origin }
 const read = await context.request.get(`${baseUrl}/api/events/${eventId}`)
 const data = await read.json()
-if (!read.ok() || data.role !== 'owner') throw new Error('Could not reload the concurrent event.')
+if (!read.ok() || data.role !== 'owner') throw new Error('Could not reload the concurrent event. ' + read.status() + ' ' + JSON.stringify(data).slice(0,200))
 const groups = data.event.mainClasses[0].groups
 const bracketA = groups.find(group => group.label === 'Bracket A')
 const bracketB = groups.find(group => group.label === 'Bracket B')
@@ -145,3 +145,5 @@ await writeFile(new URL('concurrency-result.json', artifacts), JSON.stringify(re
 console.log(JSON.stringify(result))
 await Promise.race([browser.close(), new Promise(resolve => setTimeout(resolve, 3000))])
 process.exit(0)
+
+

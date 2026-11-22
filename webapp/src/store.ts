@@ -1,6 +1,7 @@
 import type { AccountEventSummary } from './account-api'
 import type { ConfirmedPodium } from './results'
 import type { AuditItem, EventData, RaceGroup } from './types'
+import { apiPath } from './base'
 
 export class SaveConflict extends Error {
   constructor(public remote: EventData) { super('This event changed on another device.') }
@@ -13,7 +14,7 @@ export class GroupSaveConflict extends Error {
 export class AccessDenied extends Error {}
 
 async function request(path: string, init: RequestInit = {}) {
-  const response = await fetch(path, { cache: 'no-store', credentials: 'same-origin', ...init })
+  const response = await fetch(apiPath(path), { cache: 'no-store', credentials: 'same-origin', ...init })
   const data = await response.json().catch(() => ({ error: 'Invalid response.' }))
   if (response.status === 409 && data.event) throw new SaveConflict(data.event as EventData)
   if (response.status === 409 && data.group) throw new GroupSaveConflict(data.group as RaceGroup, Array.isArray(data.audit) ? data.audit as AuditItem[] : [])

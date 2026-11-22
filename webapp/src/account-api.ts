@@ -1,3 +1,4 @@
+import { apiPath } from './base'
 export interface AccountProfile {
   id: string
   email: string
@@ -49,14 +50,14 @@ async function readResponse(response: Response) {
 }
 
 export async function getAccount(): Promise<AccountSnapshot> {
-  const response = await fetch('/api/account', { credentials: 'same-origin', cache: 'no-store' })
+  const response = await fetch(apiPath('/api/account'), { credentials: 'same-origin', cache: 'no-store' })
   const data = await readResponse(response)
   if (!Array.isArray(data.events)) throw new Error('The event list could not be loaded.')
   return data as AccountSnapshot
 }
 
 export async function accountRequest(action: AccountAction): Promise<AccountResponse> {
-  const response = await fetch('/api/account', {
+  const response = await fetch(apiPath('/api/account'), {
     method: 'POST',
     credentials: 'same-origin',
     cache: 'no-store',

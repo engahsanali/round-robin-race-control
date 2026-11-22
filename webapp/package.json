@@ -10,7 +10,8 @@
     "test:concurrency": "node scripts/concurrency-e2e.mjs",
     "test:recovery": "node scripts/recovery-e2e.mjs",
     "test:standings": "node scripts/standings-e2e.mjs",
-    "preview": "vite preview"
+    "preview": "vite preview",
+    "build:server": "vite build --config server/vite.server.config.ts"
   },
   "dependencies": {
     "@netlify/blobs": "^10.0.7",

@@ -127,7 +127,9 @@ export async function listWorkspaceEvents(userId: string) {
 export async function claimLegacyEvent(userId: string, link: string, hostname: string) {
   let url: URL
   try { url = new URL(link) } catch { return null }
-  if (url.protocol !== 'https:' || url.hostname !== hostname) return null
+  // RR_LEGACY_LINK_HOSTS lets a self-hosted copy accept admin links created on the old Netlify host.
+  const hosts = [hostname, ...(process.env.RR_LEGACY_LINK_HOSTS ?? '').split(',').map(item => item.trim()).filter(Boolean)]
+  if (url.protocol !== 'https:' || !hosts.includes(url.hostname)) return null
   const id = url.searchParams.get('event')
   const key = new URLSearchParams(url.hash.slice(1)).get('key')
   if (!validId(id) || !key || !/^[A-Za-z0-9_-]{24,80}$/.test(key)) return null

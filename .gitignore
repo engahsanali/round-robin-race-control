@@ -16,3 +16,4 @@ webapp/artifacts/
 .env.*
 !.env.example
 Round robin.xlsx
+webapp/dist-server/
