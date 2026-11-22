@@ -104,6 +104,8 @@ async function detail(id) {
     </div>
     <div class="actions">
       <button data-act="reset-link" class="primary">Create reset link</button>
+      <button data-act="email-reset">Email reset link</button>
+      ${user.verifiedAt ? '' : '<button data-act="email-verify">Email verification link</button>'}
       <button data-act="temp-password">Set temporary password</button>
       <button data-act="logout">Force sign-out</button>
       ${user.verifiedAt ? '' : '<button data-act="verify">Mark email verified</button>'}

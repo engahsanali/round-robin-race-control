@@ -55,8 +55,8 @@ export default async (req: Request, context: Context) => {
 
       try {
         if (action === 'signup') {
-          const created = await signup(email, password, { full_name: body.name.trim(), nickname: body.nickname.trim() }) as unknown as { signedIn?: boolean } | undefined
-          return json({ message: created?.signedIn ? 'Account created. You are signed in.' : genericEmail })
+          const created = await signup(email, password, { full_name: body.name.trim(), nickname: body.nickname.trim() }) as unknown as { signedIn?: boolean; message?: string } | undefined
+          return json({ message: created?.message ?? (created?.signedIn ? 'Account created. You are signed in.' : genericEmail) })
         }
         if (action === 'forgot') {
           const note = await requestPasswordRecovery(email) as unknown

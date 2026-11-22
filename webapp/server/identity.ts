@@ -2,6 +2,7 @@
 // netlify/functions/account.ts, backed by the self-hosted accounts in auth.ts.
 import { consumeToken, createSession, createUser, endSession, findUserByEmail, hashPassword, issueToken, recordActivity, SESSION_COOKIE, SESSION_DAYS, updateUser, verifyPassword } from './auth'
 import { scope } from './runtime'
+import { emailAccountLink, mailConfigured } from './mail'
 
 class AuthError extends Error {
   constructor(message: string, public status?: number) { super(message); this.name = 'AuthError' }
@@ -40,14 +41,21 @@ export async function signup(email: string, password: string, data: { full_name?
   if (!user) return { signedIn: false }
   setSessionCookie(await createSession(user, ip, userAgent))
   await updateUser(user.id, current => ({ ...current, lastLoginAt: new Date().toISOString(), loginCount: 1 }))
-  return { signedIn: true }
+  const sent = await emailAccountLink('verify', user, ip)
+  return { signedIn: true, message: sent ? 'Account created. You are signed in. We sent you an email to confirm your address.' : 'Account created. You are signed in.' }
 }
 
 export async function requestPasswordRecovery(email: string) {
   const { ip } = request()
   const user = await findUserByEmail(email)
-  if (user) await recordActivity(user.id, { type: 'reset-requested', ip })
-  return 'Your request has been passed to the Race Manager admin, who will send you a reset link.'
+  if (!mailConfigured()) {
+    if (user) await recordActivity(user.id, { type: 'reset-requested', ip })
+    return 'Your request has been passed to the Race Manager admin, who will send you a reset link.'
+  }
+  // Same answer whether or not the account exists. A failed send is flagged for the admin.
+  if (user && !user.disabledAt) await emailAccountLink('reset', user, ip)
+  else if (user) await recordActivity(user.id, { type: 'reset-blocked', ip })
+  return 'If that address has an account, a reset link is on its way. It works once and expires in 1 hour. If it does not arrive, contact@ahsantechlabs.com can help.'
 }
 
 export async function confirmEmail(token: string) {

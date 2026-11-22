@@ -12,10 +12,16 @@ services:
     # RR_GOOGLE_CLIENT_ID and RR_GOOGLE_CLIENT_SECRET (root-only file on the VPS).
     env_file:
       - ./secrets/google.env
+      # RESEND_API_KEY (root-only file on the VPS).
+      - ./secrets/mail.env
     environment:
       # Must match the redirect URI registered on the Google OAuth client.
       RR_GOOGLE_REDIRECT_URI: https://ahsantechlabs.com/roundrobin/api/auth/google/callback
       RR_BASE_PATH: /roundrobin
+      # Links in emails always use this, never the request Host header.
+      RR_APP_URL: https://ahsantechlabs.com/roundrobin
+      RR_MAIL_FROM: Round Robin <contact@ahsantechlabs.com>
+      RR_MAIL_REPLY_TO: contact@ahsantechlabs.com
       RR_DATA_DIR: /data
       # Admin login (email, scrypt hash, TOTP secret). Created by scripts/make-admin.mjs.
       RR_ADMIN_FILE: /secrets/admin.json

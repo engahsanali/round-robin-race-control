@@ -11,6 +11,7 @@ import {
 import type { User } from './auth'
 import { parseCookies, serializeCookie } from './runtime'
 import { verifyTotp } from './totp'
+import { emailAccountLink } from './mail'
 import adminHtml from './admin/index.html?raw'
 import adminJs from './admin/admin.js?raw'
 import adminCss from './admin/admin.css?raw'
@@ -206,6 +207,12 @@ export async function handleAdmin(req: IncomingMessage, res: ServerResponse, pat
     case 'reset-link': {
       const link = ctx.origin + ctx.basePath + '/#recovery_token=' + await issueToken(user.id, 'reset', 24)
       return done({ link, note: 'Valid for 24 hours, once. Shown only now.' })
+    }
+    case 'email-reset':
+    case 'email-verify': {
+      const id = await emailAccountLink(action === 'email-reset' ? 'reset' : 'verify', user, ctx.ip)
+      if (!id) return send(res, 502, { error: 'The email could not be sent. Use "Create reset link" and send it yourself.' })
+      return done({ note: `Email sent (Resend id ${id}).` })
     }
     case 'temp-password': {
       const password = newToken(12).replace(/[-_]/g, 'x') + '-' + newToken(6).replace(/[-_]/g, 'y')
