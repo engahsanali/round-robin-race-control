@@ -1,71 +1,75 @@
-// Server-side replacement for the parts of @netlify/identity that the
-// account function uses. It talks to the existing Netlify Identity (GoTrue)
-// instance over HTTPS, so existing accounts and passwords keep working.
-import { identityUrl, scope } from './runtime'
+// Server-side stand-in for the parts of @netlify/identity used by
+// netlify/functions/account.ts, backed by the self-hosted accounts in auth.ts.
+import { consumeToken, createSession, createUser, endSession, findUserByEmail, hashPassword, issueToken, recordActivity, SESSION_COOKIE, SESSION_DAYS, updateUser, verifyPassword } from './auth'
+import { scope } from './runtime'
 
 class AuthError extends Error {
   constructor(message: string, public status?: number) { super(message); this.name = 'AuthError' }
 }
 
-async function call(path: string, init: RequestInit = {}) {
-  const response = await fetch(identityUrl() + path, { ...init, redirect: 'error', signal: AbortSignal.timeout(8000) })
-  const body = await response.json().catch(() => ({}))
-  if (!response.ok) throw new AuthError(body.msg ?? body.error_description ?? `Identity request failed (${response.status})`, response.status)
-  return body
-}
-
-const jsonInit = (body: unknown, token?: string): RequestInit => ({
-  method: 'POST',
-  headers: { 'Content-Type': 'application/json', ...(token ? { Authorization: 'Bearer ' + token } : {}) },
-  body: JSON.stringify(body),
-})
-
-function cookies() {
+function request() {
   const current = scope.getStore()
   if (!current) throw new AuthError('Server-side auth requires a request scope')
-  return current.cookies
+  return current
 }
 
-function setAuthCookies(accessToken: string, refreshToken?: string) {
-  const jar = cookies()
-  jar.set({ name: 'nf_jwt', value: accessToken, httpOnly: false, secure: true, path: '/', sameSite: 'Lax' })
-  if (refreshToken) jar.set({ name: 'nf_refresh', value: refreshToken, httpOnly: false, secure: true, path: '/', sameSite: 'Lax' })
+function setSessionCookie(token: string) {
+  request().cookies.set({ name: SESSION_COOKIE, value: token, httpOnly: true, secure: true, path: request().cookiePath, sameSite: 'Lax', maxAge: SESSION_DAYS * 86400 })
 }
 
 export async function login(email: string, password: string) {
-  const tokens = await call('/token', {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
-    body: new URLSearchParams({ grant_type: 'password', username: email, password }).toString(),
-  })
-  const user = await call('/user', { headers: { Authorization: 'Bearer ' + tokens.access_token } })
-  setAuthCookies(tokens.access_token, tokens.refresh_token)
+  const { ip, userAgent } = request()
+  const user = await findUserByEmail(email)
+  const ok = await verifyPassword(password, user?.passwordHash ?? null)
+  if (!user || !ok || user.disabledAt) {
+    if (user) await recordActivity(user.id, { type: user.disabledAt ? 'login-blocked' : 'login-failed', ip })
+    throw new AuthError('Invalid login', 401)
+  }
+  if (process.env.RR_REQUIRE_VERIFIED === '1' && !user.verifiedAt) throw new AuthError('Email not verified', 401)
+  const token = await createSession(user, ip, userAgent)
+  await updateUser(user.id, current => ({ ...current, lastLoginAt: new Date().toISOString(), lastSeenAt: new Date().toISOString(), loginCount: current.loginCount + 1 }))
+  await recordActivity(user.id, { type: 'login', ip })
+  setSessionCookie(token)
   return user
 }
 
-export async function signup(email: string, password: string, data: Record<string, unknown>) {
-  const user = await call('/signup', jsonInit({ email, password, data }))
-  if (user.confirmed_at && user.access_token) setAuthCookies(user.access_token, user.refresh_token)
-  return user
+/** Without an email sender, new accounts are signed in straight away and verified later by the admin. */
+export async function signup(email: string, password: string, data: { full_name?: string; nickname?: string }) {
+  const { ip, userAgent } = request()
+  const user = await createUser({ email, password, name: data.full_name ?? '', nickname: data.nickname ?? '', method: 'email', ip })
+  if (!user) return { signedIn: false }
+  setSessionCookie(await createSession(user, ip, userAgent))
+  await updateUser(user.id, current => ({ ...current, lastLoginAt: new Date().toISOString(), loginCount: 1 }))
+  return { signedIn: true }
 }
 
 export async function requestPasswordRecovery(email: string) {
-  await call('/recover', jsonInit({ email }))
+  const { ip } = request()
+  const user = await findUserByEmail(email)
+  if (user) await recordActivity(user.id, { type: 'reset-requested', ip })
+  return 'Your request has been passed to the Race Manager admin, who will send you a reset link.'
 }
 
 export async function confirmEmail(token: string) {
-  return call('/verify', jsonInit({ token, type: 'signup' }))
+  const userId = await consumeToken(token, 'verify')
+  if (!userId) throw new AuthError('Invalid token', 400)
+  await updateUser(userId, user => ({ ...user, verifiedAt: user.verifiedAt ?? new Date().toISOString() }))
+  await recordActivity(userId, { type: 'email-verified', ip: request().ip })
 }
 
 export async function recoverPassword(token: string, password: string) {
-  const session = await call('/verify', jsonInit({ token, type: 'recovery' }))
-  return call('/user', { ...jsonInit({ password }, session.access_token), method: 'PUT' })
+  const userId = await consumeToken(token, 'reset')
+  if (!userId) throw new AuthError('Invalid token', 400)
+  const passwordHash = await hashPassword(password)
+  // A reset link proves the person controls the link the admin sent, so it also verifies the email.
+  await updateUser(userId, user => ({ ...user, passwordHash, sessionEpoch: user.sessionEpoch + 1, verifiedAt: user.verifiedAt ?? new Date().toISOString() }))
+  await recordActivity(userId, { type: 'password-reset', ip: request().ip })
 }
 
 export async function logout() {
-  const jar = cookies()
-  const jwt = jar.get('nf_jwt')
-  if (jwt) await fetch(identityUrl() + '/logout', { method: 'POST', headers: { Authorization: 'Bearer ' + jwt }, signal: AbortSignal.timeout(5000) }).catch(() => undefined)
-  jar.delete('nf_jwt')
-  jar.delete('nf_refresh')
+  const current = request()
+  await endSession(current.cookies.get(SESSION_COOKIE))
+  current.cookies.set({ name: SESSION_COOKIE, value: '', httpOnly: true, secure: true, path: current.cookiePath, sameSite: 'Lax', maxAge: 0 })
 }
+
+export { issueToken }

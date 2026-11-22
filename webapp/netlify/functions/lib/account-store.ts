@@ -18,7 +18,13 @@ export interface Profile {
   points?: { first: number; second: number; third: number; version: number }
 }
 
+type SessionReader = (context: Context) => Promise<Session | null>
+let sessionReader: SessionReader | undefined
+/** The self-hosted server swaps Netlify Identity for its own session check. */
+export function useSessionReader(reader: SessionReader) { sessionReader = reader }
+
 export async function readSession(context: Context): Promise<Session | null> {
+  if (sessionReader) return sessionReader(context)
   const accessToken = context.cookies.get('nf_jwt')
   if (!accessToken) return null
   // The Identity SDK can return reduced claims on deploy previews. Check the

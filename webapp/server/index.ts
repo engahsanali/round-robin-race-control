@@ -1,6 +1,6 @@
 // Node host for Race Manager outside Netlify. It serves the Vite build under
-// RR_BASE_PATH, runs the unchanged Netlify function handlers against a local
-// file store, and proxies the browser Identity client to Netlify Identity.
+// RR_BASE_PATH, runs the Netlify function handlers against a local file store,
+// handles accounts itself (server/auth.ts) and serves the private admin at <base>/admin.
 import { createServer } from 'node:http'
 import type { IncomingMessage, ServerResponse } from 'node:http'
 import { readFile, stat } from 'node:fs/promises'
@@ -9,12 +9,19 @@ import { Readable } from 'node:stream'
 import type { Context } from '@netlify/functions'
 import account from '../netlify/functions/account'
 import events from '../netlify/functions/events'
-import { createJar, identityUrl, scope } from './runtime'
+import { createJar, scope } from './runtime'
+import { useSessionReader } from '../netlify/functions/lib/account-store'
+import { SESSION_COOKIE, sessionUser } from './auth'
+import { handleAdmin } from './admin'
+
+useSessionReader(async context => {
+  const user = await sessionUser(context.cookies.get(SESSION_COOKIE))
+  return user ? { id: user.workspaceId, email: user.email, name: user.name, nickname: user.nickname } : null
+})
 
 const port = Number(process.env.PORT || 8787)
 const basePath = ('/' + (process.env.RR_BASE_PATH ?? '/roundrobin').replace(/^\/+|\/+$/g, '')).replace(/^\/$/, '')
 const staticDir = process.env.RR_STATIC_DIR || join(process.cwd(), 'dist')
-const identitySite = process.env.RR_IDENTITY_SITE_URL || ''
 
 const securityHeaders: Record<string, string> = {
   'X-Frame-Options': 'DENY',
@@ -92,33 +99,12 @@ async function runFunction(req: IncomingMessage, res: ServerResponse, path: stri
     } as RequestInit)
     const setCookies: string[] = []
     const cookies = createJar(req.headers.cookie, setCookies)
-    const context = { params, ip: clientIp(req), cookies, site: { url: identitySite }, url: new URL(request.url) } as unknown as Context
-    const response = await scope.run({ cookies, setCookies }, () => route.handler(request, context))
+    const ip = clientIp(req)
+    const context = { params, ip, cookies, site: { url: publicOrigin(req) }, url: new URL(request.url) } as unknown as Context
+    const response = await scope.run({ cookies, setCookies, ip, userAgent: String(req.headers['user-agent'] ?? ''), cookiePath: basePath || '/' }, () => route.handler(request, context))
     return send(res, response, {}, setCookies)
   }
   return send(res, Response.json({ error: 'Not found.' }, { status: 404 }))
-}
-
-async function proxyIdentity(req: IncomingMessage, res: ServerResponse, rest: string) {
-  if (!identitySite) return sendText(res, 503, 'Identity is not configured.')
-  const headers = new Headers()
-  for (const name of ['content-type', 'authorization', 'accept']) {
-    const value = req.headers[name]
-    if (typeof value === 'string' && value) headers.set(name, value)
-  }
-  const hasBody = !['GET', 'HEAD'].includes(req.method ?? 'GET')
-  const upstream = await fetch(identityUrl() + rest, {
-    method: req.method,
-    headers,
-    body: hasBody ? Readable.toWeb(req) as ReadableStream : undefined,
-    duplex: 'half',
-    redirect: 'manual',
-    signal: AbortSignal.timeout(10000),
-  } as RequestInit)
-  const out: Record<string, string> = { 'Cache-Control': 'no-store' }
-  for (const name of ['content-type', 'location']) { const value = upstream.headers.get(name); if (value) out[name] = value }
-  res.writeHead(upstream.status, out)
-  res.end(Buffer.from(await upstream.arrayBuffer()))
 }
 
 async function serveStatic(res: ServerResponse, path: string, method: string) {
@@ -147,13 +133,11 @@ const server = createServer(async (req, res) => {
     const url = new URL(req.url ?? '/', 'http://local')
     const method = req.method ?? 'GET'
     if (url.pathname === '/healthz') return sendText(res, 200, 'ok', { 'Cache-Control': 'no-store' })
-    if (url.pathname.startsWith('/.netlify/identity/') || url.pathname === '/.netlify/identity') {
-      return await proxyIdentity(req, res, url.pathname.slice('/.netlify/identity'.length) + url.search)
-    }
     if (basePath && url.pathname === basePath) return sendText(res, 301, '', { Location: basePath + '/' + url.search })
     if (basePath && !url.pathname.startsWith(basePath + '/')) return sendText(res, 404, 'Not found')
     const path = url.pathname.slice(basePath.length) || '/'
     if (path.startsWith('/api/')) return await runFunction(req, res, path, url.search)
+    if (path === '/admin' || path.startsWith('/admin/')) return await handleAdmin(req, res, path.slice('/admin'.length), { origin: publicOrigin(req), ip: clientIp(req), basePath })
     if (method !== 'GET' && method !== 'HEAD') return sendText(res, 405, 'Method not allowed')
     return await serveStatic(res, path, method)
   } catch (error) {

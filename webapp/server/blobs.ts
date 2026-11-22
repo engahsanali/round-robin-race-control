@@ -2,7 +2,7 @@
 // Netlify functions. One Node process owns the data directory, so a per-key
 // promise chain makes onlyIfNew / onlyIfMatch writes atomic.
 import { createHash, randomBytes } from 'node:crypto'
-import { mkdir, readFile, readdir, rename, writeFile } from 'node:fs/promises'
+import { mkdir, readFile, readdir, rename, rm, writeFile } from 'node:fs/promises'
 import { dirname, join, relative, sep } from 'node:path'
 
 type Metadata = Record<string, unknown>
@@ -87,6 +87,13 @@ export class Store {
 
   async setJSON(key: string, value: unknown, options: SetOptions = {}) {
     return this.set(key, JSON.stringify(value), options)
+  }
+
+  async delete(key: string) {
+    return withLock(this.name + '\u0000' + key, async () => {
+      await rm(this.dataPath(key), { force: true })
+      await rm(this.metaPath(key), { force: true })
+    })
   }
 
   async list(options: { prefix?: string } = {}) {

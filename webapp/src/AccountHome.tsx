@@ -66,8 +66,8 @@ function SignIn({ onRefresh }: { onRefresh: () => Promise<void> }) {
     setBusy(true); setError(''); setMessage('')
     try {
       const result = await accountRequest(action)
-      if (mode === 'signup') setMessage(result.message || 'Check your email to verify your account, then sign in.')
-      else if (mode === 'forgot') setMessage('If that address has an account, a password reset email will arrive shortly.')
+      if (mode === 'signup') { setMessage(result.message || 'Check your email to verify your account, then sign in.'); await onRefresh() }
+      else if (mode === 'forgot') setMessage(result.message || 'If that address has an account, a password reset email will arrive shortly.')
       else {
         if (mode === 'reset' || mode === 'verify') {
           history.replaceState({}, '', location.pathname)

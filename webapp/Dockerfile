@@ -1,5 +1,5 @@
 # Runtime image for the VPS. Build first on the host:
-#   VITE_BASE=/roundrobin/ npm run build && npm run build:server
+#   VITE_BASE=/roundrobin/ VITE_AUTH=local npm run build && npm run build:server
 FROM node:24-alpine
 ENV NODE_ENV=production PORT=8787 RR_BASE_PATH=/roundrobin RR_STATIC_DIR=/app/public RR_DATA_DIR=/data
 WORKDIR /app

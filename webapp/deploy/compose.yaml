@@ -1,8 +1,7 @@
 # Round Robin Race Manager on the Hostinger VPS (srv1977073).
 # Lives at /opt/round-robin-race-manager/compose.yaml. Not public by itself:
-# ahsantechlabs-site-web-1 (nginx) proxies /roundrobin/ and /.netlify/identity/
-# to round-robin-app:8787 over the coolify network. The 127.0.0.1 port is for
-# staging checks through an SSH tunnel only.
+# ahsantechlabs-site-web-1 (nginx) proxies /roundrobin/ to round-robin-app:8787
+# over the coolify network. The 127.0.0.1 port is for checks through an SSH tunnel only.
 name: round-robin-race-manager
 services:
   app:
@@ -13,12 +12,13 @@ services:
     environment:
       RR_BASE_PATH: /roundrobin
       RR_DATA_DIR: /data
-      # Existing Netlify Identity instance; accounts and passwords stay there.
-      RR_IDENTITY_SITE_URL: https://round-robin-race-manager.netlify.app
+      # Admin login (email, scrypt hash, TOTP secret). Created by scripts/make-admin.mjs.
+      RR_ADMIN_FILE: /secrets/admin.json
       # Private admin links created before the move can still be claimed.
       RR_LEGACY_LINK_HOSTS: round-robin-race-manager.netlify.app
     volumes:
       - ./data:/data
+      - ./secrets/admin.json:/secrets/admin.json:ro
     ports:
       - "127.0.0.1:18787:8787"
     networks:
